@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Activity, Clock3, Download, FileText, Filter, LogIn, ShieldCheck, Trash2, X } from 'lucide-react'
-import { clearActivities, loadActivities, type ActivityEntry } from './activityLog'
+import { Activity, Clock3, Download, FileText, Filter, LogIn, ShieldCheck, X } from 'lucide-react'
+import { fetchActivities, loadActivities, type ActivityEntry } from './activityLog'
 
 const actionIcon = (action: string) => action.includes('auth') ? <LogIn/> : action.includes('document') || action.includes('export') ? <FileText/> : <Activity/>
 
@@ -8,7 +8,8 @@ export default function ActivityPanel({ userId, onClose }: { userId: string; onC
   const [logs, setLogs] = useState<ActivityEntry[]>(() => loadActivities(userId))
   const [filter, setFilter] = useState('all')
   useEffect(() => {
-    const refresh = () => setLogs(loadActivities(userId))
+    const refresh = () => { fetchActivities().then(setLogs).catch(()=>setLogs(loadActivities(userId))) }
+    refresh()
     window.addEventListener('paperly-activity', refresh)
     return () => window.removeEventListener('paperly-activity', refresh)
   }, [userId])
@@ -26,13 +27,12 @@ export default function ActivityPanel({ userId, onClose }: { userId: string; onC
           <select value={filter} onChange={(e) => setFilter(e.target.value)}><option value="all">Tất cả</option><option value="security">Bảo mật</option><option value="success">Thành công</option><option value="warning">Cảnh báo</option><option value="info">Thông tin</option></select>
         </label>
         <button onClick={exportLogs} disabled={!logs.length}><Download/> Export JSON</button>
-        <button className="danger" onClick={() => { if (confirm('Xóa toàn bộ activity log trên thiết bị này?')) { clearActivities(userId); setLogs([]) } }} disabled={!logs.length}><Trash2/></button>
       </div>
       <div className="activity-list">{visible.length ? visible.map((log) => <article key={log.id} className={`activity-item ${log.level}`}>
         <div className="activity-icon">{actionIcon(log.action)}</div>
         <div><div className="activity-row"><b>{log.description}</b><time><Clock3/>{new Date(log.timestamp).toLocaleString('vi-VN')}</time></div><code>{log.action}</code>{log.metadata && <div className="metadata">{Object.entries(log.metadata).map(([k,v]) => <span key={k}>{k}: <b>{String(v)}</b></span>)}</div>}</div>
       </article>) : <div className="no-activity"><Activity/><b>Chưa có hoạt động</b><span>Các thao tác sử dụng sẽ xuất hiện tại đây.</span></div>}</div>
-      <footer>{logs.length} sự kiện · Tối đa 1.000 sự kiện gần nhất</footer>
+      <footer>{logs.length} sự kiện · Log chỉ có thể được xóa bởi quản trị viên</footer>
     </aside>
   </div>
 }

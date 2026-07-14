@@ -148,3 +148,15 @@ VITE_USB_SIGNING_AGENT_URL=https://127.0.0.1:port
 ```
 
 USB Token không thể được trình duyệt truy cập khóa riêng trực tiếp; cần cài middleware/local agent của nhà cung cấp CA. Remote Token cần backend tích hợp API của nhà cung cấp (ưu tiên chuẩn Cloud Signature Consortium) và thực hiện xác thực/OTP theo chính sách của CA. Hai biến Vite là cấu hình build-time nên phải build lại Docker image sau khi thay đổi.
+
+## Phân quyền và Administration
+
+Activity log được gửi về API và lưu trong Docker volume `paperly_data`; user không có quyền xóa log. Cấu hình ít nhất một email admin bootstrap trước khi build/deploy:
+
+```env
+ADMIN_EMAILS=admin@pace.edu.vn,security@pace.edu.vn
+```
+
+Sau khi admin đăng nhập Microsoft, nút Administration xuất hiện cạnh Activity Log. Admin có thể tạo group, thêm email được phép đăng nhập, bật/tắt tài khoản, cấp quyền admin, gán group, xem user online, tìm kiếm/lọc log và xóa log trong một khoảng thời gian xác định. User online được xác định bằng heartbeat 30 giây và thời hạn hiện diện 90 giây.
+
+Dữ liệu backend nằm ở `/data/store.json` trong volume. Cần backup volume này định kỳ. Với tải lớn hoặc yêu cầu audit tuân thủ cao, nên thay JSON store bằng PostgreSQL/SQL Server và append-only/WORM retention.

@@ -38,3 +38,11 @@ export async function signOutMicrosoft() {
   await msal.logoutPopup({ account, postLogoutRedirectUri: window.location.origin })
 }
 
+export async function getMicrosoftToken() {
+  if(!msal)throw new Error('Microsoft login has not been configured.')
+  const account=msal.getActiveAccount()||msal.getAllAccounts()[0]
+  if(!account)throw new Error('No active Microsoft account.')
+  const response=await msal.acquireTokenSilent({account,scopes:['openid','profile','email']})
+  return response.idToken
+}
+

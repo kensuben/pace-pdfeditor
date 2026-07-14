@@ -5,6 +5,7 @@ import {
   Plus, Redo2, RotateCw, Sparkles, Type, Undo2, Upload, LogIn, LogOut, ScanText,
   Bold, Italic, Underline, AlignLeft, AlignCenter, AlignRight,
   ImagePlus, FilePlus2, BadgeCheck, Trash2, ZoomIn, ZoomOut, ArrowUp, ArrowDown,
+  Settings,
 } from 'lucide-react'
 import * as pdfjs from 'pdfjs-dist'
 import { PDFDocument, rgb, StandardFonts, type PDFFont } from 'pdf-lib'
@@ -27,6 +28,8 @@ import type { AccountInfo } from '@azure/msal-browser'
 import { initializeAuth, isMicrosoftAuthConfigured, signInMicrosoft, signOutMicrosoft } from './auth'
 import { recordActivity } from './activityLog'
 import ActivityPanel from './ActivityPanel'
+import AdminPage from './AdminPage'
+import { apiRequest, authorizeSession, type ApiUser } from './api'
 
 // Query version bypasses any previously cached worker response that may have
 // been served with an incorrect MIME type before the Nginx fix.
@@ -274,6 +277,8 @@ function App() {
   const [ocrProgress, setOcrProgress] = useState(0)
   const [textStyle, setTextStyle] = useState<TextStyle>({ fontFamily:'Be Vietnam Pro', fontSize:16, bold:false, italic:false, underline:false, align:'left', color:'#0C2340' })
   const [showDigitalSign, setShowDigitalSign] = useState(false)
+  const [apiUser,setApiUser]=useState<ApiUser|null>(null)
+  const [showAdmin,setShowAdmin]=useState(false)
   const annotations = history[historyIndex]
   const selectedImage = useMemo(()=>annotations.find((annotation)=>annotation.id===selectedId&&annotation.type==='image'),[annotations,selectedId])
 
@@ -287,11 +292,12 @@ function App() {
   }, [identity])
 
   useEffect(() => {
-    initializeAuth().then((active) => {
-      setAccount(active)
-      if (active) recordActivity({ userId: active.homeAccountId, userName: active.name || active.username, action: 'auth.session_restored', description: 'Khôi phục phiên đăng nhập Microsoft', level: 'security' })
+    initializeAuth().then(async(active) => {
+      if(active){const session=await authorizeSession();setApiUser(session.user);setAccount(active);recordActivity({ userId: active.homeAccountId, userName: active.name || active.username, action: 'auth.session_restored', description: 'Khôi phục phiên đăng nhập Microsoft', level: 'security' })}
     }).catch(console.error).finally(() => setAuthReady(true))
   }, [])
+
+  useEffect(()=>{if(!apiUser)return;const beat=()=>apiRequest('/api/heartbeat',{method:'POST',body:'{}'}).catch(console.error);beat();const timer=setInterval(beat,30000);return()=>clearInterval(timer)},[apiUser])
 
   const commit = useCallback((next: Annotation[], activity?: { action: string; description: string; metadata?: Record<string, string | number | boolean | null> }) => {
     setHistory((h) => [...h.slice(0, historyIndex + 1), next])
@@ -550,13 +556,13 @@ function App() {
   const login = async () => {
     if (!isMicrosoftAuthConfigured) { alert('Microsoft Login chưa được cấu hình. Hãy sao chép .env.example thành .env và điền VITE_MICROSOFT_CLIENT_ID.'); return }
     setBusy(true)
-    try { const signedIn = await signInMicrosoft(); setAccount(signedIn); recordActivity({ userId: signedIn.homeAccountId, userName: signedIn.name || signedIn.username, action: 'auth.login', description: 'Đăng nhập bằng Microsoft', level: 'security', metadata: { username: signedIn.username } }) }
-    catch (error) { console.error(error) }
+    try { const signedIn = await signInMicrosoft();const session=await authorizeSession();setApiUser(session.user);setAccount(signedIn);recordActivity({ userId: signedIn.homeAccountId, userName: signedIn.name || signedIn.username, action: 'auth.login', description: 'Đăng nhập bằng Microsoft', level: 'security', metadata: { username: signedIn.username } }) }
+    catch (error) { console.error(error);await signOutMicrosoft().catch(()=>{});alert(error instanceof Error?error.message:'Tài khoản không được phép sử dụng hệ thống.') }
     finally { setBusy(false) }
   }
   const logout = async () => {
     log('auth.logout', 'Đăng xuất tài khoản Microsoft', undefined, 'security')
-    setBusy(true); try { await signOutMicrosoft(); setAccount(null); setShowActivities(false) } finally { setBusy(false) }
+    setBusy(true); try { await signOutMicrosoft(); setAccount(null);setApiUser(null); setShowActivities(false);setShowAdmin(false) } finally { setBusy(false) }
   }
 
   return <div className="app">
@@ -565,9 +571,10 @@ function App() {
     <input ref={insertPdfInput} hidden type="file" accept="application/pdf,.pdf" onChange={(e)=>{const file=e.target.files?.[0];if(file)insertPages(file);e.target.value=''}}/>
     <header className="topbar">
       <button className="brand" onClick={() => fileInput.current?.click()}><img className="official-logo" src="/pace-logo.svg" alt="PACE Institute of Management"/><span className="product-name">PDF Workspace<small>DOCUMENT EDITOR</small></span></button>
+      {info?<div className="file-title"><FileText size={17}/><span>{info.name}</span><small>{formatBytes(info.size)}</small></div>:<div className="top-note">THỰC HỌC VÌ DOANH TRÍ</div>}
       <div className="top-actions">
         {info && <><button className="secondary" onClick={() => fileInput.current?.click()}><Upload size={16}/> Mở file</button><button className="primary" onClick={exportPdf} disabled={busy}><Download size={16}/> Xuất PDF</button></>}
-        {account ? <div className="account-menu"><button className="activity-button" onClick={() => setShowActivities(true)} title="Activity log"><Activity/></button><button className="user-chip" title={account.username}><span>{(account.name || account.username).split(' ').map((x) => x[0]).slice(0,2).join('').toUpperCase()}</span><b>{account.name || account.username}</b></button><button className="logout-button" onClick={logout} title="Đăng xuất"><LogOut/></button></div> : <button className="microsoft-login" onClick={login} disabled={!authReady}><span className="ms-logo"><i/><i/><i/><i/></span><LogIn/> Sign in with Microsoft</button>}
+        {account ? <div className="account-menu"><button className="activity-button" onClick={() => setShowActivities(true)} title="Activity log"><Activity/></button>{apiUser?.role==='admin'&&<button className="activity-button" onClick={()=>setShowAdmin(true)} title="Administration"><Settings/></button>}<button className="user-chip" title={account.username}><span>{(account.name || account.username).split(' ').map((x) => x[0]).slice(0,2).join('').toUpperCase()}</span><b>{account.name || account.username}</b></button><button className="logout-button" onClick={logout} title="Đăng xuất"><LogOut/></button></div> : <button className="microsoft-login" onClick={login} disabled={!authReady}><span className="ms-logo"><i/><i/><i/><i/></span><LogIn/> Sign in with Microsoft</button>}
       </div>
     </header>
 
@@ -611,6 +618,7 @@ function App() {
     </div>}
     {busy && <div className="loading"><div/><span>Preparing your document…</span></div>}
     {showActivities && <ActivityPanel userId={identity.userId} onClose={() => setShowActivities(false)}/>} 
+    {showAdmin&&apiUser?.role==='admin'&&<AdminPage onClose={()=>setShowAdmin(false)}/>}
     {showDigitalSign && <div className="sign-backdrop" onMouseDown={(e)=>e.target===e.currentTarget&&setShowDigitalSign(false)}><section className="sign-dialog"><button className="sign-close" onClick={()=>setShowDigitalSign(false)}>×</button><BadgeCheck/><h2>Ký điện tử tài liệu</h2><p>Chữ ký số PAdES cần dịch vụ ký giữ khóa bí mật. Chọn phương thức đã được quản trị viên cấu hình.</p><button onClick={()=>signDocument('usb-token')}><b>USB Token</b><span>Ký qua middleware/agent cài trên máy người dùng</span></button><button onClick={()=>signDocument('remote-token')}><b>Remote Token</b><span>Ký qua API của nhà cung cấp CA / CSC</span></button><small>Công cụ “Chữ ký” trên toolbar chỉ tạo chữ ký hiển thị, không phải chữ ký số có chứng thư.</small></section></div>}
   </div>
 }

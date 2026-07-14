@@ -11,6 +11,8 @@ services:
     ports:
       - "${APP_PORT:-8080}:8080"
     restart: unless-stopped
+    depends_on:
+      - api
     read_only: true
     tmpfs:
       - /var/cache/nginx:size=16m
@@ -30,4 +32,21 @@ services:
       timeout: 3s
       retries: 3
       start_period: 5s
+  api:
+    image: paperly-pdf-api:latest
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    environment:
+      MICROSOFT_CLIENT_ID: ${VITE_MICROSOFT_CLIENT_ID}
+      MICROSOFT_TENANT_ID: ${VITE_MICROSOFT_TENANT_ID:-common}
+      ADMIN_EMAILS: ${ADMIN_EMAILS:-}
+      DATA_FILE: /data/store.json
+    volumes:
+      - paperly_data:/data
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+volumes:
+  paperly_data:
 

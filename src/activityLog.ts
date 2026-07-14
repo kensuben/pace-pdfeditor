@@ -13,7 +13,6 @@ export type ActivityEntry = {
 }
 
 const SESSION_KEY = 'paperly-session-id'
-const LOG_PREFIX = 'paperly-activity:'
 
 function sessionId() {
   let id = sessionStorage.getItem(SESSION_KEY)
@@ -22,20 +21,18 @@ function sessionId() {
 }
 
 export function loadActivities(userId: string): ActivityEntry[] {
-  try { return JSON.parse(localStorage.getItem(LOG_PREFIX + userId) || '[]') }
+  try { return JSON.parse(sessionStorage.getItem(`paperly-activity-cache:${userId}`) || '[]') }
   catch { return [] }
 }
 
 export function recordActivity(input: Omit<ActivityEntry, 'id' | 'timestamp' | 'sessionId'>): ActivityEntry {
   const entry: ActivityEntry = { ...input, id: crypto.randomUUID(), timestamp: new Date().toISOString(), sessionId: sessionId() }
-  const logs = [entry, ...loadActivities(input.userId)].slice(0, 1000)
-  localStorage.setItem(LOG_PREFIX + input.userId, JSON.stringify(logs))
+  const logs = [entry, ...loadActivities(input.userId)]
+  sessionStorage.setItem(`paperly-activity-cache:${input.userId}`, JSON.stringify(logs))
+  import('./api').then(({apiRequest})=>apiRequest('/api/activities',{method:'POST',body:JSON.stringify(entry)})).catch(console.error)
   window.dispatchEvent(new CustomEvent('paperly-activity', { detail: entry }))
   return entry
 }
 
-export function clearActivities(userId: string) {
-  localStorage.removeItem(LOG_PREFIX + userId)
-  window.dispatchEvent(new CustomEvent('paperly-activity'))
-}
+export async function fetchActivities():Promise<ActivityEntry[]>{const {apiRequest}=await import('./api');return apiRequest('/api/me/activities')}
 
