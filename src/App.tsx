@@ -13,7 +13,9 @@ import { initializeAuth, isMicrosoftAuthConfigured, signInMicrosoft, signOutMicr
 import { recordActivity } from './activityLog'
 import ActivityPanel from './ActivityPanel'
 
-pdfjs.GlobalWorkerOptions.workerSrc = workerUrl
+// Query version bypasses any previously cached worker response that may have
+// been served with an incorrect MIME type before the Nginx fix.
+pdfjs.GlobalWorkerOptions.workerSrc = `${workerUrl}?v=20260714-1`
 
 const COLORS = ['#E85D3F', '#F5C84C', '#4FAF7B', '#3F7DD9', '#7B61B5', '#1F252B']
 const uid = () => crypto.randomUUID()
@@ -161,7 +163,12 @@ function App() {
       setBytes(data); setPdf(loaded); setInfo({ name: file.name, size: file.size, pages: loaded.numPages })
       setPage(1); setZoom(1); setHistory([[]]); setHistoryIndex(0); setSelectedId(null)
       log('document.opened', 'Mở tài liệu PDF', { fileName: file.name, fileSize: file.size, pageCount: loaded.numPages }, 'success')
-    } catch { log('document.open_failed', 'Không thể mở tài liệu PDF', { fileName: file.name }, 'warning'); alert('This PDF could not be opened. It may be damaged or password protected.') }
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error)
+      console.error('Unable to open PDF:', error)
+      log('document.open_failed', 'Không thể mở tài liệu PDF', { fileName: file.name, reason }, 'warning')
+      alert(`Không thể mở tài liệu PDF.\n\nChi tiết: ${reason}`)
+    }
     finally { setBusy(false) }
   }
 
