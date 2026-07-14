@@ -16,6 +16,7 @@ export type TextRegion = {
   italic?: boolean
   color?: string
   align?: 'left' | 'center' | 'right'
+  backgroundColor?: string
   confidence?: number
   source: 'native' | 'ocr'
 }
@@ -40,6 +41,7 @@ export type Annotation = {
   underline?: boolean
   align?: 'left' | 'center' | 'right'
   imageDataUrl?: string
+  backgroundColor?: string
 }
 
 export type TextStyle = Pick<Annotation, 'fontFamily' | 'fontSize' | 'bold' | 'italic' | 'underline' | 'align' | 'color'>

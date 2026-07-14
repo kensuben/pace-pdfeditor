@@ -20,3 +20,15 @@
   border-color: #0047af;
   outline-color: #0047af44;
 }
+
+.annotation.replacement {
+  box-shadow: none;
+}
+
+.annotation.replacement::before {
+  content: '';
+  position: absolute;
+  inset: -2px;
+  z-index: -1;
+  background: inherit;
+}
