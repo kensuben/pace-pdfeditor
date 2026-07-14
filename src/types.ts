@@ -11,6 +11,11 @@ export type TextRegion = {
   width: number
   height: number
   fontSize: number
+  fontFamily?: 'Helvetica' | 'Times Roman' | 'Courier'
+  bold?: boolean
+  italic?: boolean
+  color?: string
+  align?: 'left' | 'center' | 'right'
   confidence?: number
   source: 'native' | 'ocr'
 }

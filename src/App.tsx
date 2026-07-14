@@ -71,12 +71,13 @@ function EmptyState({ onOpen }: { onOpen: () => void }) {
 function PdfCanvas({ pdf, pageNumber, zoom, annotations, tool, color, onAdd, selectedId, onSelect, textRegions, onTextRegions, onEditRegion, onEditAnnotation }: {
   pdf: pdfjs.PDFDocumentProxy; pageNumber: number; zoom: number; annotations: Annotation[]; tool: Tool; color: string;
   onAdd: (a: Annotation) => void; selectedId: string | null; onSelect: (id: string | null) => void;
-  textRegions: TextRegion[]; onTextRegions: (regions: TextRegion[]) => void; onEditRegion: (region: TextRegion) => void; onEditAnnotation: (annotation: Annotation) => void
+  textRegions: TextRegion[]; onTextRegions: (regions: TextRegion[]) => void; onEditRegion: (region: TextRegion, text: string) => void; onEditAnnotation: (annotation: Annotation, text: string) => void
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const wrapRef = useRef<HTMLDivElement>(null)
   const [size, setSize] = useState({ width: 612, height: 792 })
   const [draft, setDraft] = useState<Point[]>([])
+  const [inlineEdit, setInlineEdit] = useState<{ kind:'region'|'annotation'; id:string; value:string } | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -107,14 +108,17 @@ function PdfCanvas({ pdf, pageNumber, zoom, annotations, tool, color, onAdd, sel
       if (cancelled) return
       const regions = content.items.flatMap((raw, index): TextRegion[] => {
         if (!('str' in raw) || !raw.str.trim()) return []
-        const item = raw as { str: string; transform: number[]; width: number; height: number }
+        const item = raw as { str: string; transform: number[]; width: number; height: number; fontName?: string }
         const tx = pdfjs.Util.transform(viewport.transform, item.transform)
         const fontHeight = Math.max(Math.hypot(tx[2], tx[3]), item.height || 8)
+        const fontInfo = item.fontName ? content.styles[item.fontName] : undefined
+        const fontLabel = `${item.fontName || ''} ${fontInfo?.fontFamily || ''}`.toLowerCase()
+        const fontFamily: TextRegion['fontFamily'] = /courier|mono/.test(fontLabel) ? 'Courier' : /times|serif/.test(fontLabel) ? 'Times Roman' : 'Helvetica'
         return [{
           id: `native-${pageNumber}-${index}`, page: pageNumber, text: item.str,
           x: clamp(tx[4] / viewport.width, 0, 1), y: clamp((tx[5] - fontHeight) / viewport.height, 0, 1),
           width: clamp((item.width || fontHeight) / viewport.width, .002, 1), height: clamp(fontHeight / viewport.height, .005, 1),
-          fontSize: fontHeight, source: 'native',
+          fontSize: fontHeight, fontFamily, bold:/bold|black|heavy/.test(fontLabel), italic:/italic|oblique/.test(fontLabel), color:'#000000', align:'left', source: 'native',
         }]
       })
       onTextRegions(regions)
@@ -150,12 +154,30 @@ function PdfCanvas({ pdf, pageNumber, zoom, annotations, tool, color, onAdd, sel
   }
 
   const path = (points: Point[]) => points.map((p, i) => `${i ? 'L' : 'M'} ${p.x * size.width} ${p.y * size.height}`).join(' ')
+  const finishInlineEdit = (commitChange: boolean) => {
+    if (!inlineEdit) return
+    const edit = inlineEdit
+    setInlineEdit(null)
+    if (!commitChange || !edit.value.trim()) return
+    if (edit.kind === 'region') {
+      const region = textRegions.find((item)=>item.id===edit.id)
+      if (region && edit.value !== region.text) onEditRegion(region, edit.value)
+    } else {
+      const annotation = annotations.find((item)=>item.id===edit.id)
+      if (annotation && edit.value !== annotation.text) onEditAnnotation(annotation, edit.value)
+    }
+  }
+  const editorKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    e.stopPropagation()
+    if (e.key === 'Escape') { e.preventDefault(); finishInlineEdit(false) }
+    else if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); finishInlineEdit(true) }
+  }
   return <div className="page-shell" style={{ width: size.width, height: size.height }}>
     <canvas ref={canvasRef}/>
     <div ref={wrapRef} className={`annotation-layer tool-${tool}`} onPointerDown={pointerDown} onPointerMove={pointerMove} onPointerUp={pointerUp}>
-      {tool === 'select' && textRegions.map((region) => <button key={region.id} className={`text-region ${region.source}`} title={`${region.source === 'ocr' ? 'OCR' : 'PDF'}: ${region.text}`} style={{ left:`${region.x*100}%`, top:`${region.y*100}%`, width:`${region.width*100}%`, height:`${region.height*100}%` }} onPointerDown={(e)=>e.stopPropagation()} onClick={(e)=>{e.stopPropagation();onEditRegion(region)}}><span>{region.text}</span></button>)}
+      {tool === 'select' && textRegions.map((region) => inlineEdit?.kind==='region'&&inlineEdit.id===region.id ? <textarea key={region.id} autoFocus className="inline-text-editor" value={inlineEdit.value} style={{left:`${region.x*100}%`,top:`${region.y*100}%`,width:`${Math.max(region.width,.04)*100}%`,height:`${Math.max(region.height,.018)*100}%`,fontSize:region.fontSize*zoom,fontFamily:region.fontFamily||'Helvetica',fontWeight:region.bold?700:400,fontStyle:region.italic?'italic':'normal',color:region.color||'#000',textAlign:region.align||'left'}} onChange={(e)=>setInlineEdit({...inlineEdit,value:e.target.value})} onKeyDown={editorKeyDown} onBlur={()=>finishInlineEdit(true)} onPointerDown={(e)=>e.stopPropagation()}/> : <button key={region.id} className={`text-region ${region.source}`} title={`${region.source === 'ocr' ? 'OCR' : 'PDF'}: ${region.text}`} style={{ left:`${region.x*100}%`, top:`${region.y*100}%`, width:`${region.width*100}%`, height:`${region.height*100}%` }} onPointerDown={(e)=>e.stopPropagation()} onClick={(e)=>{e.stopPropagation();setInlineEdit({kind:'region',id:region.id,value:region.text})}}><span>{region.text}</span></button>)}
       {annotations.map((a) => a.points ? <svg key={a.id} className={`ink ${selectedId === a.id ? 'selected' : ''}`} viewBox={`0 0 ${size.width} ${size.height}`} onPointerDown={(e) => { e.stopPropagation(); onSelect(a.id) }}><path d={path(a.points)} stroke={a.color} strokeWidth={a.type === 'signature' ? 3 : 2.5} fill="none" strokeLinecap="round" strokeLinejoin="round"/></svg> : a.type==='image'&&a.imageDataUrl ? <img key={a.id} className={`image-annotation ${selectedId===a.id?'selected':''}`} src={a.imageDataUrl} alt="Inserted" style={{left:`${a.x*100}%`,top:`${a.y*100}%`,width:`${a.width*100}%`,height:`${a.height*100}%`}} onPointerDown={(e)=>{e.stopPropagation();onSelect(a.id)}}/> :
-        <div key={a.id} className={`annotation ${a.type} ${a.replaceOriginal ? 'replacement' : ''} ${selectedId === a.id ? 'selected' : ''}`} style={{ left: `${a.x*100}%`, top: `${a.y*100}%`, width: `${a.width*100}%`, height: `${a.height*100}%`, background: a.replaceOriginal ? '#fff' : a.type === 'highlight' ? a.color : undefined, opacity: a.opacity, color: a.color, fontSize: (a.fontSize || 16) * zoom, fontFamily:a.fontFamily||'Helvetica', fontWeight:a.bold?700:400, fontStyle:a.italic?'italic':'normal', textDecoration:a.underline?'underline':'none', textAlign:a.align||'left' }} onPointerDown={(e) => { e.stopPropagation(); onSelect(a.id) }} onDoubleClick={(e)=>{e.stopPropagation();if(a.type==='text')onEditAnnotation(a)}}>{a.text}</div>)}
+        inlineEdit?.kind==='annotation'&&inlineEdit.id===a.id ? <textarea key={a.id} autoFocus className="inline-text-editor annotation-editor" value={inlineEdit.value} style={{left:`${a.x*100}%`,top:`${a.y*100}%`,width:`${a.width*100}%`,height:`${a.height*100}%`,fontSize:(a.fontSize||16)*zoom,fontFamily:a.fontFamily||'Helvetica',fontWeight:a.bold?700:400,fontStyle:a.italic?'italic':'normal',textDecoration:a.underline?'underline':'none',color:a.color,textAlign:a.align||'left'}} onChange={(e)=>setInlineEdit({...inlineEdit,value:e.target.value})} onKeyDown={editorKeyDown} onBlur={()=>finishInlineEdit(true)} onPointerDown={(e)=>e.stopPropagation()}/> : <div key={a.id} className={`annotation ${a.type} ${a.replaceOriginal ? 'replacement' : ''} ${selectedId === a.id ? 'selected' : ''}`} style={{ left: `${a.x*100}%`, top: `${a.y*100}%`, width: `${a.width*100}%`, height: `${a.height*100}%`, background: a.replaceOriginal ? '#fff' : a.type === 'highlight' ? a.color : undefined, opacity: a.opacity, color: a.color, fontSize: (a.fontSize || 16) * zoom, fontFamily:a.fontFamily||'Helvetica', fontWeight:a.bold?700:400, fontStyle:a.italic?'italic':'normal', textDecoration:a.underline?'underline':'none', textAlign:a.align||'left' }} onPointerDown={(e) => { e.stopPropagation(); onSelect(a.id) }} onDoubleClick={(e)=>{e.stopPropagation();if(a.type==='text')setInlineEdit({kind:'annotation',id:a.id,value:a.text||''})}}>{a.text}</div>)}
       {draft.length > 1 && <svg className="ink draft" viewBox={`0 0 ${size.width} ${size.height}`}><path d={path(draft)} stroke={color} strokeWidth="2.5" fill="none" strokeLinecap="round"/></svg>}
     </div>
   </div>
@@ -319,17 +341,15 @@ function App() {
     }catch(error){console.error(error);alert(`Không thể chèn trang PDF.\n\n${error instanceof Error?error.message:String(error)}`)}finally{setBusy(false)}
   }
 
-  const editTextRegion = useCallback((region: TextRegion) => {
-    const next = window.prompt('Chỉnh sửa nội dung vùng chữ', region.text)
-    if (next === null || next === region.text) return
-    const replacement: Annotation = { id:uid(), page:region.page, type:'text', x:region.x, y:region.y, width:Math.max(region.width,.04), height:Math.max(region.height,.015), opacity:1, text:next, replaceOriginal:true, ...textStyle, fontSize:Math.max(7,textStyle.fontSize||region.fontSize) }
+  const editTextRegion = useCallback((region: TextRegion, next: string) => {
+    if (next === region.text) return
+    const replacement: Annotation = { id:uid(), page:region.page, type:'text', x:region.x, y:region.y, width:Math.max(region.width,.04), height:Math.max(region.height,.015), opacity:1, text:next, replaceOriginal:true, fontFamily:region.fontFamily||'Helvetica', fontSize:Math.max(7,region.fontSize), bold:region.bold||false, italic:region.italic||false, underline:false, align:region.align||'left', color:region.color||'#000000' }
     commit([...annotations,replacement], { action:'text_region.edited', description:'Chỉnh sửa vùng chữ', metadata:{ page:region.page, source:region.source } })
     setTextRegions((current)=>({...current,[region.page]:(current[region.page]||[]).filter((x)=>x.id!==region.id)}))
-  }, [annotations, commit, textStyle])
+  }, [annotations, commit])
 
-  const editTextAnnotation = useCallback((annotation: Annotation) => {
-    const next=window.prompt('Chỉnh sửa nội dung văn bản',annotation.text||'')
-    if(next===null||next===annotation.text)return
+  const editTextAnnotation = useCallback((annotation: Annotation, next: string) => {
+    if(next===annotation.text)return
     commit(annotations.map((a)=>a.id===annotation.id?{...a,text:next}:a),{action:'text.content_changed',description:'Chỉnh sửa nội dung văn bản',metadata:{page:annotation.page}})
   },[annotations,commit])
 

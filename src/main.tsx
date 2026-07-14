@@ -9,6 +9,7 @@ import './ocr-styles.css'
 import './text-format.css'
 import './brand-fixes.css'
 import './document-tools.css'
+import './inline-text-editor.css'
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode><App /></StrictMode>,
