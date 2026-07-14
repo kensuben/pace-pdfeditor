@@ -106,7 +106,7 @@ function PdfCanvas({ pdf, pageNumber, zoom, annotations, tool, color, onAdd, sel
       const viewport = page.getViewport({ scale: 1 })
       const content = await page.getTextContent()
       if (cancelled) return
-      const regions = content.items.flatMap((raw, index): TextRegion[] => {
+      const fragments = content.items.flatMap((raw, index): TextRegion[] => {
         if (!('str' in raw) || !raw.str.trim()) return []
         const item = raw as { str: string; transform: number[]; width: number; height: number; fontName?: string }
         const tx = pdfjs.Util.transform(viewport.transform, item.transform)
@@ -121,6 +121,20 @@ function PdfCanvas({ pdf, pageNumber, zoom, annotations, tool, color, onAdd, sel
           fontSize: fontHeight, fontFamily, bold:/bold|black|heavy/.test(fontLabel), italic:/italic|oblique/.test(fontLabel), color:'#000000', align:'left', source: 'native',
         }]
       })
+      const regions = fragments.sort((a,b)=>a.y-b.y||a.x-b.x).reduce<TextRegion[]>((lines,fragment)=>{
+        const centerY=fragment.y+fragment.height/2
+        const line=lines.find((candidate)=>Math.abs((candidate.y+candidate.height/2)-centerY)<=Math.max(candidate.height,fragment.height)*.42 && fragment.x-(candidate.x+candidate.width)<=Math.max(.025,fragment.fontSize*3/viewport.width) && Math.abs(candidate.fontSize-fragment.fontSize)<=Math.max(1,fragment.fontSize*.25) && candidate.fontFamily===fragment.fontFamily && candidate.bold===fragment.bold && candidate.italic===fragment.italic)
+        if(!line){lines.push({...fragment,id:`native-line-${pageNumber}-${lines.length}`});return lines}
+        const lineRight=line.x+line.width,fragmentRight=fragment.x+fragment.width
+        const gap=(fragment.x-lineRight)*viewport.width
+        const separator=gap>Math.max(1,fragment.fontSize*.12)&&!line.text.endsWith(' ')?' ':''
+        line.text=`${line.text}${separator}${fragment.text}`
+        const left=Math.min(line.x,fragment.x),top=Math.min(line.y,fragment.y)
+        line.width=Math.max(lineRight,fragmentRight)-left
+        line.height=Math.max(line.y+line.height,fragment.y+fragment.height)-top
+        line.x=left;line.y=top;line.fontSize=Math.max(line.fontSize,fragment.fontSize)
+        return lines
+      },[])
       onTextRegions(regions)
     })().catch(console.error)
     return () => { cancelled = true }
@@ -307,7 +321,11 @@ function App() {
         const p = doc.getPage(a.page - 1), { width, height } = p.getSize()
         const hex = a.color.replace('#', ''), c = rgb(parseInt(hex.slice(0,2),16)/255, parseInt(hex.slice(2,4),16)/255, parseInt(hex.slice(4,6),16)/255)
         if (a.type === 'text' && a.text) {
-          const font=await getFont(a),fontSize=a.fontSize||16,textWidth=font.widthOfTextAtSize(a.text,fontSize),boxWidth=a.width*width
+          const font=await getFont(a),boxWidth=a.width*width
+          let fontSize=a.fontSize||16
+          const naturalWidth=font.widthOfTextAtSize(a.text,fontSize)
+          if(a.replaceOriginal&&naturalWidth>boxWidth)fontSize=Math.max(6,fontSize*(boxWidth/naturalWidth))
+          const textWidth=font.widthOfTextAtSize(a.text,fontSize)
           const textX=a.x*width+(a.align==='center'?Math.max(0,(boxWidth-textWidth)/2):a.align==='right'?Math.max(0,boxWidth-textWidth):0)
           const textY=height-(a.y*height)-fontSize
           if (a.replaceOriginal) {
@@ -384,12 +402,22 @@ function App() {
       const result = await worker.recognize(canvas, {}, { tsv:true })
       await worker.terminate()
       const tsv = result.data.tsv || ''
-      const regions = tsv.split(/\r?\n/).slice(1).flatMap((line,index):TextRegion[]=>{
+      const words = tsv.split(/\r?\n/).slice(1).flatMap((line,index):TextRegion[]=>{
         const cols=line.split('\t'); if(cols.length<12||cols[0]!=='5')return []
         const left=Number(cols[6]),top=Number(cols[7]),w=Number(cols[8]),h=Number(cols[9]),confidence=Number(cols[10]),text=cols.slice(11).join('\t').trim()
         if(!text||confidence<35||w<=0||h<=0)return []
         return [{id:`ocr-${page}-${index}-${uid()}`,page,text,x:left/canvas.width,y:top/canvas.height,width:w/canvas.width,height:h/canvas.height,fontSize:Math.max(7,h/2),confidence,source:'ocr'}]
       })
+      const regions=words.sort((a,b)=>a.y-b.y||a.x-b.x).reduce<TextRegion[]>((lines,word)=>{
+        const centerY=word.y+word.height/2
+        const current=lines.find((candidate)=>Math.abs((candidate.y+candidate.height/2)-centerY)<=Math.max(candidate.height,word.height)*.45 && word.x-(candidate.x+candidate.width)<=Math.max(.025,word.height*2.5))
+        if(!current){lines.push({...word,id:`ocr-line-${page}-${lines.length}-${uid()}`,fontFamily:'Helvetica',color:'#000000',align:'left'});return lines}
+        const right=Math.max(current.x+current.width,word.x+word.width),top=Math.min(current.y,word.y)
+        current.text=`${current.text} ${word.text}`;current.width=right-Math.min(current.x,word.x);current.x=Math.min(current.x,word.x)
+        current.height=Math.max(current.y+current.height,word.y+word.height)-top;current.y=top
+        current.confidence=Math.min(current.confidence??100,word.confidence??100)
+        return lines
+      },[])
       setTextRegions((current)=>({...current,[page]:[...(current[page]||[]).filter((x)=>x.source!=='ocr'),...regions]}))
       log('ocr.page_scanned','OCR trang tài liệu',{page,regionCount:regions.length},'success')
       if(!regions.length)alert('OCR hoàn tất nhưng không tìm thấy vùng chữ đủ độ tin cậy.')

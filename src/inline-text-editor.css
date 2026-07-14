@@ -23,6 +23,8 @@
 
 .annotation.replacement {
   box-shadow: none;
+  white-space: nowrap;
+  text-overflow: clip;
 }
 
 .annotation.replacement::before {
