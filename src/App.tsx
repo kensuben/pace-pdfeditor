@@ -4,10 +4,23 @@ import {
   Highlighter, Image as ImageIcon, Minus, MousePointer2, PenLine,
   Plus, Redo2, RotateCw, Sparkles, Type, Undo2, Upload, LogIn, LogOut, ScanText,
   Bold, Italic, Underline, AlignLeft, AlignCenter, AlignRight,
-  ImagePlus, FilePlus2, BadgeCheck, Trash2, ZoomIn, ZoomOut,
+  ImagePlus, FilePlus2, BadgeCheck, Trash2, ZoomIn, ZoomOut, ArrowUp, ArrowDown,
 } from 'lucide-react'
 import * as pdfjs from 'pdfjs-dist'
 import { PDFDocument, rgb, StandardFonts, type PDFFont } from 'pdf-lib'
+import fontkit from '@pdf-lib/fontkit'
+import beRegular from '@fontsource/be-vietnam-pro/files/be-vietnam-pro-vietnamese-400-normal.woff?url'
+import beItalic from '@fontsource/be-vietnam-pro/files/be-vietnam-pro-vietnamese-400-italic.woff?url'
+import beBold from '@fontsource/be-vietnam-pro/files/be-vietnam-pro-vietnamese-700-normal.woff?url'
+import beBoldItalic from '@fontsource/be-vietnam-pro/files/be-vietnam-pro-vietnamese-700-italic.woff?url'
+import arimoRegular from '@fontsource/arimo/files/arimo-vietnamese-400-normal.woff?url'
+import arimoItalic from '@fontsource/arimo/files/arimo-vietnamese-400-italic.woff?url'
+import arimoBold from '@fontsource/arimo/files/arimo-vietnamese-700-normal.woff?url'
+import arimoBoldItalic from '@fontsource/arimo/files/arimo-vietnamese-700-italic.woff?url'
+import notoRegular from '@fontsource/noto-sans/files/noto-sans-vietnamese-400-normal.woff?url'
+import notoItalic from '@fontsource/noto-sans/files/noto-sans-vietnamese-400-italic.woff?url'
+import notoBold from '@fontsource/noto-sans/files/noto-sans-vietnamese-700-normal.woff?url'
+import notoBoldItalic from '@fontsource/noto-sans/files/noto-sans-vietnamese-700-italic.woff?url'
 import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url'
 import type { Annotation, DocumentInfo, Point, TextRegion, TextStyle, Tool } from './types'
 import type { AccountInfo } from '@azure/msal-browser'
@@ -35,7 +48,7 @@ function IconButton({ label, children, onClick, disabled, active }: { label: str
 function TextFormatBar({ style, onChange }: { style: TextStyle; onChange: (patch: Partial<TextStyle>) => void }) {
   return <div className="text-format-bar" aria-label="Định dạng văn bản">
     <select aria-label="Font chữ" value={style.fontFamily} onChange={(e)=>onChange({fontFamily:e.target.value as TextStyle['fontFamily']})}>
-      <option>Helvetica</option><option>Times Roman</option><option>Courier</option>
+      <option>Be Vietnam Pro</option><option>Arimo</option><option>Noto Sans</option><option>Helvetica</option><option>Times Roman</option><option>Courier</option>
     </select>
     <select className="font-size" aria-label="Cỡ chữ" value={style.fontSize} onChange={(e)=>onChange({fontSize:Number(e.target.value)})}>
       {[8,9,10,11,12,14,16,18,20,24,28,32,36,48,64,72].map((n)=><option key={n} value={n}>{n}</option>)}
@@ -259,7 +272,7 @@ function App() {
   const [textRegions, setTextRegions] = useState<Record<number, TextRegion[]>>({})
   const [ocrBusy, setOcrBusy] = useState(false)
   const [ocrProgress, setOcrProgress] = useState(0)
-  const [textStyle, setTextStyle] = useState<TextStyle>({ fontFamily:'Helvetica', fontSize:16, bold:false, italic:false, underline:false, align:'left', color:'#0C2340' })
+  const [textStyle, setTextStyle] = useState<TextStyle>({ fontFamily:'Be Vietnam Pro', fontSize:16, bold:false, italic:false, underline:false, align:'left', color:'#0C2340' })
   const [showDigitalSign, setShowDigitalSign] = useState(false)
   const annotations = history[historyIndex]
   const selectedImage = useMemo(()=>annotations.find((annotation)=>annotation.id===selectedId&&annotation.type==='image'),[annotations,selectedId])
@@ -354,10 +367,17 @@ function App() {
   const buildPdfBytes = async () => {
       if(!bytes)throw new Error('Chưa có tài liệu để xử lý.')
       const doc = await PDFDocument.load(bytes)
+      doc.registerFontkit(fontkit)
       const fontCache = new Map<string, PDFFont>()
       const getFont = async (a: Annotation) => {
-        const family=a.fontFamily||'Helvetica', variant=`${a.bold?'bold':''}${a.italic?'italic':''}`||'regular', key=`${family}-${variant}`
+        const requestedFamily=a.fontFamily||'Helvetica',hasUnicode=Array.from(a.text||'').some((character)=>(character.codePointAt(0)||0)>127),family=hasUnicode&&['Helvetica','Times Roman','Courier'].includes(requestedFamily)?'Noto Sans':requestedFamily, variant=`${a.bold?'bold':''}${a.italic?'italic':''}`||'regular', key=`${family}-${variant}`
         const cached=fontCache.get(key);if(cached)return cached
+        const customFonts:Record<string,Record<string,string>>={
+          'Be Vietnam Pro':{regular:beRegular,italic:beItalic,bold:beBold,bolditalic:beBoldItalic},
+          Arimo:{regular:arimoRegular,italic:arimoItalic,bold:arimoBold,bolditalic:arimoBoldItalic},
+          'Noto Sans':{regular:notoRegular,italic:notoItalic,bold:notoBold,bolditalic:notoBoldItalic},
+        }
+        if(customFonts[family]){const data=await fetch(customFonts[family][variant]).then((response)=>response.arrayBuffer());const embedded=await doc.embedFont(data,{subset:true});fontCache.set(key,embedded);return embedded}
         let name: StandardFonts
         if(family==='Times Roman') name=a.bold&&a.italic?StandardFonts.TimesRomanBoldItalic:a.bold?StandardFonts.TimesRomanBold:a.italic?StandardFonts.TimesRomanItalic:StandardFonts.TimesRoman
         else if(family==='Courier') name=a.bold&&a.italic?StandardFonts.CourierBoldOblique:a.bold?StandardFonts.CourierBold:a.italic?StandardFonts.CourierOblique:StandardFonts.Courier
@@ -425,6 +445,37 @@ function App() {
       commit(annotations.map((a)=>a.page>page?{...a,page:a.page+count}:a),{action:'pages.inserted',description:'Chèn trang từ PDF khác',metadata:{afterPage:page,insertedPages:count,fileName:file.name}})
       setTextRegions({});setPage(page+1)
     }catch(error){console.error(error);alert(`Không thể chèn trang PDF.\n\n${error instanceof Error?error.message:String(error)}`)}finally{setBusy(false)}
+  }
+
+  const moveCurrentPage = async (direction:-1|1) => {
+    if(!bytes||!info)return
+    const from=page-1,to=from+direction
+    if(to<0||to>=info.pages)return
+    setBusy(true)
+    try{
+      const document=await PDFDocument.load(bytes),movingPage=document.getPage(from)
+      document.removePage(from);document.insertPage(to,movingPage)
+      const updatedBytes=new Uint8Array(await document.save()),loaded=await pdfjs.getDocument({data:updatedBytes.slice()}).promise
+      const fromPage=from+1,toPage=to+1
+      const updatedAnnotations=annotations.map((annotation)=>annotation.page===fromPage?{...annotation,page:toPage}:annotation.page===toPage?{...annotation,page:fromPage}:annotation)
+      setBytes(updatedBytes);setPdf(loaded);setInfo({...info,size:updatedBytes.byteLength});setTextRegions({});setPage(toPage);setSelectedId(null)
+      commit(updatedAnnotations,{action:'page.moved',description:direction<0?'Di chuyển trang lên':'Di chuyển trang xuống',metadata:{from:fromPage,to:toPage}})
+    }catch(error){console.error(error);alert(`Không thể di chuyển trang.\n\n${error instanceof Error?error.message:String(error)}`)}finally{setBusy(false)}
+  }
+
+  const deleteCurrentPage = async () => {
+    if(!bytes||!info)return
+    if(info.pages<=1){alert('Tài liệu phải còn ít nhất một trang.');return}
+    if(!window.confirm(`Xóa trang ${page}?`))return
+    setBusy(true)
+    try{
+      const document=await PDFDocument.load(bytes);document.removePage(page-1)
+      const updatedBytes=new Uint8Array(await document.save()),loaded=await pdfjs.getDocument({data:updatedBytes.slice()}).promise
+      const updatedAnnotations=annotations.filter((annotation)=>annotation.page!==page).map((annotation)=>annotation.page>page?{...annotation,page:annotation.page-1}:annotation)
+      const nextPage=Math.min(page,loaded.numPages)
+      setBytes(updatedBytes);setPdf(loaded);setInfo({...info,size:updatedBytes.byteLength,pages:loaded.numPages});setTextRegions({});setPage(nextPage);setSelectedId(null)
+      commit(updatedAnnotations,{action:'page.deleted',description:'Xóa trang PDF',metadata:{page,remainingPages:loaded.numPages}})
+    }catch(error){console.error(error);alert(`Không thể xóa trang.\n\n${error instanceof Error?error.message:String(error)}`)}finally{setBusy(false)}
   }
 
   const editTextRegion = useCallback((region: TextRegion, next: string) => {
@@ -538,6 +589,9 @@ function App() {
           <button className="action-tool" onClick={()=>imageInput.current?.click()}><ImagePlus/>Chèn ảnh</button>
           {selectedImage&&<><IconButton label="Thu nhỏ ảnh" onClick={()=>scaleSelectedImage(.9)}><ZoomOut/></IconButton><IconButton label="Phóng to ảnh" onClick={()=>scaleSelectedImage(1.1)}><ZoomIn/></IconButton></>}
           <button className="action-tool" onClick={()=>insertPdfInput.current?.click()}><FilePlus2/>Chèn trang</button>
+          <IconButton label="Di chuyển trang lên" onClick={()=>moveCurrentPage(-1)} disabled={page===1}><ArrowUp/></IconButton>
+          <IconButton label="Di chuyển trang xuống" onClick={()=>moveCurrentPage(1)} disabled={page===info.pages}><ArrowDown/></IconButton>
+          <IconButton label="Xóa trang hiện tại" onClick={deleteCurrentPage} disabled={info.pages<=1}><Trash2/></IconButton>
           <button className="action-tool sign" onClick={()=>setShowDigitalSign(true)}><BadgeCheck/>Ký số</button>
           <button className={`ocr-button ${ocrBusy?'busy':''}`} onClick={scanCurrentPage} disabled={ocrBusy}><ScanText/>{ocrBusy?`OCR ${ocrProgress}%`:'Scan OCR'}</button>
           <IconButton label="Xóa đối tượng đã chọn" onClick={deleteSelected} disabled={!selectedId}><Trash2/></IconButton>

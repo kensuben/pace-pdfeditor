@@ -11,7 +11,7 @@ export type TextRegion = {
   width: number
   height: number
   fontSize: number
-  fontFamily?: 'Helvetica' | 'Times Roman' | 'Courier'
+  fontFamily?: 'Helvetica' | 'Times Roman' | 'Courier' | 'Be Vietnam Pro' | 'Arimo' | 'Noto Sans'
   bold?: boolean
   italic?: boolean
   color?: string
@@ -38,7 +38,7 @@ export type Annotation = {
   fontSize?: number
   points?: Point[]
   replaceOriginal?: boolean
-  fontFamily?: 'Helvetica' | 'Times Roman' | 'Courier'
+  fontFamily?: 'Helvetica' | 'Times Roman' | 'Courier' | 'Be Vietnam Pro' | 'Arimo' | 'Noto Sans'
   bold?: boolean
   italic?: boolean
   underline?: boolean
