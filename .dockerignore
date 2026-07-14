@@ -1,0 +1,16 @@
+.git
+.gitignore
+.env
+.env.*
+!.env.example
+node_modules
+dist
+.npm-cache
+logs
+*.log
+Dockerfile*
+compose*.yaml
+README.md
+.agents
+.codex
+
