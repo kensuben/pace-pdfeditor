@@ -17,6 +17,9 @@ export type TextRegion = {
   color?: string
   align?: 'left' | 'center' | 'right'
   backgroundColor?: string
+  maskPadX?: number
+  maskPadTop?: number
+  maskPadBottom?: number
   confidence?: number
   source: 'native' | 'ocr'
 }
@@ -42,6 +45,9 @@ export type Annotation = {
   align?: 'left' | 'center' | 'right'
   imageDataUrl?: string
   backgroundColor?: string
+  maskPadX?: number
+  maskPadTop?: number
+  maskPadBottom?: number
 }
 
 export type TextStyle = Pick<Annotation, 'fontFamily' | 'fontSize' | 'bold' | 'italic' | 'underline' | 'align' | 'color'>

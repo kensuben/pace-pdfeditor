@@ -35,7 +35,7 @@
 .annotation.text.replacement::before {
   content: '';
   position: absolute;
-  inset: -3px -3px -5px;
+  inset: calc(-1 * var(--mask-pad-top, 1px)) calc(-1 * var(--mask-pad-x, 1px)) calc(-1 * var(--mask-pad-bottom, 2px));
   z-index: -1;
   background-color: inherit;
 }
