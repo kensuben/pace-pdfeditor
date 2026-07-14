@@ -4,7 +4,7 @@ import {
   Highlighter, Image as ImageIcon, Minus, MousePointer2, PenLine,
   Plus, Redo2, RotateCw, Sparkles, Type, Undo2, Upload, LogIn, LogOut, ScanText,
   Bold, Italic, Underline, AlignLeft, AlignCenter, AlignRight,
-  ImagePlus, FilePlus2, BadgeCheck, Trash2,
+  ImagePlus, FilePlus2, BadgeCheck, Trash2, ZoomIn, ZoomOut,
 } from 'lucide-react'
 import * as pdfjs from 'pdfjs-dist'
 import { PDFDocument, rgb, StandardFonts, type PDFFont } from 'pdf-lib'
@@ -262,6 +262,7 @@ function App() {
   const [textStyle, setTextStyle] = useState<TextStyle>({ fontFamily:'Helvetica', fontSize:16, bold:false, italic:false, underline:false, align:'left', color:'#0C2340' })
   const [showDigitalSign, setShowDigitalSign] = useState(false)
   const annotations = history[historyIndex]
+  const selectedImage = useMemo(()=>annotations.find((annotation)=>annotation.id===selectedId&&annotation.type==='image'),[annotations,selectedId])
 
   const identity = useMemo(() => ({
     userId: account?.homeAccountId || 'local-user',
@@ -293,6 +294,17 @@ function App() {
     commit(next,{action:'annotation.deleted',description:'Xóa textbox/annotation đã chọn',metadata:{type:removed.type,page:removed.page}})
     setSelectedId(null)
   },[annotations,commit,selectedId])
+
+  const scaleSelectedImage = useCallback((factor:number) => {
+    if(!selectedImage)return
+    const maxFactor=Math.min(.95/selectedImage.width,.95/selectedImage.height)
+    const applied=factor>1?Math.min(factor,maxFactor):factor
+    const width=clamp(selectedImage.width*applied,.04,.95),height=clamp(selectedImage.height*applied,.04,.95)
+    const centerX=selectedImage.x+selectedImage.width/2,centerY=selectedImage.y+selectedImage.height/2
+    const updated={...selectedImage,width,height,x:clamp(centerX-width/2,0,1-width),y:clamp(centerY-height/2,0,1-height)}
+    commit(annotations.map((annotation)=>annotation.id===updated.id?updated:annotation),{action:'image.scaled',description:factor>1?'Phóng to hình ảnh':'Thu nhỏ hình ảnh',metadata:{page:updated.page,width:Math.round(width*1000)/10,height:Math.round(height*1000)/10}})
+    setSelectedId(updated.id)
+  },[annotations,commit,selectedImage])
 
   const changeTextStyle = useCallback((patch: Partial<TextStyle>) => {
     setTextStyle((current)=>({...current,...patch}))
@@ -524,6 +536,7 @@ function App() {
           <div className="colors">{COLORS.map((c) => <button key={c} aria-label={`Color ${c}`} className={color===c?'active':''} style={{background:c}} onClick={() => {setColor(c);if(tool==='text'||selectedText)changeTextStyle({color:c})}}/>)}</div>
           <div className="toolbar-spacer"/>
           <button className="action-tool" onClick={()=>imageInput.current?.click()}><ImagePlus/>Chèn ảnh</button>
+          {selectedImage&&<><IconButton label="Thu nhỏ ảnh" onClick={()=>scaleSelectedImage(.9)}><ZoomOut/></IconButton><IconButton label="Phóng to ảnh" onClick={()=>scaleSelectedImage(1.1)}><ZoomIn/></IconButton></>}
           <button className="action-tool" onClick={()=>insertPdfInput.current?.click()}><FilePlus2/>Chèn trang</button>
           <button className="action-tool sign" onClick={()=>setShowDigitalSign(true)}><BadgeCheck/>Ký số</button>
           <button className={`ocr-button ${ocrBusy?'busy':''}`} onClick={scanCurrentPage} disabled={ocrBusy}><ScanText/>{ocrBusy?`OCR ${ocrProgress}%`:'Scan OCR'}</button>
