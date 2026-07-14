@@ -68,9 +68,9 @@ function EmptyState({ onOpen }: { onOpen: () => void }) {
   </main>
 }
 
-function PdfCanvas({ pdf, pageNumber, zoom, annotations, tool, color, onAdd, selectedId, onSelect, textRegions, onTextRegions, onEditRegion, onEditAnnotation }: {
+function PdfCanvas({ pdf, pageNumber, zoom, annotations, tool, color, onAdd, onUpdate, selectedId, onSelect, textRegions, onTextRegions, onEditRegion, onEditAnnotation }: {
   pdf: pdfjs.PDFDocumentProxy; pageNumber: number; zoom: number; annotations: Annotation[]; tool: Tool; color: string;
-  onAdd: (a: Annotation) => void; selectedId: string | null; onSelect: (id: string | null) => void;
+  onAdd: (a: Annotation) => void; onUpdate: (a: Annotation) => void; selectedId: string | null; onSelect: (id: string | null) => void;
   textRegions: TextRegion[]; onTextRegions: (regions: TextRegion[]) => void; onEditRegion: (region: TextRegion, text: string) => void; onEditAnnotation: (annotation: Annotation, text: string) => void
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -78,6 +78,23 @@ function PdfCanvas({ pdf, pageNumber, zoom, annotations, tool, color, onAdd, sel
   const [size, setSize] = useState({ width: 612, height: 792 })
   const [draft, setDraft] = useState<Point[]>([])
   const [inlineEdit, setInlineEdit] = useState<{ kind:'region'|'annotation'; id:string; value:string; backgroundColor?:string } | null>(null)
+  const [imageDrag,setImageDrag]=useState<{id:string;startClientX:number;startClientY:number;startX:number;startY:number;x:number;y:number}|null>(null)
+
+  useEffect(()=>{
+    if(!imageDrag)return
+    const move=(event:PointerEvent)=>{
+      const rect=wrapRef.current?.getBoundingClientRect();if(!rect)return
+      setImageDrag((drag)=>drag?{...drag,x:clamp(drag.startX+(event.clientX-drag.startClientX)/rect.width,0,1),y:clamp(drag.startY+(event.clientY-drag.startClientY)/rect.height,0,1)}:null)
+    }
+    const up=()=>{
+      setImageDrag((drag)=>{
+        if(drag){const annotation=annotations.find((item)=>item.id===drag.id);if(annotation)onUpdate({...annotation,x:clamp(drag.x,0,1-annotation.width),y:clamp(drag.y,0,1-annotation.height)})}
+        return null
+      })
+    }
+    window.addEventListener('pointermove',move);window.addEventListener('pointerup',up,{once:true})
+    return()=>{window.removeEventListener('pointermove',move);window.removeEventListener('pointerup',up)}
+  },[annotations,imageDrag,onUpdate])
 
   useEffect(() => {
     let cancelled = false
@@ -195,7 +212,7 @@ function PdfCanvas({ pdf, pageNumber, zoom, annotations, tool, color, onAdd, sel
     if (!inlineEdit) return
     const edit = inlineEdit
     setInlineEdit(null)
-    if (!commitChange || !edit.value.trim()) return
+    if (!commitChange) return
     if (edit.kind === 'region') {
       const region = textRegions.find((item)=>item.id===edit.id)
       if (region && edit.value !== region.text) onEditRegion({...region,backgroundColor:edit.backgroundColor||region.backgroundColor}, edit.value)
@@ -213,7 +230,7 @@ function PdfCanvas({ pdf, pageNumber, zoom, annotations, tool, color, onAdd, sel
     <canvas ref={canvasRef}/>
     <div ref={wrapRef} className={`annotation-layer tool-${tool}`} onPointerDown={pointerDown} onPointerMove={pointerMove} onPointerUp={pointerUp}>
       {tool === 'select' && textRegions.map((region) => inlineEdit?.kind==='region'&&inlineEdit.id===region.id ? <textarea key={region.id} autoFocus className="inline-text-editor" value={inlineEdit.value} style={{left:`${region.x*100}%`,top:`${region.y*100}%`,width:`${Math.max(region.width,.04)*100}%`,height:`${Math.max(region.height,.018)*100}%`,fontSize:region.fontSize*zoom,fontFamily:region.fontFamily||'Helvetica',fontWeight:region.bold?700:400,fontStyle:region.italic?'italic':'normal',color:region.color||'#000',textAlign:region.align||'left',backgroundColor:inlineEdit.backgroundColor||'#fff'}} onChange={(e)=>setInlineEdit({...inlineEdit,value:e.target.value})} onKeyDown={editorKeyDown} onBlur={()=>finishInlineEdit(true)} onPointerDown={(e)=>e.stopPropagation()}/> : <button key={region.id} className={`text-region ${region.source}`} title={`${region.source === 'ocr' ? 'OCR' : 'PDF'}: ${region.text}`} style={{ left:`${region.x*100}%`, top:`${region.y*100}%`, width:`${region.width*100}%`, height:`${region.height*100}%` }} onPointerDown={(e)=>e.stopPropagation()} onClick={(e)=>{e.stopPropagation();setInlineEdit({kind:'region',id:region.id,value:region.text,backgroundColor:sampleBackground(region)})}}><span>{region.text}</span></button>)}
-      {annotations.map((a) => a.points ? <svg key={a.id} className={`ink ${selectedId === a.id ? 'selected' : ''}`} viewBox={`0 0 ${size.width} ${size.height}`} onPointerDown={(e) => { e.stopPropagation(); onSelect(a.id) }}><path d={path(a.points)} stroke={a.color} strokeWidth={a.type === 'signature' ? 3 : 2.5} fill="none" strokeLinecap="round" strokeLinejoin="round"/></svg> : a.type==='image'&&a.imageDataUrl ? <img key={a.id} className={`image-annotation ${selectedId===a.id?'selected':''}`} src={a.imageDataUrl} alt="Inserted" style={{left:`${a.x*100}%`,top:`${a.y*100}%`,width:`${a.width*100}%`,height:`${a.height*100}%`}} onPointerDown={(e)=>{e.stopPropagation();onSelect(a.id)}}/> :
+      {annotations.map((a) => a.points ? <svg key={a.id} className={`ink ${selectedId === a.id ? 'selected' : ''}`} viewBox={`0 0 ${size.width} ${size.height}`} onPointerDown={(e) => { e.stopPropagation(); onSelect(a.id) }}><path d={path(a.points)} stroke={a.color} strokeWidth={a.type === 'signature' ? 3 : 2.5} fill="none" strokeLinecap="round" strokeLinejoin="round"/></svg> : a.type==='image'&&a.imageDataUrl ? <img key={a.id} draggable={false} className={`image-annotation ${selectedId===a.id?'selected':''} ${imageDrag?.id===a.id?'dragging':''}`} src={a.imageDataUrl} alt="Inserted" style={{left:`${(imageDrag?.id===a.id?clamp(imageDrag.x,0,1-a.width):a.x)*100}%`,top:`${(imageDrag?.id===a.id?clamp(imageDrag.y,0,1-a.height):a.y)*100}%`,width:`${a.width*100}%`,height:`${a.height*100}%`}} onPointerDown={(e)=>{e.preventDefault();e.stopPropagation();onSelect(a.id);setImageDrag({id:a.id,startClientX:e.clientX,startClientY:e.clientY,startX:a.x,startY:a.y,x:a.x,y:a.y})}}/> :
         inlineEdit?.kind==='annotation'&&inlineEdit.id===a.id ? <textarea key={a.id} autoFocus className="inline-text-editor annotation-editor" value={inlineEdit.value} style={{left:`${a.x*100}%`,top:`${a.y*100}%`,width:`${a.width*100}%`,height:`${a.height*100}%`,fontSize:(a.fontSize||16)*zoom,fontFamily:a.fontFamily||'Helvetica',fontWeight:a.bold?700:400,fontStyle:a.italic?'italic':'normal',textDecoration:a.underline?'underline':'none',color:a.color,textAlign:a.align||'left',backgroundColor:inlineEdit.backgroundColor||'#fff'}} onChange={(e)=>setInlineEdit({...inlineEdit,value:e.target.value})} onKeyDown={editorKeyDown} onBlur={()=>finishInlineEdit(true)} onPointerDown={(e)=>e.stopPropagation()}/> : <div key={a.id} className={`annotation ${a.type} ${a.replaceOriginal ? 'replacement' : ''} ${selectedId === a.id ? 'selected' : ''}`} style={{ left: `${a.x*100}%`, top: `${a.y*100}%`, width: `${a.width*100}%`, height: `${a.height*100}%`, '--replacement-background':a.backgroundColor||'#fff', '--mask-pad-x':`${(a.maskPadX??.0015)*size.width}px`, '--mask-pad-top':`${(a.maskPadTop??.001)*size.height}px`, '--mask-pad-bottom':`${(a.maskPadBottom??.0015)*size.height}px`, opacity: a.opacity, color: a.color, fontSize: (a.fontSize || 16) * zoom, fontFamily:a.fontFamily||'Helvetica', fontWeight:a.bold?700:400, fontStyle:a.italic?'italic':'normal', textDecoration:a.underline?'underline':'none', textAlign:a.align||'left' } as React.CSSProperties} onPointerDown={(e) => { e.stopPropagation(); onSelect(a.id) }} onDoubleClick={(e)=>{e.stopPropagation();if(a.type==='text')setInlineEdit({kind:'annotation',id:a.id,value:a.text||'',backgroundColor:a.replaceOriginal?sampleBackground(a):a.backgroundColor})}}>{a.text}</div>)}
       {draft.length > 1 && <svg className="ink draft" viewBox={`0 0 ${size.width} ${size.height}`}><path d={path(draft)} stroke={color} strokeWidth="2.5" fill="none" strokeLinecap="round"/></svg>}
     </div>
@@ -272,7 +289,8 @@ function App() {
     if(!selectedId)return
     const removed=annotations.find((annotation)=>annotation.id===selectedId)
     if(!removed){setSelectedId(null);return}
-    commit(annotations.filter((annotation)=>annotation.id!==selectedId),{action:'annotation.deleted',description:'Xóa textbox/annotation đã chọn',metadata:{type:removed.type,page:removed.page}})
+    const next=removed.type==='text'&&removed.replaceOriginal?annotations.map((annotation)=>annotation.id===selectedId?{...annotation,text:''}:annotation):annotations.filter((annotation)=>annotation.id!==selectedId)
+    commit(next,{action:'annotation.deleted',description:'Xóa textbox/annotation đã chọn',metadata:{type:removed.type,page:removed.page}})
     setSelectedId(null)
   },[annotations,commit,selectedId])
 
@@ -337,12 +355,13 @@ function App() {
       for (const a of annotations) {
         const p = doc.getPage(a.page - 1), { width, height } = p.getSize()
         const hex = a.color.replace('#', ''), c = rgb(parseInt(hex.slice(0,2),16)/255, parseInt(hex.slice(2,4),16)/255, parseInt(hex.slice(4,6),16)/255)
-        if (a.type === 'text' && a.text) {
+        if (a.type === 'text') {
           const font=await getFont(a),boxWidth=a.width*width
           let fontSize=a.fontSize||16
-          const naturalWidth=font.widthOfTextAtSize(a.text,fontSize)
+          const value=a.text||''
+          const naturalWidth=font.widthOfTextAtSize(value,fontSize)
           if(a.replaceOriginal&&naturalWidth>boxWidth)fontSize=Math.max(6,fontSize*(boxWidth/naturalWidth))
-          const textWidth=font.widthOfTextAtSize(a.text,fontSize)
+          const textWidth=font.widthOfTextAtSize(value,fontSize)
           const textX=a.x*width+(a.align==='center'?Math.max(0,(boxWidth-textWidth)/2):a.align==='right'?Math.max(0,boxWidth-textWidth):0)
           const textY=height-(a.y*height)-fontSize
           if (a.replaceOriginal) {
@@ -353,8 +372,7 @@ function App() {
             const padBottom=a.maskPadBottom!==undefined?a.maskPadBottom*height:Math.max(.7,fontSize*.12)
             p.drawRectangle({ x:a.x*width-padX, y:height-(a.y+a.height)*height-padBottom, width:a.width*width+padX*2, height:a.height*height+padTop+padBottom, color:backgroundRgb, opacity:1 })
           }
-          p.drawText(a.text, { x:textX, y:textY, size:fontSize, font, color:c, opacity:a.opacity, maxWidth:boxWidth })
-          if(a.underline)p.drawLine({start:{x:textX,y:textY-1.5},end:{x:Math.min(textX+textWidth,a.x*width+boxWidth),y:textY-1.5},color:c,thickness:Math.max(.6,fontSize/18),opacity:a.opacity})
+          if(value){p.drawText(value, { x:textX, y:textY, size:fontSize, font, color:c, opacity:a.opacity, maxWidth:boxWidth });if(a.underline)p.drawLine({start:{x:textX,y:textY-1.5},end:{x:Math.min(textX+textWidth,a.x*width+boxWidth),y:textY-1.5},color:c,thickness:Math.max(.6,fontSize/18),opacity:a.opacity})}
         }
         else if(a.type==='image'&&a.imageDataUrl){const data=await fetch(a.imageDataUrl).then((r)=>r.arrayBuffer());const embedded=a.imageDataUrl.startsWith('data:image/png')?await doc.embedPng(data):await doc.embedJpg(data);p.drawImage(embedded,{x:a.x*width,y:height-(a.y+a.height)*height,width:a.width*width,height:a.height*height,opacity:a.opacity})}
         else if (a.type === 'highlight') p.drawRectangle({ x: a.x*width, y: height-(a.y+a.height)*height, width: a.width*width, height: a.height*height, color: c, opacity: a.opacity })
@@ -516,7 +534,7 @@ function App() {
         </div>
         {(tool==='text'||selectedText) && <TextFormatBar style={textStyle} onChange={changeTextStyle}/>}
         <div className="document-area" onDragOver={(e)=>e.preventDefault()} onDrop={(e)=>{e.preventDefault(); const f=e.dataTransfer.files[0]; if(f)openFile(f)}}>
-          <PdfCanvas pdf={pdf} pageNumber={page} zoom={zoom} annotations={pageAnnotations} tool={tool} color={color} onAdd={(a)=>{const next=a.type==='text'?{...a,...textStyle}:a;commit([...annotations,next], { action: 'annotation.added', description: 'Thêm annotation', metadata: { type: a.type, page: a.page, color: next.color } });setSelectedId(next.id)}} selectedId={selectedId} onSelect={selectAnnotation} textRegions={textRegions[page]||[]} onTextRegions={handleTextRegions} onEditRegion={editTextRegion} onEditAnnotation={editTextAnnotation}/>
+          <PdfCanvas pdf={pdf} pageNumber={page} zoom={zoom} annotations={pageAnnotations} tool={tool} color={color} onAdd={(a)=>{const next=a.type==='text'?{...a,...textStyle}:a;commit([...annotations,next], { action: 'annotation.added', description: 'Thêm annotation', metadata: { type: a.type, page: a.page, color: next.color } });setSelectedId(next.id)}} onUpdate={(updated)=>{commit(annotations.map((annotation)=>annotation.id===updated.id?updated:annotation),{action:'annotation.moved',description:'Di chuyển đối tượng',metadata:{type:updated.type,page:updated.page}});setSelectedId(updated.id)}} selectedId={selectedId} onSelect={selectAnnotation} textRegions={textRegions[page]||[]} onTextRegions={handleTextRegions} onEditRegion={editTextRegion} onEditAnnotation={editTextAnnotation}/>
         </div>
         <div className="statusbar">
           <div className="page-nav"><IconButton label="Previous page" disabled={page===1} onClick={()=>{setPage(p=>p-1);log('navigation.page_changed','Chuyển trang',{from:page,to:page-1})}}><ChevronLeft/></IconButton><span><input value={page} onChange={(e)=>{const next=clamp(Number(e.target.value)||1,1,info.pages);setPage(next);log('navigation.page_changed','Chuyển trang',{from:page,to:next})}}/> / {info.pages}</span><IconButton label="Next page" disabled={page===info.pages} onClick={()=>{setPage(p=>p+1);log('navigation.page_changed','Chuyển trang',{from:page,to:page+1})}}><ChevronRight/></IconButton></div>

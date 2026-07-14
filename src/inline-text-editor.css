@@ -39,3 +39,14 @@
   z-index: -1;
   background-color: inherit;
 }
+
+.image-annotation {
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+
+.image-annotation.dragging {
+  cursor: grabbing;
+  opacity: .88;
+}
