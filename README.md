@@ -82,7 +82,7 @@ docker compose up -d
 
 1. Tạo **App registration** trong Microsoft Entra admin center.
 2. Chọn nền tảng **Single-page application (SPA)**.
-3. Thêm redirect URI `http://localhost:5173` cho môi trường local và URL HTTPS production khi deploy.
+3. Thêm redirect URI `http://localhost:5173/redirect.html` cho môi trường local và `https://your-domain/redirect.html` cho production, với loại nền tảng **Single-page application (SPA)**.
 4. Sao chép `.env.example` thành `.env`, sau đó điền Application (client) ID và tenant ID.
 
 ```env

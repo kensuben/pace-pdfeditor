@@ -2,6 +2,7 @@ import { PublicClientApplication, type AccountInfo } from '@azure/msal-browser'
 
 const clientId = import.meta.env.VITE_MICROSOFT_CLIENT_ID?.trim()
 const tenantId = import.meta.env.VITE_MICROSOFT_TENANT_ID?.trim() || 'common'
+const redirectUri = `${window.location.origin}/redirect.html`
 
 export const isMicrosoftAuthConfigured = Boolean(clientId)
 
@@ -9,7 +10,7 @@ export const msal = clientId ? new PublicClientApplication({
   auth: {
     clientId,
     authority: `https://login.microsoftonline.com/${tenantId}`,
-    redirectUri: window.location.origin,
+    redirectUri,
     postLogoutRedirectUri: window.location.origin,
   },
   cache: { cacheLocation: 'sessionStorage' },
@@ -26,7 +27,7 @@ export async function initializeAuth(): Promise<AccountInfo | null> {
 
 export async function signInMicrosoft(): Promise<AccountInfo> {
   if (!msal) throw new Error('Microsoft login has not been configured.')
-  const response = await msal.loginPopup({ scopes: ['openid', 'profile', 'email'], prompt: 'select_account' })
+  const response = await msal.loginPopup({ scopes: ['openid', 'profile', 'email'], prompt: 'select_account', redirectUri })
   msal.setActiveAccount(response.account)
   return response.account
 }
