@@ -77,6 +77,11 @@ docker compose up -d
 - Đăng nhập Microsoft bằng MSAL/Entra ID
 - Activity log chi tiết theo tài khoản: mở file, điều hướng, zoom, annotation, undo/redo, export và sự kiện bảo mật
 - Xem, lọc, xóa và xuất activity log thành JSON
+- Tự động tạo vùng chọn từ text layer của PDF
+- Scan OCR trang hiện tại bằng tiếng Việt và tiếng Anh
+- Dùng Select để chọn vùng text native/OCR, sửa nội dung và ghi thay đổi vào file export
+- Text Format Editor: Helvetica/Times/Courier, cỡ chữ 8–72, bold, italic, underline, căn trái/giữa/phải và màu chữ
+- Double-click text annotation để sửa lại nội dung; format áp dụng cho text mới hoặc text đang chọn
 
 ## Cấu hình Microsoft Login
 
@@ -109,7 +114,7 @@ MVP tập trung vào annotation/edit cơ bản. Để tiến gần một sản p
 
 1. Quản lý trang: reorder, rotate thật, delete, insert, merge/split.
 2. Chỉnh annotation: drag, resize, properties, comment thread, stamp, shape.
-3. Text nâng cao: font Unicode, rich text, edit nội dung gốc và OCR cho bản scan.
+3. Text nâng cao: nhúng font Unicode, rich text, hiệu chỉnh layout phức tạp và OCR hàng loạt nhiều trang.
 4. Form: điền form AcroForm, tạo field, flatten và validation.
 5. Chữ ký: signature pad/import ảnh, e-sign workflow, audit trail; chữ ký số cần backend/HSM.
 6. Tìm kiếm/copy text, bookmark, outline và accessibility.
@@ -123,3 +128,23 @@ MVP tập trung vào annotation/edit cơ bản. Để tiến gần một sản p
 - Export hiện ghi annotation mới lên PDF, chưa chỉnh sửa trực tiếp text/image đã tồn tại.
 - Font export mặc định là Helvetica nên text Unicode/Vietnamese cần nhúng font tùy chỉnh ở phase tiếp theo.
 - Nút Rotate hiện là placeholder cho tính năng quản lý trang ở roadmap.
+
+## Chèn ảnh và chèn trang PDF
+
+- **Chèn ảnh** hỗ trợ PNG/JPEG, đặt ảnh vào giữa trang hiện tại và nhúng ảnh vào file khi xuất PDF.
+- **Chèn trang** sao chép toàn bộ trang của file PDF được chọn vào ngay sau trang hiện tại. Annotation của các trang phía sau được tự động dịch đúng số trang.
+- Chữ ký viết tay vẫn là annotation hiển thị. Có thể dùng **Chèn ảnh** để đặt ảnh chữ ký, nhưng hai cách này không phải chữ ký số có chứng thư.
+
+## Tích hợp ký số
+
+Frontend gọi một signing gateway đã được quản trị viên cấu hình. Gateway nhận `POST /v1/pdf/sign` dưới dạng `multipart/form-data` gồm `file`, `mode` (`usb-token` hoặc `remote-token`) và `reason`, sau đó trả về file PDF đã ký với content type `application/pdf`.
+
+```env
+# API backend/provider cho Remote Token (nên dùng reverse proxy cùng domain)
+VITE_SIGNING_API_URL=/signing-api
+
+# Local middleware của nhà cung cấp CA cho USB Token
+VITE_USB_SIGNING_AGENT_URL=https://127.0.0.1:port
+```
+
+USB Token không thể được trình duyệt truy cập khóa riêng trực tiếp; cần cài middleware/local agent của nhà cung cấp CA. Remote Token cần backend tích hợp API của nhà cung cấp (ưu tiên chuẩn Cloud Signature Consortium) và thực hiện xác thực/OTP theo chính sách của CA. Hai biến Vite là cấu hình build-time nên phải build lại Docker image sau khi thay đổi.

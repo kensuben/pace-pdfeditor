@@ -6,6 +6,8 @@ services:
       args:
         VITE_MICROSOFT_CLIENT_ID: ${VITE_MICROSOFT_CLIENT_ID:-}
         VITE_MICROSOFT_TENANT_ID: ${VITE_MICROSOFT_TENANT_ID:-common}
+        VITE_SIGNING_API_URL: ${VITE_SIGNING_API_URL:-}
+        VITE_USB_SIGNING_AGENT_URL: ${VITE_USB_SIGNING_AGENT_URL:-}
     ports:
       - "${APP_PORT:-8080}:8080"
     restart: unless-stopped
