@@ -576,6 +576,7 @@ function App() {
 
   const login = async () => {
     if (!isMicrosoftAuthConfigured) {
+      // Đăng nhập giả lập ở DEV khi chưa cấu hình Microsoft Entra. Xem chi tiết tại README.md (mục "Chạy dự án").
       if (import.meta.env.DEV) {
         const mockAccount: AccountInfo = {
           homeAccountId: 'mock-account-id',

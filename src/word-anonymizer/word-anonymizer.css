@@ -358,6 +358,7 @@
   font-size: 13px;
   cursor: pointer;
   user-select: none;
+  min-width: 0;
 }
 
 .word-option-item input[type="checkbox"] {
@@ -366,22 +367,29 @@
   width: 16px;
   height: 16px;
   cursor: pointer;
+  flex-shrink: 0;
 }
 
 .word-option-label {
   display: flex;
   flex-direction: column;
   gap: 2px;
+  min-width: 0;
 }
 
 .word-option-label b {
   font-weight: 500;
   color: var(--ink, #0c2340);
+  word-break: break-word;
+  overflow-wrap: break-word;
 }
 
 .word-option-label small {
   font-size: 11px;
   color: var(--muted, #627087);
+  word-break: break-word;
+  overflow-wrap: break-word;
+  line-height: 1.4;
 }
 
 .word-select-row {
@@ -390,6 +398,12 @@
   gap: 12px;
   margin-top: 6px;
   font-size: 13px;
+  flex-wrap: wrap;
+}
+
+.word-select-row label {
+  min-width: 0;
+  word-break: break-word;
 }
 
 .word-select-row select {
@@ -399,6 +413,8 @@
   font-size: 13px;
   background: #fff;
   color: var(--ink, #0c2340);
+  max-width: 100%;
+  box-sizing: border-box;
 }
 
 /* Residual report banner */
@@ -502,6 +518,18 @@
 
   .word-card {
     padding: 16px;
+  }
+}
+
+@media (max-width: 600px) {
+  .word-select-row {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 6px;
+  }
+
+  .word-select-row select {
+    width: 100%;
   }
 }
 
