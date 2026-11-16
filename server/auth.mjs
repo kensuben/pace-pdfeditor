@@ -5,8 +5,8 @@ export const GUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9
 export const FORBIDDEN_TENANTS = ['common', 'organizations', 'consumers']
 
 export function validateAuthConfig({ clientId, tenantId }) {
-  const cleanClientId = String(clientId || '').trim()
-  const cleanTenantId = String(tenantId || '').trim()
+  const cleanClientId = String(clientId || '').trim().toLowerCase()
+  const cleanTenantId = String(tenantId || '').trim().toLowerCase()
 
   if (!cleanClientId || !GUID_REGEX.test(cleanClientId)) {
     const preview = cleanClientId ? `${cleanClientId.slice(0, 8)}...` : '(empty)'
@@ -14,7 +14,7 @@ export function validateAuthConfig({ clientId, tenantId }) {
     process.exit(1)
   }
 
-  if (FORBIDDEN_TENANTS.includes(cleanTenantId.toLowerCase())) {
+  if (FORBIDDEN_TENANTS.includes(cleanTenantId)) {
     console.error(`[AUTH CONFIG ERROR] Single-tenant PACE application does not allow '${cleanTenantId}'. MICROSOFT_TENANT_ID must be a valid Directory (tenant) GUID.`)
     process.exit(1)
   }
@@ -32,7 +32,9 @@ export function validateAuthConfig({ clientId, tenantId }) {
 // Reference: Microsoft identity platform ID token claims reference (https://learn.microsoft.com/en-us/entra/identity-platform/id-token-claims-reference)
 // and Validate tokens (https://learn.microsoft.com/en-us/entra/identity-platform/access-tokens#validating-tokens)
 export function createTokenVerifier({ clientId, tenantId, jwks }) {
-  const expectedIssuer = `https://login.microsoftonline.com/${tenantId}/v2.0`
+  const normalizedClientId = String(clientId || '').trim().toLowerCase()
+  const normalizedTenantId = String(tenantId || '').trim().toLowerCase()
+  const expectedIssuer = `https://login.microsoftonline.com/${normalizedTenantId}/v2.0`
 
   return async function verifyToken(token) {
     if (!token) {
@@ -43,7 +45,7 @@ export function createTokenVerifier({ clientId, tenantId, jwks }) {
 
     try {
       const { payload } = await jwtVerify(token, jwks, {
-        audience: clientId,
+        audience: normalizedClientId,
         issuer: expectedIssuer,
         algorithms: ['RS256'],
       })
@@ -52,7 +54,7 @@ export function createTokenVerifier({ clientId, tenantId, jwks }) {
         throw new Error('Missing oid or tid claim')
       }
 
-      if (String(payload.tid).toLowerCase() !== String(tenantId).toLowerCase()) {
+      if (String(payload.tid).toLowerCase() !== normalizedTenantId) {
         throw new Error('Tenant ID mismatch')
       }
 
