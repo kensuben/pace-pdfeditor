@@ -1,10 +1,16 @@
 import http from 'node:http'
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
-import { dirname } from 'node:path'
+import { readFile } from 'node:fs/promises'
 import { createRemoteJWKSet } from 'jose'
 import { validateAuthConfig, createTokenVerifier, authenticateUser } from './auth.mjs'
 import { isValidEmail, normalizeUserPatch, assertAdminInvariant } from './users.mjs'
 import { readJsonBody, validateActivityInput } from './http.mjs'
+import {
+  parseLogMaxInStore,
+  recordSession,
+  getOnlineUsers,
+  cleanStaleSessions,
+  CoalescedStore,
+} from './store.mjs'
 
 const port = Number(process.env.PORT || 3001)
 const file = process.env.DATA_FILE || '/data/store.json'
@@ -18,19 +24,42 @@ const { clientId, tenantId } = validateAuthConfig({
 const jwks = createRemoteJWKSet(new URL(`https://login.microsoftonline.com/${tenantId}/discovery/v2.0/keys`))
 const verifyToken = createTokenVerifier({ clientId, tenantId, jwks })
 
-let store = { users: [], groups: [], logs: [], sessions: {} }
+let rawStore = { users: [], groups: [], logs: [] }
 try {
-  store = JSON.parse(await readFile(file, 'utf8'))
+  rawStore = JSON.parse(await readFile(file, 'utf8'))
 } catch {
-  await mkdir(dirname(file), { recursive: true })
+  // Store file does not exist yet; will be created on first save
 }
 
-let saveQueue = Promise.resolve()
-const save = () => (saveQueue = saveQueue.then(async () => {
-  const temp = `${file}.tmp`
-  await writeFile(temp, JSON.stringify(store))
-  await rename(temp, file)
-}))
+const store = {
+  users: Array.isArray(rawStore.users) ? rawStore.users : [],
+  groups: Array.isArray(rawStore.groups) ? rawStore.groups : [],
+  logs: Array.isArray(rawStore.logs) ? rawStore.logs : [],
+}
+
+const sessions = new Map()
+const sessionCleanupInterval = setInterval(() => cleanStaleSessions(sessions), 5 * 60 * 1000)
+sessionCleanupInterval.unref()
+
+const storeManager = new CoalescedStore({
+  file,
+  getStore: () => store,
+  delayMs: 500,
+  logMaxInStore: parseLogMaxInStore(),
+})
+
+const save = () => storeManager.scheduleSave()
+
+const shutdown = async (signal) => {
+  try {
+    await storeManager.flush()
+  } catch (err) {
+    console.error(`[SERVER] Flush on ${signal} failed:`, err)
+  }
+  process.exit(0)
+}
+process.on('SIGTERM', () => shutdown('SIGTERM'))
+process.on('SIGINT', () => shutdown('SIGINT'))
 
 const json = (res, status, data) => {
   res.writeHead(status, {
@@ -64,14 +93,12 @@ const server = http.createServer(async (req, res) => {
     const url = new URL(req.url, `http://${req.headers.host}`)
 
     if (req.method === 'POST' && route(req, '/api/auth/session')) {
-      store.sessions[user.id] = { email: user.email, name: user.name, lastSeen: new Date().toISOString() }
-      await save()
+      recordSession(sessions, user)
       return json(res, 200, { user })
     }
 
     if (req.method === 'POST' && route(req, '/api/heartbeat')) {
-      store.sessions[user.id] = { email: user.email, name: user.name, lastSeen: new Date().toISOString() }
-      await save()
+      recordSession(sessions, user)
       return json(res, 200, { ok: true })
     }
 
@@ -101,8 +128,7 @@ const server = http.createServer(async (req, res) => {
     if (url.pathname.startsWith('/api/admin/')) admin(user)
 
     if (req.method === 'GET' && route(req, '/api/admin/overview')) {
-      const cutoff = Date.now() - 90000
-      const online = Object.values(store.sessions).filter(x => Date.parse(x.lastSeen) >= cutoff)
+      const online = getOnlineUsers(sessions, 90000)
       return json(res, 200, { online, totalUsers: store.users.length, totalGroups: store.groups.length, totalLogs: store.logs.length })
     }
 

@@ -44,6 +44,7 @@ services:
       MICROSOFT_TENANT_ID: ${MICROSOFT_TENANT_ID:?MICROSOFT_TENANT_ID bat buoc phai co (Directory tenant ID dang GUID cua PACE)}
       ADMIN_EMAILS: ${ADMIN_EMAILS:-}
       DATA_FILE: /data/store.json
+      LOG_MAX_IN_STORE: ${LOG_MAX_IN_STORE:-20000}
     volumes:
       - paperly_data:/data
     healthcheck:
