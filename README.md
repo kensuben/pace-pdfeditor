@@ -160,3 +160,103 @@ ADMIN_EMAILS=admin@pace.edu.vn,security@pace.edu.vn
 Sau khi admin đăng nhập Microsoft, nút Administration xuất hiện cạnh Activity Log. Admin có thể tạo group, thêm email được phép đăng nhập, bật/tắt tài khoản, cấp quyền admin, gán group, xem user online, tìm kiếm/lọc log và xóa log trong một khoảng thời gian xác định. User online được xác định bằng heartbeat 30 giây và thời hạn hiện diện 90 giây.
 
 Dữ liệu backend nằm ở `/data/store.json` trong volume. Cần backup volume này định kỳ. Với tải lớn hoặc yêu cầu audit tuân thủ cao, nên thay JSON store bằng PostgreSQL/SQL Server và append-only/WORM retention.
+
+## Deploy production (VPS)
+
+### 1. Chuẩn bị lần đầu trên VPS
+
+1. Clone repository về VPS:
+   ```bash
+   git clone https://github.com/kensuben/pace-pdfeditor.git
+   cd pace-pdfeditor
+   ```
+2. Đăng nhập GitHub Container Registry (GHCR) bằng Personal Access Token (PAT) có quyền `read:packages`:
+   ```bash
+   echo "<GITHUB_PAT>" | docker login ghcr.io -u <GITHUB_USERNAME> --password-stdin
+   ```
+3. Tạo file cấu hình môi trường production từ file mẫu:
+   ```bash
+   cp deploy/.env.production.example deploy/.env.production
+   nano deploy/.env.production
+   ```
+   *(Điền `MICROSOFT_CLIENT_ID`, `MICROSOFT_TENANT_ID`, `ADMIN_EMAILS` phù hợp với tổ chức)*
+4. Kiểm tra volume dữ liệu đã có từ trước:
+   ```bash
+   docker volume ls
+   ```
+   Mặc định hệ thống dùng lại volume `pace-pdfeditor_paperly_data`. Nếu volume trên máy có tên khác, thiết lập biến shell trước khi chạy script:
+   ```bash
+   export DATA_VOLUME="tên_volume_của_bạn"
+   ```
+
+### 2. Chuyển đổi từ stack cũ sang stack mới (chỉ thực hiện 1 lần)
+
+Thực hiện tuần tự theo các bước sau để đảm bảo an toàn dữ liệu:
+1. **Sao lưu dữ liệu trước khi chuyển đổi**:
+   ```bash
+   ./scripts/backup.sh
+   ```
+2. **Dừng stack cũ**: Vào thư mục đang chạy stack cũ (thư mục chạy `compose.yaml` ban đầu), chạy:
+   ```bash
+   docker compose down
+   ```
+   > **CẢNH BÁO**: TUYỆT ĐỐI KHÔNG thêm cờ `-v` khi chạy lệnh down (sẽ xoá vĩnh viễn volume dữ liệu người dùng).
+3. **Kiểm tra trạng thái**:
+   ```bash
+   docker ps -a --filter volume=pace-pdfeditor_paperly_data
+   ```
+   Đảm bảo không còn container nào đang gắn volume và cổng `8080` đã được giải phóng.
+4. **Khởi chạy stack production mới**:
+   ```bash
+   ./scripts/deploy.sh
+   ```
+5. **Kế hoạch lùi bước (Rollback) nếu có sự cố**:
+   Script deploy không tự động xoá hay chỉnh sửa dữ liệu trong volume. Nếu cần quay lại stack cũ:
+   ```bash
+   docker compose -p pace-pdf -f deploy/docker-compose.prod.yml down
+   cd <thư_mục_cũ> && docker compose up -d
+   ```
+
+### 3. Vận hành thường nhật
+
+- **Cập nhật phiên bản mới nhất**:
+  ```bash
+  ./scripts/deploy.sh
+  ```
+  *(Tự động chạy preflight → backup → cập nhật code → kéo image `:latest` → khởi động → kiểm tra healthcheck)*
+
+- **Quay về phiên bản trước (Rollback)**:
+  ```bash
+  ./scripts/deploy.sh rollback
+  ```
+  *(Chuyển về image tag `sha-<7>` của commit đã chạy trước đó)*
+
+- **Kiểm tra trạng thái hệ thống**:
+  ```bash
+  ./scripts/deploy.sh status
+  ```
+
+### 4. Khôi phục dữ liệu từ bản sao lưu
+
+Các bản sao lưu được lưu tự động trong thư mục `backups/` dưới dạng file nén `.tar.gz`:
+```bash
+# Xem danh sách bản sao lưu
+ls -l backups/
+
+# Khôi phục dữ liệu vào volume (lưu ý: cần dừng stack trước khi khôi phục)
+docker run --rm \
+  -v "${DATA_VOLUME:-pace-pdfeditor_paperly_data}:/data" \
+  -v "$(pwd)/backups:/backup:ro" \
+  alpine:3.21.3 \
+  sh -c "rm -rf /data/* && tar xzf /backup/<tên_file_backup>.tar.gz -C /data"
+```
+
+### 5. Cấu hình GitHub Variables cho CI/CD
+
+Để workflow `.github/workflows/docker-publish.yml` tự động build và đính kèm biến môi trường frontend vào image web, hãy khai báo các biến trong mục **Settings > Secrets and variables > Actions > Variables** của repository GitHub:
+
+- `VITE_MICROSOFT_CLIENT_ID`: Application (client) ID của Microsoft Entra ID.
+- `VITE_MICROSOFT_TENANT_ID`: Tenant ID hoặc `common`.
+- `VITE_SIGNING_API_URL`: URL API gateway ký số (nếu có).
+- `VITE_USB_SIGNING_AGENT_URL`: URL local agent USB Token (nếu có).
+
