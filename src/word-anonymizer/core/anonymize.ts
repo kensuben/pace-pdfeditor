@@ -1,6 +1,6 @@
 import { OOXML_NAMESPACES } from './constants'
 import { inspectLoadedDocx } from './inspect'
-import { normalizeString, foldSearchString } from './normalize'
+import { normalizeString } from './normalize'
 import {
   AnonymizeOptions,
   AnonymizeResult,
@@ -18,6 +18,21 @@ const DEFAULT_OPTIONS: AnonymizeOptions = {
   customPropsPolicy: 'keep-sensitivity-labels',
 }
 
+function findNearestHyperlinkAncestor(node: Node): Element | null {
+  let curr: Node | null = node.parentNode
+  while (curr && curr.nodeType === 1 /* Node.ELEMENT_NODE */) {
+    const el = curr as Element
+    if (
+      el.localName === 'hyperlink' &&
+      (el.namespaceURI === OOXML_NAMESPACES.w || !el.namespaceURI)
+    ) {
+      return el
+    }
+    curr = curr.parentNode
+  }
+  return null
+}
+
 // TODO(verify): Cấu trúc mention w:hyperlink kết hợp mailto: - Word 365 dùng w:hyperlink trỏ rel mailto, cần kiểm tra thêm khi mention nằm trong comment phức tạp hoặc phân tách nhiều w:r/w:t.
 export async function anonymizeDocx(
   input: ArrayBuffer,
@@ -29,6 +44,8 @@ export async function anonymizeDocx(
   const inspection = await inspectLoadedDocx(zip)
 
   const modifiedParts: string[] = []
+  const warnings: string[] = [...inspection.warnings]
+  const processedMentionHyperlinks = new Set<Element>()
 
   const getMapped = (rawAuthor: string): MappedIdentity | undefined => {
     const key = normalizeString(rawAuthor)
@@ -193,8 +210,8 @@ export async function anonymizeDocx(
         if (!relEl) continue
 
         const target = relEl.getAttribute('Target') || ''
-        if (target.startsWith('mailto:')) {
-          const email = target.slice('mailto:'.length).trim()
+        if (target.toLowerCase().startsWith('mailto:')) {
+          const email = target.slice('mailto:'.length).trim().toLowerCase()
           const textNodes = Array.from(
             hl.getElementsByTagNameNS(OOXML_NAMESPACES.w, 't')
           )
@@ -221,11 +238,29 @@ export async function anonymizeDocx(
               `mailto:${mapped.alias}@anonymized.invalid`
             )
             commentsRelsModified = true
+            processedMentionHyperlinks.add(hl)
+          } else {
+            if (textNodes.length > 0) {
+              textNodes[0].textContent = '@Người khác'
+              for (let k = 1; k < textNodes.length; k++) {
+                textNodes[k].textContent = ''
+              }
+              commentsModified = true
+            }
+            relEl.setAttribute(
+              'Target',
+              'mailto:nguoi-khac@anonymized.invalid'
+            )
+            commentsRelsModified = true
+            processedMentionHyperlinks.add(hl)
+            warnings.push(
+              `Không tìm thấy danh tính cho liên kết mailto '${target}'. Đã đổi thành 'mailto:nguoi-khac@anonymized.invalid'.`
+            )
           }
         }
       }
 
-      // Also process any unhandled mailto: in comments.xml.rels matching an author
+      // Process any remaining mailto: in comments.xml.rels (orphan or not referenced by hyperlink)
       if (commentsRelsDoc) {
         const relEls = commentsRelsDoc.getElementsByTagNameNS(
           OOXML_NAMESPACES.rels,
@@ -235,40 +270,26 @@ export async function anonymizeDocx(
           const rel = relEls[i]
           const target = rel.getAttribute('Target') || ''
           if (
-            target.startsWith('mailto:') &&
+            target.toLowerCase().startsWith('mailto:') &&
             !target.endsWith('@anonymized.invalid')
           ) {
-            const rawEmail = target.slice('mailto:'.length).trim()
-            let mapped = findMappedForMention(rawEmail, '')
-            if (!mapped) {
-              const userPart = foldSearchString(rawEmail.split('@')[0]).replace(
-                /[^a-z0-9]/g,
-                ''
-              )
-              if (userPart.length > 2) {
-                for (const [authorName, m] of Object.entries(mapping)) {
-                  const authorClean = foldSearchString(authorName).replace(
-                    /[^a-z0-9]/g,
-                    ''
-                  )
-                  if (
-                    userPart === authorClean ||
-                    (authorClean.length > 2 &&
-                      (userPart.includes(authorClean) ||
-                        authorClean.includes(userPart)))
-                  ) {
-                    mapped = m
-                    break
-                  }
-                }
-              }
-            }
+            const rawEmail = target.slice('mailto:'.length).trim().toLowerCase()
+            const mapped = findMappedForMention(rawEmail, '')
             if (mapped) {
               rel.setAttribute(
                 'Target',
                 `mailto:${mapped.alias}@anonymized.invalid`
               )
               commentsRelsModified = true
+            } else {
+              rel.setAttribute(
+                'Target',
+                'mailto:nguoi-khac@anonymized.invalid'
+              )
+              commentsRelsModified = true
+              warnings.push(
+                `Không tìm thấy danh tính cho liên kết mailto '${target}'. Đã đổi thành 'mailto:nguoi-khac@anonymized.invalid'.`
+              )
             }
           }
         }
@@ -281,10 +302,8 @@ export async function anonymizeDocx(
       for (let i = 0; i < textEls.length; i++) {
         const textNode = textEls[i]
         // If this textNode is inside a w:hyperlink mention that was already processed, skip to avoid double replacing
-        if (
-          opts.replaceMentions &&
-          textNode.parentElement?.parentElement?.localName === 'hyperlink'
-        ) {
+        const hl = findNearestHyperlinkAncestor(textNode)
+        if (hl && processedMentionHyperlinks.has(hl)) {
           continue
         }
 
@@ -589,7 +608,7 @@ export async function anonymizeDocx(
       identities: inspection.identities,
       mapping,
       modifiedParts,
-      warnings: inspection.warnings,
+      warnings,
     },
   }
 }

@@ -57,6 +57,7 @@ export async function inspectLoadedDocx(zip: JSZip): Promise<InspectionReport> {
 
   // Helper map: relId -> Target for comments.xml.rels
   const commentsRelsMap = new Map<string, string>()
+  const referencedRelIds = new Set<string>()
   const commentsRelsFile = zip.file('word/_rels/comments.xml.rels')
   if (commentsRelsFile) {
     const xmlText = await commentsRelsFile.async('string')
@@ -126,6 +127,7 @@ export async function inspectLoadedDocx(zip: JSZip): Promise<InspectionReport> {
         hl.getAttribute('id')
 
       if (!rId) continue
+      referencedRelIds.add(rId)
       const target = commentsRelsMap.get(rId)
       if (target && target.startsWith('mailto:')) {
         const email = target.slice('mailto:'.length).trim().toLowerCase()
@@ -256,6 +258,33 @@ export async function inspectLoadedDocx(zip: JSZip): Promise<InspectionReport> {
     }
     if (modifiedByEl?.textContent) {
       addIdentity(modifiedByEl.textContent, 'docProps/core.xml', 'contributor')
+    }
+  }
+
+  // 4b. Scan for orphan mailto: relationships in word/_rels/comments.xml.rels
+  for (const [rId, target] of commentsRelsMap.entries()) {
+    if (target && target.toLowerCase().startsWith('mailto:') && !referencedRelIds.has(rId)) {
+      const email = target.slice('mailto:'.length).trim().toLowerCase()
+      if (!email) continue
+
+      let matched = false
+      for (const ident of identitiesMap.values()) {
+        if (
+          (ident.email && ident.email.toLowerCase() === email) ||
+          normalizeString(ident.author).toLowerCase() === email
+        ) {
+          ident.email = ident.email || email
+          if (!ident.sources.includes('word/_rels/comments.xml.rels')) {
+            ident.sources.push('word/_rels/comments.xml.rels')
+          }
+          matched = true
+          break
+        }
+      }
+
+      if (!matched) {
+        addIdentity(email, 'word/_rels/comments.xml.rels', 'mentioned', { email })
+      }
     }
   }
 

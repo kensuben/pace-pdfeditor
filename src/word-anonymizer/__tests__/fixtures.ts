@@ -6,11 +6,12 @@ export interface FixtureComment {
   initials: string
   date?: string
   dateUtc?: { ns: string; name: string; value: string }
-  text: string
+  text?: string
   hyperlink?: {
     rId: string
     text: string
   }
+  rawContent?: string
   innerRevisions?: Array<{
     type: 'ins' | 'del'
     author: string
@@ -42,7 +43,8 @@ export interface FixtureOptions {
   }>
   mentions?: Array<{
     relId: string
-    email: string
+    email?: string
+    target?: string
   }>
   coreProps?: {
     creator?: string
@@ -132,15 +134,19 @@ export async function createMockDocx(options: FixtureOptions = {}): Promise<Arra
       }
 
       let innerContent = `<${wPrefix}:p>`
-      if (c.hyperlink) {
-        innerContent += `<${wPrefix}:hyperlink r:id="${c.hyperlink.rId}"><${wPrefix}:r><${wPrefix}:t>${c.hyperlink.text}</${wPrefix}:t></${wPrefix}:r></${wPrefix}:hyperlink>`
-      }
-      if (c.text) {
-        innerContent += `<${wPrefix}:r><${wPrefix}:t>${c.text}</${wPrefix}:t></${wPrefix}:r>`
-      }
-      if (c.innerRevisions) {
-        for (const rev of c.innerRevisions) {
-          innerContent += `<${wPrefix}:${rev.type} ${wPrefix}:author="${rev.author}"><${wPrefix}:r><${wPrefix}:t>${rev.text}</${wPrefix}:t></${wPrefix}:r></${wPrefix}:${rev.type}>`
+      if (c.rawContent) {
+        innerContent += c.rawContent
+      } else {
+        if (c.hyperlink) {
+          innerContent += `<${wPrefix}:hyperlink r:id="${c.hyperlink.rId}"><${wPrefix}:r><${wPrefix}:t>${c.hyperlink.text}</${wPrefix}:t></${wPrefix}:r></${wPrefix}:hyperlink>`
+        }
+        if (c.text) {
+          innerContent += `<${wPrefix}:r><${wPrefix}:t>${c.text}</${wPrefix}:t></${wPrefix}:r>`
+        }
+        if (c.innerRevisions) {
+          for (const rev of c.innerRevisions) {
+            innerContent += `<${wPrefix}:${rev.type} ${wPrefix}:author="${rev.author}"><${wPrefix}:r><${wPrefix}:t>${rev.text}</${wPrefix}:t></${wPrefix}:r></${wPrefix}:${rev.type}>`
+          }
         }
       }
       innerContent += `</${wPrefix}:p>`
@@ -172,7 +178,8 @@ export async function createMockDocx(options: FixtureOptions = {}): Promise<Arra
     let relsXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">`
     for (const m of options.mentions) {
-      relsXml += `\n  <Relationship Id="${m.relId}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink" Target="mailto:${m.email}" TargetMode="External"/>`
+      const target = m.target || `mailto:${m.email}`
+      relsXml += `\n  <Relationship Id="${m.relId}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink" Target="${target}" TargetMode="External"/>`
     }
     relsXml += `\n</Relationships>`
     zip.file('word/_rels/comments.xml.rels', relsXml)
