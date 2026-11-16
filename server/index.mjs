@@ -4,6 +4,7 @@ import { dirname } from 'node:path'
 import { createRemoteJWKSet } from 'jose'
 import { validateAuthConfig, createTokenVerifier, authenticateUser } from './auth.mjs'
 import { isValidEmail, normalizeUserPatch, assertAdminInvariant } from './users.mjs'
+import { readJsonBody, validateActivityInput } from './http.mjs'
 
 const port = Number(process.env.PORT || 3001)
 const file = process.env.DATA_FILE || '/data/store.json'
@@ -39,11 +40,7 @@ const json = (res, status, data) => {
   res.end(JSON.stringify(data))
 }
 
-const body = async (req) => {
-  const chunks = []
-  for await (const chunk of req) chunks.push(chunk)
-  return chunks.length ? JSON.parse(Buffer.concat(chunks).toString('utf8')) : {}
-}
+
 
 const tokenOf = req => (req.headers.authorization || '').replace(/^Bearer\s+/i, '')
 
@@ -79,18 +76,19 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (req.method === 'POST' && route(req, '/api/activities')) {
-      const input = await body(req)
+      const rawInput = await readJsonBody(req)
+      const input = validateActivityInput(rawInput)
       store.logs.push({
         id: crypto.randomUUID(),
         timestamp: new Date().toISOString(),
         userId: user.id,
         userEmail: user.email,
         userName: user.name,
-        sessionId: String(input.sessionId || ''),
-        action: String(input.action || ''),
-        level: String(input.level || 'info'),
-        description: String(input.description || ''),
-        metadata: input.metadata || {},
+        sessionId: input.sessionId,
+        action: input.action,
+        level: input.level,
+        description: input.description,
+        metadata: input.metadata,
       })
       await save()
       return json(res, 201, { ok: true })
@@ -113,7 +111,7 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (req.method === 'POST' && route(req, '/api/admin/users')) {
-      const rawInput = await body(req)
+      const rawInput = await readJsonBody(req)
       const rawEmail = typeof rawInput?.email === 'string' ? rawInput.email.trim().toLowerCase() : ''
       if (!isValidEmail(rawEmail)) return json(res, 400, { error: 'Email không hợp lệ' })
       const email = rawEmail
@@ -159,7 +157,7 @@ const server = http.createServer(async (req, res) => {
       const id = url.pathname.split('/').pop()
       const item = store.users.find(x => x.id === id)
       if (!item) return json(res, 404, { error: 'Not found' })
-      const rawInput = await body(req)
+      const rawInput = await readJsonBody(req)
       const patch = normalizeUserPatch(rawInput, { groups: store.groups })
       assertAdminInvariant({ users: store.users, targetId: item.id, patch, actorId: user.id })
       const changedFields = []
@@ -189,7 +187,7 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (req.method === 'POST' && route(req, '/api/admin/groups')) {
-      const input = await body(req)
+      const input = await readJsonBody(req)
       const item = {
         id: crypto.randomUUID(),
         name: String(input.name || '').trim(),
@@ -227,7 +225,7 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (req.method === 'DELETE' && route(req, '/api/admin/logs')) {
-      const input = await body(req)
+      const input = await readJsonBody(req)
       const from = String(input.from || '')
       const to = String(input.to || '')
       if (!from || !to) return json(res, 400, { error: 'from and to are required' })
@@ -240,7 +238,9 @@ const server = http.createServer(async (req, res) => {
     return json(res, 404, { error: 'Not found' })
   } catch (error) {
     console.error(error)
-    return json(res, error.status || 500, { error: error.message || 'Server error' })
+    const status = error.status || 500
+    const message = error.status ? (error.message || 'Error') : 'Server error'
+    return json(res, status, { error: message })
   }
 })
 
