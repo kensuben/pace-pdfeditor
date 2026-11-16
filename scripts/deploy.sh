@@ -6,6 +6,8 @@
 #   ./scripts/deploy.sh status     commit đang chạy, origin/main, API, volume, mốc rollback
 set -euo pipefail
 
+cd "$(dirname "${BASH_SOURCE[0]}")/.."
+
 PROJECT="${PROJECT:-pace-pdf}"
 COMPOSE_FILES="${COMPOSE_FILES:--f deploy/docker-compose.prod.yml --env-file deploy/.env.production}"
 STATE_DIR="${STATE_DIR:-.deploy}"

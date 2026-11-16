@@ -172,8 +172,9 @@ Dữ liệu backend nằm ở `/data/store.json` trong volume. Cần backup volu
    ```
 2. Đăng nhập GitHub Container Registry (GHCR) bằng Personal Access Token (PAT) có quyền `read:packages`:
    ```bash
-   echo "<GITHUB_PAT>" | docker login ghcr.io -u <GITHUB_USERNAME> --password-stdin
+   docker login ghcr.io -u <GITHUB_USERNAME>
    ```
+   Lệnh sẽ yêu cầu nhập mật khẩu — người vận hành dán PAT vào (không hiển thị trên màn hình). Tuyệt đối không đưa PAT vào câu lệnh, vào script hay commit vào repository để tránh bị lưu vào lịch sử shell.
 3. Tạo file cấu hình môi trường production từ file mẫu:
    ```bash
    cp deploy/.env.production.example deploy/.env.production
@@ -238,18 +239,38 @@ Thực hiện tuần tự theo các bước sau để đảm bảo an toàn dữ
 
 ### 4. Khôi phục dữ liệu từ bản sao lưu
 
-Các bản sao lưu được lưu tự động trong thư mục `backups/` dưới dạng file nén `.tar.gz`:
-```bash
-# Xem danh sách bản sao lưu
-ls -l backups/
+Các bản sao lưu được lưu tự động trong thư mục `backups/` dưới dạng file nén `.tar.gz`.
 
-# Khôi phục dữ liệu vào volume (lưu ý: cần dừng stack trước khi khôi phục)
-docker run --rm \
-  -v "${DATA_VOLUME:-pace-pdfeditor_paperly_data}:/data" \
-  -v "$(pwd)/backups:/backup:ro" \
-  alpine:3.21.3 \
-  sh -c "rm -rf /data/* && tar xzf /backup/<tên_file_backup>.tar.gz -C /data"
-```
+Khi cần khôi phục:
+
+1. **Dừng stack production** (lưu ý: chỉ dừng container, **không** dùng `down -v`):
+   ```bash
+   docker compose -p pace-pdf -f deploy/docker-compose.prod.yml stop
+   ```
+
+2. **Sao lưu dữ liệu hiện tại trước khi khôi phục** (phòng ngừa rủi ro):
+   ```bash
+   ./scripts/backup.sh
+   ```
+
+3. **Xem danh sách bản sao lưu**:
+   ```bash
+   ls -l backups/
+   ```
+
+4. **Khôi phục dữ liệu vào volume** (dọn sạch dữ liệu cũ kể cả file ẩn và bung bản sao lưu):
+   ```bash
+   docker run --rm \
+     -v "${DATA_VOLUME:-pace-pdfeditor_paperly_data}:/data" \
+     -v "$(pwd)/backups:/backup:ro" \
+     alpine:3.21.3 \
+     sh -c "find /data -mindepth 1 -delete && tar xzf /backup/<tên_file_backup>.tar.gz -C /data"
+   ```
+
+5. **Khởi động lại stack**:
+   ```bash
+   docker compose -p pace-pdf -f deploy/docker-compose.prod.yml start
+   ```
 
 ### 5. Cấu hình GitHub Variables cho CI/CD
 
