@@ -434,7 +434,7 @@ function App() {
     const image=new Image();image.src=dataUrl;await image.decode()
     const width=.28,height=Math.min(.35,width*(image.height/image.width)*.77)
     const annotation:Annotation={id:uid(),page,type:'image',x:(1-width)/2,y:(1-height)/2,width,height,color:'#000000',opacity:1,imageDataUrl:dataUrl}
-    commit([...annotations,annotation],{action:'image.inserted',description:'Chèn hình ảnh',metadata:{page,fileName:file.name,fileSize:file.size}})
+    commit([...annotations,annotation],{action:'image.inserted',description:'Chèn hình ảnh',metadata:{page,fileExt:file.type.includes('png')?'png':'jpeg',fileSize:file.size}})
     setSelectedId(annotation.id)
   }
 
@@ -448,7 +448,7 @@ function App() {
       const merged=new Uint8Array(await target.save()),loaded=await pdfjs.getDocument({data:merged.slice()}).promise
       const count=copied.length
       setBytes(merged);setPdf(loaded);setInfo({...info,size:merged.byteLength,pages:loaded.numPages})
-      commit(annotations.map((a)=>a.page>page?{...a,page:a.page+count}:a),{action:'pages.inserted',description:'Chèn trang từ PDF khác',metadata:{afterPage:page,insertedPages:count,fileName:file.name}})
+      commit(annotations.map((a)=>a.page>page?{...a,page:a.page+count}:a),{action:'pages.inserted',description:'Chèn trang từ PDF khác',metadata:{afterPage:page,insertedPages:count,fileExt:'pdf'}})
       setTextRegions({});setPage(page+1)
     }catch(error){console.error(error);alert(`Không thể chèn trang PDF.\n\n${error instanceof Error?error.message:String(error)}`)}finally{setBusy(false)}
   }
