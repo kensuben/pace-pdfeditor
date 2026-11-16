@@ -2,7 +2,8 @@ import http from 'node:http'
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { dirname } from 'node:path'
 import { createRemoteJWKSet } from 'jose'
-import { validateAuthConfig, createTokenVerifier, authenticateUser, sanitizeUserInput } from './auth.mjs'
+import { validateAuthConfig, createTokenVerifier, authenticateUser } from './auth.mjs'
+import { isValidEmail, normalizeUserPatch, assertAdminInvariant } from './users.mjs'
 
 const port = Number(process.env.PORT || 3001)
 const file = process.env.DATA_FILE || '/data/store.json'
@@ -113,26 +114,39 @@ const server = http.createServer(async (req, res) => {
 
     if (req.method === 'POST' && route(req, '/api/admin/users')) {
       const rawInput = await body(req)
-      const input = sanitizeUserInput(rawInput)
-      const email = String(input.email || '').trim().toLowerCase()
-      if (!email) return json(res, 400, { error: 'Email required' })
+      const rawEmail = typeof rawInput?.email === 'string' ? rawInput.email.trim().toLowerCase() : ''
+      if (!isValidEmail(rawEmail)) return json(res, 400, { error: 'Email không hợp lệ' })
+      const email = rawEmail
+      const patch = normalizeUserPatch(rawInput, { groups: store.groups })
       let item = store.users.find(x => x.email === email)
       if (item) {
-        Object.assign(item, input, {
-          id: item.id,
-          email,
-          createdAt: item.createdAt,
-          oid: item.oid,
-          tid: item.tid,
-        })
+        assertAdminInvariant({ users: store.users, targetId: item.id, patch, actorId: user.id })
+        const changedFields = []
+        if (patch.role !== undefined && patch.role !== item.role) changedFields.push('role')
+        if (patch.active !== undefined && patch.active !== item.active) changedFields.push('active')
+        if (changedFields.length > 0) {
+          store.logs.push({
+            id: crypto.randomUUID(),
+            timestamp: new Date().toISOString(),
+            userId: user.id,
+            userEmail: user.email,
+            userName: user.name,
+            sessionId: '',
+            action: 'admin.user_updated',
+            level: 'security',
+            description: `Admin updated user fields: ${changedFields.join(', ')}`,
+            metadata: { targetUserId: item.id, changedFields },
+          })
+        }
+        Object.assign(item, patch)
       } else {
         item = {
           id: crypto.randomUUID(),
           email,
-          name: input.name || email,
-          role: input.role === 'admin' ? 'admin' : 'user',
-          active: input.active !== false,
-          groupIds: input.groupIds || [],
+          name: patch.name || email,
+          role: patch.role || 'user',
+          active: patch.active !== undefined ? patch.active : true,
+          groupIds: patch.groupIds || [],
           createdAt: new Date().toISOString(),
         }
         store.users.push(item)
@@ -142,17 +156,30 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (req.method === 'PATCH' && url.pathname.startsWith('/api/admin/users/')) {
-      const item = store.users.find(x => x.id === url.pathname.split('/').pop())
+      const id = url.pathname.split('/').pop()
+      const item = store.users.find(x => x.id === id)
       if (!item) return json(res, 404, { error: 'Not found' })
       const rawInput = await body(req)
-      const input = sanitizeUserInput(rawInput)
-      Object.assign(item, input, {
-        id: item.id,
-        email: item.email,
-        createdAt: item.createdAt,
-        oid: item.oid,
-        tid: item.tid,
-      })
+      const patch = normalizeUserPatch(rawInput, { groups: store.groups })
+      assertAdminInvariant({ users: store.users, targetId: item.id, patch, actorId: user.id })
+      const changedFields = []
+      if (patch.role !== undefined && patch.role !== item.role) changedFields.push('role')
+      if (patch.active !== undefined && patch.active !== item.active) changedFields.push('active')
+      if (changedFields.length > 0) {
+        store.logs.push({
+          id: crypto.randomUUID(),
+          timestamp: new Date().toISOString(),
+          userId: user.id,
+          userEmail: user.email,
+          userName: user.name,
+          sessionId: '',
+          action: 'admin.user_updated',
+          level: 'security',
+          description: `Admin updated user fields: ${changedFields.join(', ')}`,
+          metadata: { targetUserId: item.id, changedFields },
+        })
+      }
+      Object.assign(item, patch)
       await save()
       return json(res, 200, item)
     }
