@@ -3,13 +3,27 @@ import { IdentityMapping, InspectionReport, KnownIdentity } from './types'
 
 export function buildDefaultMapping(report: InspectionReport): IdentityMapping {
   const mapping: IdentityMapping = {}
-  report.identities.forEach((ident, index) => {
-    const num = index + 1
-    mapping[ident.author] = {
-      label: `Người góp ý ${num}`,
-      initials: `NG${num}`,
+  let contributorCount = 0
+  let mentionedCount = 0
+
+  for (const ident of report.identities) {
+    if (ident.kind === 'mentioned') {
+      mentionedCount++
+      mapping[ident.author] = {
+        label: `Người được nhắc ${mentionedCount}`,
+        initials: `NN${mentionedCount}`,
+        alias: `nguoi-duoc-nhac-${mentionedCount}`,
+      }
+    } else {
+      contributorCount++
+      mapping[ident.author] = {
+        label: `Người góp ý ${contributorCount}`,
+        initials: `NG${contributorCount}`,
+        alias: `nguoi-gop-y-${contributorCount}`,
+      }
     }
-  })
+  }
+
   return mapping
 }
 
@@ -27,7 +41,7 @@ export function validateMapping(
     if (ident.userId) realNames.add(ident.userId.toLowerCase())
   }
 
-  for (const [author, { label, initials }] of Object.entries(mapping)) {
+  for (const [author, { label, initials, alias }] of Object.entries(mapping)) {
     const trimmedLabel = label.trim()
     if (!trimmedLabel) {
       errors.push(`Nhãn cho tác giả '${author}' không được để trống.`)
@@ -46,6 +60,10 @@ export function validateMapping(
 
     if (!initials.trim()) {
       errors.push(`Tên viết tắt cho tác giả '${author}' không được để trống.`)
+    }
+
+    if (!alias || !alias.trim()) {
+      errors.push(`Alias cho tác giả '${author}' không được để trống.`)
     }
   }
 

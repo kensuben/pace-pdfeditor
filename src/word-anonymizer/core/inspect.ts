@@ -1,9 +1,11 @@
 import type JSZip from 'jszip'
 import { OOXML_NAMESPACES } from './constants'
 import { normalizeString } from './normalize'
-import { InspectionReport, KnownIdentity } from './types'
+import { IdentityKind, InspectionReport, KnownIdentity } from './types'
 import { parseXml } from './xml'
 import { loadSafeDocx } from './zip'
+
+const EMAIL_REGEX = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/
 
 export async function inspectDocx(input: ArrayBuffer): Promise<InspectionReport> {
   const zip = await loadSafeDocx(input)
@@ -19,6 +21,7 @@ export async function inspectLoadedDocx(zip: JSZip): Promise<InspectionReport> {
   const addIdentity = (
     authorRaw: string,
     source: string,
+    kind: IdentityKind = 'contributor',
     extra?: { initials?: string; email?: string; userId?: string }
   ) => {
     const author = normalizeString(authorRaw)
@@ -28,6 +31,7 @@ export async function inspectLoadedDocx(zip: JSZip): Promise<InspectionReport> {
     if (!existing) {
       existing = {
         author,
+        kind,
         sources: [],
       }
       identitiesMap.set(author, existing)
@@ -36,14 +40,35 @@ export async function inspectLoadedDocx(zip: JSZip): Promise<InspectionReport> {
     if (!existing.sources.includes(source)) {
       existing.sources.push(source)
     }
+    // A contributor role takes precedence over mentioned
+    if (kind === 'contributor' && existing.kind === 'mentioned') {
+      existing.kind = 'contributor'
+    }
     if (extra?.initials && !existing.initials) {
       existing.initials = normalizeString(extra.initials)
     }
     if (extra?.email && !existing.email) {
-      existing.email = extra.email.trim()
+      existing.email = extra.email.trim().toLowerCase()
     }
     if (extra?.userId && !existing.userId) {
       existing.userId = extra.userId.trim()
+    }
+  }
+
+  // Helper map: relId -> Target for comments.xml.rels
+  const commentsRelsMap = new Map<string, string>()
+  const commentsRelsFile = zip.file('word/_rels/comments.xml.rels')
+  if (commentsRelsFile) {
+    const xmlText = await commentsRelsFile.async('string')
+    const doc = parseXml(xmlText)
+    const relEls = doc.getElementsByTagNameNS(OOXML_NAMESPACES.rels, 'Relationship')
+    for (let i = 0; i < relEls.length; i++) {
+      const rel = relEls[i]
+      const id = rel.getAttribute('Id')
+      const target = rel.getAttribute('Target')
+      if (id && target) {
+        commentsRelsMap.set(id, target)
+      }
     }
   }
 
@@ -52,8 +77,9 @@ export async function inspectLoadedDocx(zip: JSZip): Promise<InspectionReport> {
   if (commentsFile) {
     const xmlText = await commentsFile.async('string')
     const doc = parseXml(xmlText)
-    const commentEls = doc.getElementsByTagNameNS(OOXML_NAMESPACES.w, 'comment')
 
+    // Comments author & initials
+    const commentEls = doc.getElementsByTagNameNS(OOXML_NAMESPACES.w, 'comment')
     for (let i = 0; i < commentEls.length; i++) {
       const el = commentEls[i]
       commentCount++
@@ -62,9 +88,73 @@ export async function inspectLoadedDocx(zip: JSZip): Promise<InspectionReport> {
       const initialsAttr = el.getAttributeNodeNS(OOXML_NAMESPACES.w, 'initials')
 
       if (authorAttr?.value) {
-        addIdentity(authorAttr.value, 'word/comments.xml', {
+        addIdentity(authorAttr.value, 'word/comments.xml', 'contributor', {
           initials: initialsAttr?.value,
         })
+      }
+    }
+
+    // Revisions inside comments.xml (w:ins, w:del, w:rPrChange...)
+    const allElsInComments = doc.getElementsByTagName('*')
+    for (let i = 0; i < allElsInComments.length; i++) {
+      const el = allElsInComments[i]
+      if (el.localName === 'comment' && el.namespaceURI === OOXML_NAMESPACES.w) {
+        continue // Skip the comment element itself, already counted
+      }
+
+      const attrs = el.attributes
+      for (let j = 0; j < attrs.length; j++) {
+        const attr = attrs[j]
+        if (
+          attr.localName === 'author' &&
+          attr.namespaceURI === OOXML_NAMESPACES.w &&
+          attr.value
+        ) {
+          revisionCount++
+          addIdentity(attr.value, 'word/comments.xml', 'contributor')
+        }
+      }
+    }
+
+    // Scan for @mention hyperlinks in comments.xml
+    const hyperlinkEls = doc.getElementsByTagNameNS(OOXML_NAMESPACES.w, 'hyperlink')
+    for (let i = 0; i < hyperlinkEls.length; i++) {
+      const hl = hyperlinkEls[i]
+      const rId =
+        hl.getAttributeNS('http://schemas.openxmlformats.org/officeDocument/2006/relationships', 'id') ||
+        hl.getAttribute('r:id') ||
+        hl.getAttribute('id')
+
+      if (!rId) continue
+      const target = commentsRelsMap.get(rId)
+      if (target && target.startsWith('mailto:')) {
+        const email = target.slice('mailto:'.length).trim().toLowerCase()
+        const textNodes = hl.getElementsByTagNameNS(OOXML_NAMESPACES.w, 't')
+        let displayText = ''
+        for (let t = 0; t < textNodes.length; t++) {
+          displayText += textNodes[t].textContent || ''
+        }
+        displayText = displayText.replace(/^@/, '').trim()
+
+        // Match with known identities by email or display text
+        let matched = false
+        for (const ident of identitiesMap.values()) {
+          if (ident.email && ident.email.toLowerCase() === email) {
+            matched = true
+            break
+          }
+          if (displayText && normalizeString(ident.author) === normalizeString(displayText)) {
+            ident.email = ident.email || email
+            matched = true
+            break
+          }
+        }
+
+        if (!matched) {
+          // Create new mentioned identity
+          const authorName = displayText || email
+          addIdentity(authorName, 'word/comments.xml', 'mentioned', { email })
+        }
       }
     }
   }
@@ -93,7 +183,7 @@ export async function inspectLoadedDocx(zip: JSZip): Promise<InspectionReport> {
           attr.value
         ) {
           revisionCount++
-          addIdentity(attr.value, path)
+          addIdentity(attr.value, path, 'contributor')
         }
       }
     }
@@ -121,66 +211,36 @@ export async function inspectLoadedDocx(zip: JSZip): Promise<InspectionReport> {
       )
       if (presenceEls.length > 0) {
         const presence = presenceEls[0]
-        userId =
+        const rawUserId =
           presence.getAttributeNS(OOXML_NAMESPACES.w15, 'userId') ||
-          presence.getAttribute('userId') ||
-          undefined
-        const providerId =
+          presence.getAttribute('userId')
+        const rawProviderId =
           presence.getAttributeNS(OOXML_NAMESPACES.w15, 'providerId') ||
           presence.getAttribute('providerId')
 
-        if (userId && userId.includes('@')) {
-          email = userId
-        } else if (providerId && providerId.includes('@')) {
-          email = providerId
+        if (rawUserId) {
+          userId = rawUserId
+          const emailMatch = rawUserId.match(EMAIL_REGEX)
+          if (emailMatch) {
+            email = emailMatch[0].toLowerCase()
+          }
+        }
+
+        if (!email && rawProviderId) {
+          const providerMatch = rawProviderId.match(EMAIL_REGEX)
+          if (providerMatch) {
+            email = providerMatch[0].toLowerCase()
+          }
         }
       }
 
       if (author) {
-        addIdentity(author, 'word/people.xml', { email, userId })
+        addIdentity(author, 'word/people.xml', 'contributor', { email, userId })
       }
     }
   }
 
-  // 4. Scan word/_rels/comments.xml.rels for mailto mentions
-  const commentsRelsFile = zip.file('word/_rels/comments.xml.rels')
-  if (commentsRelsFile) {
-    const xmlText = await commentsRelsFile.async('string')
-    const doc = parseXml(xmlText)
-    const relEls = doc.getElementsByTagNameNS(OOXML_NAMESPACES.rels, 'Relationship')
-
-    for (let i = 0; i < relEls.length; i++) {
-      const rel = relEls[i]
-      const target = rel.getAttribute('Target')
-      if (target && target.startsWith('mailto:')) {
-        const email = target.slice('mailto:'.length).trim()
-        if (email) {
-          // Check if any existing identity matches
-          let matched = false
-          for (const ident of identitiesMap.values()) {
-            if (ident.email === email) {
-              matched = true
-              break
-            }
-          }
-          if (!matched) {
-            // Check if email local part matches an author
-            for (const ident of identitiesMap.values()) {
-              if (
-                email.toLowerCase().includes(ident.author.toLowerCase()) ||
-                ident.author.toLowerCase().includes(email.split('@')[0].toLowerCase())
-              ) {
-                ident.email = email
-                break
-              }
-            }
-          }
-        }
-      }
-    }
-  }
-
-  // 5. Scan docProps/core.xml for creator & lastModifiedBy
+  // 4. Scan docProps/core.xml for creator & lastModifiedBy
   const corePropsFile = zip.file('docProps/core.xml')
   if (corePropsFile) {
     const xmlText = await corePropsFile.async('string')
@@ -192,14 +252,14 @@ export async function inspectLoadedDocx(zip: JSZip): Promise<InspectionReport> {
     )[0]
 
     if (creatorEl?.textContent) {
-      addIdentity(creatorEl.textContent, 'docProps/core.xml')
+      addIdentity(creatorEl.textContent, 'docProps/core.xml', 'contributor')
     }
     if (modifiedByEl?.textContent) {
-      addIdentity(modifiedByEl.textContent, 'docProps/core.xml')
+      addIdentity(modifiedByEl.textContent, 'docProps/core.xml', 'contributor')
     }
   }
 
-  // 6. Collect warnings
+  // 5. Collect warnings
   let hasEmbeddings = false
   for (const path of entries) {
     if (path.startsWith('word/embeddings/')) {

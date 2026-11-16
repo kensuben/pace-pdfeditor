@@ -1,10 +1,11 @@
 import { OOXML_NAMESPACES } from './constants'
 import { inspectLoadedDocx } from './inspect'
-import { normalizeString } from './normalize'
+import { normalizeString, foldSearchString } from './normalize'
 import {
   AnonymizeOptions,
   AnonymizeResult,
   IdentityMapping,
+  MappedIdentity,
 } from './types'
 import { parseXml, serializeXml } from './xml'
 import { loadSafeDocx } from './zip'
@@ -17,6 +18,7 @@ const DEFAULT_OPTIONS: AnonymizeOptions = {
   customPropsPolicy: 'keep-sensitivity-labels',
 }
 
+// TODO(verify): Cấu trúc mention w:hyperlink kết hợp mailto: - Word 365 dùng w:hyperlink trỏ rel mailto, cần kiểm tra thêm khi mention nằm trong comment phức tạp hoặc phân tách nhiều w:r/w:t.
 export async function anonymizeDocx(
   input: ArrayBuffer,
   mapping: IdentityMapping,
@@ -28,17 +30,55 @@ export async function anonymizeDocx(
 
   const modifiedParts: string[] = []
 
-  // Build a lookup function for mapping
-  const getMapped = (rawAuthor: string) => {
+  const getMapped = (rawAuthor: string): MappedIdentity | undefined => {
     const key = normalizeString(rawAuthor)
     return mapping[key]
   }
 
-  // Find author index for mention email generation
-  const authorIndexMap = new Map<string, number>()
-  Object.keys(mapping).forEach((key, idx) => {
-    authorIndexMap.set(key, idx + 1)
-  })
+  // Load comments rels map if present
+  const commentsRelsFile = zip.file('word/_rels/comments.xml.rels')
+  let commentsRelsDoc: Document | null = null
+  let commentsRelsModified = false
+  const relIdToElementMap = new Map<string, Element>()
+
+  if (commentsRelsFile) {
+    const relsText = await commentsRelsFile.async('string')
+    commentsRelsDoc = parseXml(relsText)
+    const relEls = commentsRelsDoc.getElementsByTagNameNS(
+      OOXML_NAMESPACES.rels,
+      'Relationship'
+    )
+    for (let i = 0; i < relEls.length; i++) {
+      const rel = relEls[i]
+      const id = rel.getAttribute('Id')
+      if (id) {
+        relIdToElementMap.set(id, rel)
+      }
+    }
+  }
+
+  // Helper to find mapped identity for a mention by email or display text
+  const findMappedForMention = (
+    email: string,
+    displayText: string
+  ): MappedIdentity | undefined => {
+    // 1. Match by email in known identities
+    for (const ident of inspection.identities) {
+      if (ident.email && ident.email.toLowerCase() === email.toLowerCase()) {
+        const mapped = getMapped(ident.author)
+        if (mapped) return mapped
+      }
+    }
+
+    // 2. Match by display text in mapping
+    if (displayText) {
+      const mapped = getMapped(displayText)
+      if (mapped) return mapped
+    }
+
+    // 3. Match by email as mapping key directly
+    return getMapped(email)
+  }
 
   // 1. Process word/comments.xml
   const commentsFile = zip.file('word/comments.xml')
@@ -47,6 +87,7 @@ export async function anonymizeDocx(
     const doc = parseXml(xmlText)
     let commentsModified = false
 
+    // Process comment authors and initials
     const commentEls = doc.getElementsByTagNameNS(OOXML_NAMESPACES.w, 'comment')
     for (let i = 0; i < commentEls.length; i++) {
       const commentEl = commentEls[i]
@@ -74,27 +115,184 @@ export async function anonymizeDocx(
           commentsModified = true
         }
 
-        const dateUtcAttr =
-          commentEl.getAttributeNodeNS(OOXML_NAMESPACES.w16du, 'dateUtc') ||
-          commentEl.getAttributeNodeNS(OOXML_NAMESPACES.w16cex, 'dateUtc')
-        if (dateUtcAttr) {
-          commentEl.removeAttributeNode(dateUtcAttr)
-          commentsModified = true
+        const attrs = Array.from(commentEl.attributes)
+        for (const attr of attrs) {
+          if (
+            attr.localName === 'dateUtc' &&
+            (attr.namespaceURI?.startsWith('http://schemas.microsoft.com/office/word/') ||
+              attr.namespaceURI === OOXML_NAMESPACES.w16du ||
+              attr.namespaceURI === OOXML_NAMESPACES.w16cex)
+          ) {
+            commentEl.removeAttributeNode(attr)
+            commentsModified = true
+          }
         }
       }
     }
 
-    // Process text inside comments: mentions and/or names in text
+    // Process revisions INSIDE comments (w:ins, w:del, etc.)
+    const allElsInComments = doc.getElementsByTagName('*')
+    for (let i = 0; i < allElsInComments.length; i++) {
+      const el = allElsInComments[i]
+      if (el.localName === 'comment' && el.namespaceURI === OOXML_NAMESPACES.w) {
+        continue
+      }
+
+      const attrs = Array.from(el.attributes)
+      for (const attr of attrs) {
+        if (
+          attr.localName === 'author' &&
+          attr.namespaceURI === OOXML_NAMESPACES.w &&
+          attr.value
+        ) {
+          const mapped = getMapped(attr.value)
+          if (mapped) {
+            attr.value = mapped.label
+            commentsModified = true
+          }
+        }
+
+        if (opts.removeDates) {
+          if (
+            attr.localName === 'date' &&
+            attr.namespaceURI === OOXML_NAMESPACES.w
+          ) {
+            el.removeAttributeNode(attr)
+            commentsModified = true
+          } else if (
+            attr.localName === 'dateUtc' &&
+            (attr.namespaceURI?.startsWith('http://schemas.microsoft.com/office/word/') ||
+              attr.namespaceURI === OOXML_NAMESPACES.w16du ||
+              attr.namespaceURI === OOXML_NAMESPACES.w16cex)
+          ) {
+            el.removeAttributeNode(attr)
+            commentsModified = true
+          }
+        }
+      }
+    }
+
+    // Process mentions via w:hyperlink
+    if (opts.replaceMentions) {
+      const hyperlinkEls = doc.getElementsByTagNameNS(
+        OOXML_NAMESPACES.w,
+        'hyperlink'
+      )
+      for (let i = 0; i < hyperlinkEls.length; i++) {
+        const hl = hyperlinkEls[i]
+        const rId =
+          hl.getAttributeNS(
+            'http://schemas.openxmlformats.org/officeDocument/2006/relationships',
+            'id'
+          ) ||
+          hl.getAttribute('r:id') ||
+          hl.getAttribute('id')
+
+        if (!rId) continue
+        const relEl = relIdToElementMap.get(rId)
+        if (!relEl) continue
+
+        const target = relEl.getAttribute('Target') || ''
+        if (target.startsWith('mailto:')) {
+          const email = target.slice('mailto:'.length).trim()
+          const textNodes = Array.from(
+            hl.getElementsByTagNameNS(OOXML_NAMESPACES.w, 't')
+          )
+          let displayText = ''
+          for (const tNode of textNodes) {
+            displayText += tNode.textContent || ''
+          }
+          displayText = displayText.replace(/^@/, '').trim()
+
+          const mapped = findMappedForMention(email, displayText)
+          if (mapped) {
+            // First w:t becomes @<label>, remaining w:t become empty
+            if (textNodes.length > 0) {
+              textNodes[0].textContent = `@${mapped.label}`
+              for (let k = 1; k < textNodes.length; k++) {
+                textNodes[k].textContent = ''
+              }
+              commentsModified = true
+            }
+
+            // Update Target in rels
+            relEl.setAttribute(
+              'Target',
+              `mailto:${mapped.alias}@anonymized.invalid`
+            )
+            commentsRelsModified = true
+          }
+        }
+      }
+
+      // Also process any unhandled mailto: in comments.xml.rels matching an author
+      if (commentsRelsDoc) {
+        const relEls = commentsRelsDoc.getElementsByTagNameNS(
+          OOXML_NAMESPACES.rels,
+          'Relationship'
+        )
+        for (let i = 0; i < relEls.length; i++) {
+          const rel = relEls[i]
+          const target = rel.getAttribute('Target') || ''
+          if (
+            target.startsWith('mailto:') &&
+            !target.endsWith('@anonymized.invalid')
+          ) {
+            const rawEmail = target.slice('mailto:'.length).trim()
+            let mapped = findMappedForMention(rawEmail, '')
+            if (!mapped) {
+              const userPart = foldSearchString(rawEmail.split('@')[0]).replace(
+                /[^a-z0-9]/g,
+                ''
+              )
+              if (userPart.length > 2) {
+                for (const [authorName, m] of Object.entries(mapping)) {
+                  const authorClean = foldSearchString(authorName).replace(
+                    /[^a-z0-9]/g,
+                    ''
+                  )
+                  if (
+                    userPart === authorClean ||
+                    (authorClean.length > 2 &&
+                      (userPart.includes(authorClean) ||
+                        authorClean.includes(userPart)))
+                  ) {
+                    mapped = m
+                    break
+                  }
+                }
+              }
+            }
+            if (mapped) {
+              rel.setAttribute(
+                'Target',
+                `mailto:${mapped.alias}@anonymized.invalid`
+              )
+              commentsRelsModified = true
+            }
+          }
+        }
+      }
+    }
+
+    // Process plain text inside comments: plain text @mentions and/or full names in text
     if (opts.replaceMentions || opts.replaceNamesInCommentText) {
       const textEls = doc.getElementsByTagNameNS(OOXML_NAMESPACES.w, 't')
       for (let i = 0; i < textEls.length; i++) {
         const textNode = textEls[i]
+        // If this textNode is inside a w:hyperlink mention that was already processed, skip to avoid double replacing
+        if (
+          opts.replaceMentions &&
+          textNode.parentElement?.parentElement?.localName === 'hyperlink'
+        ) {
+          continue
+        }
+
         let currentText = textNode.textContent || ''
         let textChanged = false
 
         for (const [authorName, mapped] of Object.entries(mapping)) {
           if (opts.replaceMentions) {
-            // Replace @Mention with @Label
             const mentionPattern = new RegExp(`@${escapeRegex(authorName)}`, 'g')
             if (mentionPattern.test(currentText)) {
               currentText = currentText.replace(mentionPattern, `@${mapped.label}`)
@@ -103,7 +301,6 @@ export async function anonymizeDocx(
           }
 
           if (opts.replaceNamesInCommentText) {
-            // Replace bare full name
             const namePattern = new RegExp(escapeRegex(authorName), 'g')
             if (namePattern.test(currentText)) {
               currentText = currentText.replace(namePattern, mapped.label)
@@ -125,73 +322,16 @@ export async function anonymizeDocx(
     }
   }
 
-  // 2. Process word/_rels/comments.xml.rels for mailto mentions
-  const commentsRelsFile = zip.file('word/_rels/comments.xml.rels')
-  if (commentsRelsFile && opts.replaceMentions) {
-    const xmlText = await commentsRelsFile.async('string')
-    const doc = parseXml(xmlText)
-    let relsModified = false
-
-    const relEls = doc.getElementsByTagNameNS(OOXML_NAMESPACES.rels, 'Relationship')
-    for (let i = 0; i < relEls.length; i++) {
-      const rel = relEls[i]
-      const target = rel.getAttribute('Target')
-      if (target && target.startsWith('mailto:')) {
-        const email = target.slice('mailto:'.length)
-        // Find which author index matches this email, or fallback to index 1
-        let matchedIndex = 1
-        let found = false
-
-        // 1. Try matching with known identities that have this email
-        for (const ident of inspection.identities) {
-          if (ident.email && ident.email.toLowerCase() === email.toLowerCase()) {
-            const mapped = getMapped(ident.author)
-            const numMatch = mapped?.label.match(/\d+/)
-            matchedIndex = numMatch ? parseInt(numMatch[0], 10) : authorIndexMap.get(ident.author) || 1
-            found = true
-            break
-          }
-        }
-
-        // 2. Try matching author name in mapping with email prefix
-        if (!found) {
-          const emailPrefix = email.split('@')[0].toLowerCase().replace(/[^a-z0-9]/g, '')
-          for (const [authorName, mapped] of Object.entries(mapping)) {
-            const authorNorm = authorName
-              .normalize('NFD')
-              .replace(/[\u0300-\u036f]/g, '')
-              .replace(/[đĐ]/g, 'd')
-              .toLowerCase()
-              .replace(/[^a-z0-9]/g, '')
-
-            if (
-              (authorNorm.length > 2 && emailPrefix.includes(authorNorm)) ||
-              (emailPrefix.length > 2 && authorNorm.includes(emailPrefix))
-            ) {
-              const numMatch = mapped.label.match(/\d+/)
-              matchedIndex = numMatch ? parseInt(numMatch[0], 10) : authorIndexMap.get(authorName) || 1
-              break
-            }
-          }
-        }
-
-        const newTarget = `mailto:nguoi-gop-y-${matchedIndex}@anonymized.invalid`
-        rel.setAttribute('Target', newTarget)
-        relsModified = true
-      }
-    }
-
-    if (relsModified) {
-      zip.file('word/_rels/comments.xml.rels', serializeXml(doc))
-      modifiedParts.push('word/_rels/comments.xml.rels')
-    }
+  // Save modified word/_rels/comments.xml.rels
+  if (commentsRelsModified && commentsRelsDoc) {
+    zip.file('word/_rels/comments.xml.rels', serializeXml(commentsRelsDoc))
+    modifiedParts.push('word/_rels/comments.xml.rels')
   }
 
-  // 3. Process all other XML parts under word/ (revisions in document, header, footer, etc.)
+  // 2. Process all other XML parts under word/ (revisions in document, header, footer, etc.)
   const entries = Object.keys(zip.files)
   for (const path of entries) {
     if (!path.startsWith('word/') || !path.endsWith('.xml')) continue
-    // Specific parts handled separately
     if (
       path === 'word/comments.xml' ||
       path === 'word/people.xml' ||
@@ -235,7 +375,8 @@ export async function anonymizeDocx(
             partModified = true
           } else if (
             attr.localName === 'dateUtc' &&
-            (attr.namespaceURI === OOXML_NAMESPACES.w16du ||
+            (attr.namespaceURI?.startsWith('http://schemas.microsoft.com/office/word/') ||
+              attr.namespaceURI === OOXML_NAMESPACES.w16du ||
               attr.namespaceURI === OOXML_NAMESPACES.w16cex)
           ) {
             el.removeAttributeNode(attr)
@@ -251,7 +392,7 @@ export async function anonymizeDocx(
     }
   }
 
-  // 4. Handle date removal in commentsExtended if opts.removeDates is true
+  // 3. Handle date removal in commentsExtended if opts.removeDates is true
   if (opts.removeDates) {
     for (const extendedPath of ['word/commentsExtended.xml', 'word/commentsIds.xml']) {
       const extFile = zip.file(extendedPath)
@@ -267,7 +408,8 @@ export async function anonymizeDocx(
           for (const attr of attrs) {
             if (
               (attr.localName === 'dateUtc' || attr.localName === 'date') &&
-              (attr.namespaceURI === OOXML_NAMESPACES.w ||
+              (attr.namespaceURI?.startsWith('http://schemas.microsoft.com/office/word/') ||
+                attr.namespaceURI === OOXML_NAMESPACES.w ||
                 attr.namespaceURI === OOXML_NAMESPACES.w16du ||
                 attr.namespaceURI === OOXML_NAMESPACES.w16cex)
             ) {
@@ -285,7 +427,7 @@ export async function anonymizeDocx(
     }
   }
 
-  // 5. Process word/people.xml
+  // 4. Process word/people.xml
   const peopleFile = zip.file('word/people.xml')
   if (peopleFile) {
     const xmlText = await peopleFile.async('string')
@@ -328,7 +470,7 @@ export async function anonymizeDocx(
     }
   }
 
-  // 6. Process docProps/core.xml
+  // 5. Process docProps/core.xml
   if (opts.scrubDocProps) {
     const coreFile = zip.file('docProps/core.xml')
     if (coreFile) {
@@ -367,7 +509,7 @@ export async function anonymizeDocx(
     }
   }
 
-  // 7. Process docProps/app.xml
+  // 6. Process docProps/app.xml
   if (opts.scrubDocProps) {
     const appFile = zip.file('docProps/app.xml')
     if (appFile) {
@@ -399,7 +541,7 @@ export async function anonymizeDocx(
     }
   }
 
-  // 8. Process docProps/custom.xml
+  // 7. Process docProps/custom.xml
   const customFile = zip.file('docProps/custom.xml')
   if (customFile) {
     const xmlText = await customFile.async('string')
@@ -433,6 +575,10 @@ export async function anonymizeDocx(
 
   const blob = await zip.generateAsync({
     type: 'blob',
+    compression: 'DEFLATE',
+    compressionOptions: {
+      level: 6,
+    },
     mimeType:
       'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
   })

@@ -1,13 +1,25 @@
 import JSZip from 'jszip'
 
-export interface FixtureOptions {
-  comments?: Array<{
-    id: number
+export interface FixtureComment {
+  id: number
+  author: string
+  initials: string
+  date?: string
+  dateUtc?: { ns: string; name: string; value: string }
+  text: string
+  hyperlink?: {
+    rId: string
+    text: string
+  }
+  innerRevisions?: Array<{
+    type: 'ins' | 'del'
     author: string
-    initials: string
-    date?: string
     text: string
   }>
+}
+
+export interface FixtureOptions {
+  comments?: FixtureComment[]
   commentsExtended?: Array<{
     paraId: string
     paraIdParent?: string
@@ -20,7 +32,9 @@ export interface FixtureOptions {
     date?: string
     part: 'document' | 'header' | 'footnotes'
     text?: string
+    isDelText?: boolean
   }>
+  documentText?: string
   people?: Array<{
     author: string
     userId?: string
@@ -52,6 +66,7 @@ export interface FixtureOptions {
     path: string
     content: Uint8Array
   }
+  compression?: 'STORE' | 'DEFLATE'
 }
 
 export async function createMockDocx(options: FixtureOptions = {}): Promise<ArrayBuffer> {
@@ -82,12 +97,16 @@ export async function createMockDocx(options: FixtureOptions = {}): Promise<Arra
   )
 
   // word/document.xml
-  let documentBody = `<${wPrefix}:p><${wPrefix}:r><${wPrefix}:t>Nội dung kiểm tra</${wPrefix}:t></${wPrefix}:r></${wPrefix}:p>`
+  let documentBody = `<${wPrefix}:p><${wPrefix}:r><${wPrefix}:t>${options.documentText || 'Nội dung kiểm tra'}</${wPrefix}:t></${wPrefix}:r></${wPrefix}:p>`
   if (options.revisions) {
     for (const rev of options.revisions) {
       if (rev.part === 'document') {
         const dateAttr = rev.date ? ` ${wPrefix}:date="${rev.date}"` : ''
-        documentBody += `<${wPrefix}:${rev.type} ${wPrefix}:author="${rev.author}"${dateAttr}><${wPrefix}:r><${wPrefix}:t>${rev.text || 'rev'}</${wPrefix}:t></${wPrefix}:r></${wPrefix}:${rev.type}>`
+        if (rev.isDelText) {
+          documentBody += `<${wPrefix}:${rev.type} ${wPrefix}:author="${rev.author}"${dateAttr}><${wPrefix}:r><${wPrefix}:delText>${rev.text || 'rev'}</${wPrefix}:delText></${wPrefix}:r></${wPrefix}:${rev.type}>`
+        } else {
+          documentBody += `<${wPrefix}:${rev.type} ${wPrefix}:author="${rev.author}"${dateAttr}><${wPrefix}:r><${wPrefix}:t>${rev.text || 'rev'}</${wPrefix}:t></${wPrefix}:r></${wPrefix}:${rev.type}>`
+        }
       }
     }
   }
@@ -104,11 +123,30 @@ export async function createMockDocx(options: FixtureOptions = {}): Promise<Arra
 
   // word/comments.xml
   if (options.comments && options.comments.length > 0) {
-    let commentsXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<${wPrefix}:comments xmlns:${wPrefix}="${wNs}">`
+    let commentsXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<${wPrefix}:comments xmlns:${wPrefix}="${wNs}" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">`
     for (const c of options.comments) {
       const dateAttr = c.date ? ` ${wPrefix}:date="${c.date}"` : ''
-      commentsXml += `\n  <${wPrefix}:comment ${wPrefix}:id="${c.id}" ${wPrefix}:author="${c.author}" ${wPrefix}:initials="${c.initials}"${dateAttr}>
-    <${wPrefix}:p><${wPrefix}:r><${wPrefix}:t>${c.text}</${wPrefix}:t></${wPrefix}:r></${wPrefix}:p>
+      let extraNsAttr = ''
+      if (c.dateUtc) {
+        extraNsAttr = ` xmlns:customDu="${c.dateUtc.ns}" customDu:${c.dateUtc.name}="${c.dateUtc.value}"`
+      }
+
+      let innerContent = `<${wPrefix}:p>`
+      if (c.hyperlink) {
+        innerContent += `<${wPrefix}:hyperlink r:id="${c.hyperlink.rId}"><${wPrefix}:r><${wPrefix}:t>${c.hyperlink.text}</${wPrefix}:t></${wPrefix}:r></${wPrefix}:hyperlink>`
+      }
+      if (c.text) {
+        innerContent += `<${wPrefix}:r><${wPrefix}:t>${c.text}</${wPrefix}:t></${wPrefix}:r>`
+      }
+      if (c.innerRevisions) {
+        for (const rev of c.innerRevisions) {
+          innerContent += `<${wPrefix}:${rev.type} ${wPrefix}:author="${rev.author}"><${wPrefix}:r><${wPrefix}:t>${rev.text}</${wPrefix}:t></${wPrefix}:r></${wPrefix}:${rev.type}>`
+        }
+      }
+      innerContent += `</${wPrefix}:p>`
+
+      commentsXml += `\n  <${wPrefix}:comment ${wPrefix}:id="${c.id}" ${wPrefix}:author="${c.author}" ${wPrefix}:initials="${c.initials}"${dateAttr}${extraNsAttr}>
+    ${innerContent}
   </${wPrefix}:comment>`
     }
     commentsXml += `\n</${wPrefix}:comments>`
@@ -225,5 +263,8 @@ export async function createMockDocx(options: FixtureOptions = {}): Promise<Arra
     zip.file(options.unrelatedPart.path, options.unrelatedPart.content)
   }
 
-  return zip.generateAsync({ type: 'arraybuffer' })
+  return zip.generateAsync({
+    type: 'arraybuffer',
+    compression: options.compression || 'DEFLATE',
+  })
 }

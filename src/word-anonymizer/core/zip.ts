@@ -74,13 +74,12 @@ export async function loadSafeDocx(input: ArrayBuffer): Promise<JSZip> {
     )
   }
 
-  // Verify total decompressed size by counting bytes
+  // Verify total decompressed size by counting bytes safely with streaming
   let totalDecompressed = 0
   for (const path of entries) {
     const file = zip.files[path]
     if (file.dir) continue
 
-    // Fast check for uncompressedSize metadata if present
     const rawSize = (file as unknown as { _data?: { uncompressedSize?: number } })._data?.uncompressedSize
     if (typeof rawSize === 'number' && rawSize > LIMITS.maxUncompressedSize) {
       throw new AnonymizerError(
@@ -89,14 +88,29 @@ export async function loadSafeDocx(input: ArrayBuffer): Promise<JSZip> {
       )
     }
 
-    const data = await file.async('uint8array')
-    totalDecompressed += data.byteLength
-    if (totalDecompressed > LIMITS.maxUncompressedSize) {
-      throw new AnonymizerError(
-        'ZIP_BOMB',
-        'Tổng dung lượng giải nén vượt quá giới hạn an toàn (300 MB).'
-      )
-    }
+    await new Promise<void>((resolve, reject) => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const stream = (file as any).internalStream('uint8array')
+      let entryBytes = 0
+
+      stream.on('data', (chunk: Uint8Array) => {
+        entryBytes += chunk.byteLength
+        totalDecompressed += chunk.byteLength
+        if (entryBytes > LIMITS.maxUncompressedSize || totalDecompressed > LIMITS.maxUncompressedSize) {
+          stream.pause()
+          reject(
+            new AnonymizerError(
+              'ZIP_BOMB',
+              'Tổng dung lượng giải nén vượt quá giới hạn an toàn (300 MB).'
+            )
+          )
+        }
+      })
+
+      stream.on('error', (err: unknown) => reject(err))
+      stream.on('end', () => resolve())
+      stream.resume()
+    })
   }
 
   return zip

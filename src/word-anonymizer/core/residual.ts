@@ -115,14 +115,16 @@ function determineCategory(
 
   try {
     const doc = parseXml(rawXml)
-    const textEls = Array.from(
-      doc.getElementsByTagNameNS(OOXML_NAMESPACES.w, 't')
-    )
+    // Group w:t, w:delText, w:instrText into text content
+    const textEls = [
+      ...Array.from(doc.getElementsByTagNameNS(OOXML_NAMESPACES.w, 't')),
+      ...Array.from(doc.getElementsByTagNameNS(OOXML_NAMESPACES.w, 'delText')),
+      ...Array.from(doc.getElementsByTagNameNS(OOXML_NAMESPACES.w, 'instrText')),
+    ]
 
     let allTextCombined = ''
     for (const el of textEls) {
       allTextCombined += ' ' + (el.textContent || '')
-      // Empty textContent to test remaining attributes/metadata
       el.textContent = ''
     }
 
@@ -138,7 +140,6 @@ function determineCategory(
       return path === 'word/comments.xml' ? 'comment-text' : 'body-text'
     }
   } catch {
-    // If parsing fails for any reason, default to metadata for safety
     return 'metadata'
   }
 
