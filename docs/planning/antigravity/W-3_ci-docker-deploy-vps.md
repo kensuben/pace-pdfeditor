@@ -29,16 +29,28 @@ git checkout -b ops/w3-ci-ghcr-deploy-vps
 2. **`deploy/docker-compose.prod.yml`** (chỉ `image:`, không `build:`)
    - `web`: image web `:${APP_TAG:-latest}`. Port `${APP_BIND:-127.0.0.1}:${APP_PORT:-8080}:8080`. Healthcheck `/healthz`. `read_only` + tmpfs + `cap_drop` + `cap_add` như `compose.yaml`. `depends_on: app: condition: service_healthy`.
    - `app`: image api `:${APP_TAG:-latest}`. **Network alias `api`** (để `nginx.conf` giữ nguyên). Healthcheck `wget -qO- http://127.0.0.1:3001/healthz`. `read_only: true`, `cap_drop: [ALL]`, `no-new-privileges`. Env `MICROSOFT_CLIENT_ID`, `MICROSOFT_TENANT_ID`, `ADMIN_EMAILS`, `DATA_FILE=/data/store.json`. Volume `/data`.
-   - Volume `paperly_data` khai báo `name: ${DATA_VOLUME:-pace-pdfeditor_paperly_data}` để **dùng lại volume cũ** trên VPS.
+   - Volume `paperly_data` khai báo **`external: true`** + `name: ${DATA_VOLUME:-pace-pdfeditor_paperly_data}` để **dùng lại volume cũ** trên VPS (đã xác nhận tên `pace-pdfeditor_paperly_data` bằng `docker volume ls`). Lý do dùng `external`: sai tên → compose báo lỗi và dừng, thay vì lặng lẽ tạo volume mới rỗng (mất user/log). Compose prod **không bao giờ** tự tạo hay xoá volume này.
+   - `DATA_VOLUME` chỉ override qua **biến shell** (không đặt trong `deploy/.env.production`), để `scripts/deploy.sh` và `scripts/backup.sh` dùng cùng giá trị mà không cần đọc file env.
 3. **`deploy/.env.production.example`**: chỉ tên biến + giá trị giả (`00000000-0000-0000-0000-000000000000`, `admin.test@example.com`). `.gitignore` thêm `deploy/.env.production`, `.deploy/`, `backups/`.
 4. **`scripts/deploy.sh`**: chuyển thể từ file mẫu, giữ `deploy | rollback | status`, các hàm `running_revision`, `wait_healthy`, `start_tag`, mốc `.deploy/previous`, `.deploy/history.log`.
    - `PROJECT` mặc định `pace-pdf`. `COMPOSE_FILES` mặc định `-f deploy/docker-compose.prod.yml --env-file deploy/.env.production`.
    - `db_ping` → `api_ping` (`dc exec -T app wget -qO- http://127.0.0.1:3001/healthz`).
    - Kiểm tra đầu vào: có `docker`, `docker compose`, file env tồn tại (chỉ `[ -f ]`, **không đọc nội dung**).
+   - Biến `DATA_VOLUME="${DATA_VOLUME:-pace-pdfeditor_paperly_data}"`, cùng mặc định với compose.
+   - Hàm `preflight_volume` chạy đầu `deploy` và `rollback`, trước backup:
+     - (a) `docker volume inspect "$DATA_VOLUME"` thất bại → `die` kèm hướng dẫn: kiểm tra `docker volume ls`, hoặc lần đầu cài mới thì tự `docker volume create <tên>`. Script **không tự tạo** volume.
+     - (b) Liệt kê container đang gắn volume: `docker ps -a --filter "volume=$DATA_VOLUME" --format '{{.Names}}\t{{.Label "com.docker.compose.project"}}'`. Container nào có project khác `$PROJECT` → `die` kèm tên container và hướng dẫn dừng stack cũ (mục README). Mục đích: không để 2 API cùng ghi `store.json`, không tranh port 8080.
+   - `status` in thêm `DATA_VOLUME` và danh sách container đang gắn volume.
    - Bỏ ghi chú Laravel/migrate. Dòng "Kiểm tay" cuối: *đăng nhập Microsoft, mở 1 PDF, ẩn danh 1 file .docx mẫu, mở Administration (admin)*.
 5. **`scripts/backup.sh`**: `docker run --rm -v <volume>:/data:ro -v <dir>:/backup alpine:<tag pin> tar czf …`. Thư mục `backups/` `chmod 700`. Giữ `BACKUP_KEEP` bản (mặc định 14). Volume chưa tồn tại → cảnh báo, exit 0.
 6. **README**: mục "Deploy production (VPS)":
-   - Chuẩn bị lần đầu: clone repo; `docker login ghcr.io` bằng PAT `read:packages` (người vận hành tự tạo); tạo `deploy/.env.production` từ example; chạy `docker volume ls` để xác định `DATA_VOLUME`.
+   - Chuẩn bị lần đầu: clone repo; `docker login ghcr.io` bằng PAT `read:packages` (người vận hành tự tạo); tạo `deploy/.env.production` từ example; chạy `docker volume ls` để xác nhận volume `pace-pdfeditor_paperly_data` (khác tên thì `export DATA_VOLUME=<tên>` trước khi chạy script).
+   - **Chuyển từ stack cũ sang stack mới (chỉ làm 1 lần)**, theo đúng thứ tự:
+     1. Backup: `./scripts/backup.sh`.
+     2. Vào thư mục đang chạy stack cũ, `docker compose down` — **TUYỆT ĐỐI KHÔNG thêm `-v`** (sẽ xoá volume dữ liệu).
+     3. Kiểm tra `docker ps -a --filter volume=pace-pdfeditor_paperly_data` không còn container nào và port 8080 đã trống.
+     4. `./scripts/deploy.sh`.
+     5. Có lỗi thì quay lại stack cũ: `./scripts/deploy.sh` không xoá gì; chạy lại `docker compose up -d` ở thư mục cũ sau khi `docker compose -p pace-pdf -f deploy/docker-compose.prod.yml down` (không `-v`).
    - Lệnh `deploy` / `rollback` / `status`.
    - Khôi phục từ backup.
    - Khai báo GitHub Variables cho CI.
@@ -56,6 +68,9 @@ git checkout -b ops/w3-ci-ghcr-deploy-vps
 - K4: Workflow: `publish` có `needs: verify`; tag `latest` + `sha-<7>`; có label revision; không dùng secret ngoài `GITHUB_TOKEN`.
 - K5: `docker build` 2 Dockerfile thành công local; `docker inspect` image thấy label revision khi build qua metadata-action (hoặc ghi rõ cách đã kiểm).
 - K6: `git ls-files --eol scripts/` hiện `lf`; `git ls-files -s scripts/` hiện mode `100755`.
+- K7: `docker compose … config` cho thấy volume `paperly_data` có `external: true` và `name: pace-pdfeditor_paperly_data`; với `$env:DATA_VOLUME="vol-test"` thì `name: vol-test`.
+- K8: Không có `down -v`, `docker volume rm`, `docker volume prune`, `docker volume create` trong `scripts/` và `deploy/` (README chỉ được nhắc `-v` trong câu cảnh báo).
+- K9: Thử local: tạo volume giả `pace-pdf-qa-vol`, chạy 1 container `alpine sleep 300` gắn volume đó (không thuộc project), rồi `$env:DATA_VOLUME="pace-pdf-qa-vol"` + `bash scripts/deploy.sh deploy` → script **dừng ở preflight** với thông báo nêu tên container; xoá container/volume giả sau khi thử. Volume không tồn tại → dừng với hướng dẫn, không tạo volume.
 
 ## Chứng minh + commit + push (PowerShell)
 ```powershell
@@ -68,6 +83,8 @@ git update-index --chmod=+x scripts/deploy.sh scripts/backup.sh
 git ls-files --eol scripts/
 git ls-files -s scripts/
 Select-String -Path deploy/*,scripts/*,.github/workflows/* -Pattern 'ghp_|github_pat_|@pace\.edu\.vn'
+Select-String -Path deploy/*,scripts/* -Pattern 'down -v|volume rm|volume prune|volume create'
+docker compose -f deploy/docker-compose.prod.yml --env-file deploy/.env.production.example config | Select-String -Context 0,3 'paperly_data:'
 git add .github deploy scripts .gitignore README.md
 if (Test-Path .gitattributes) { git add .gitattributes }
 git commit -m "ops(W-3): ghcr images, production compose and vps deploy/rollback scripts"
@@ -79,7 +96,8 @@ Kỳ vọng:
 - `bash -n` không có output.
 - Script là `lf` + `100755`.
 - Select-String tìm secret không có kết quả.
+- Select-String `down -v|volume rm|…` không có kết quả; lệnh `config` cuối hiện `external: true` và `name: pace-pdfeditor_paperly_data`.
 - Dòng cuối in commit vừa push.
 
 ## Báo cáo
-2 output `git push` + `git log origin/...` ở đầu, rồi theo `00_RULES.md` + bảng so sánh `deploy.dpadmin.sh → scripts/deploy.sh` (giữ / đổi / bỏ) + danh sách việc người vận hành phải làm tay trên VPS và GitHub (Variables, PAT, `DATA_VOLUME`).
+2 output `git push` + `git log origin/...` ở đầu, rồi theo `00_RULES.md` + bảng so sánh `deploy.dpadmin.sh → scripts/deploy.sh` (giữ / đổi / bỏ) + danh sách việc người vận hành phải làm tay trên VPS và GitHub (Variables, PAT, `DATA_VOLUME`) + output thử K9.
