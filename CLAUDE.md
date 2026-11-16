@@ -51,6 +51,7 @@ Kỳ vọng: <output mong đợi của từng lệnh>.
 ```
 
 - **Bước A (lấy repo sạch)** định nghĩa một lần trong `00_RULES.md`: kiểm `git status --porcelain` (bẩn → dừng, không reset/clean/stash), `git fetch` → `checkout main` → `pull --ff-only`, so `HEAD` với `origin/main`. Mọi prompt task phải gọi Bước A ở đầu Bước 0; đoạn giao việc gửi Antigravity cũng phải nhắc Bước A.
+- **Bước Z (xác nhận nhánh đã lên remote)** định nghĩa trong `00_RULES.md`: sau `git push`, chạy `git ls-remote --heads origin <nhánh>` và so SHA với `HEAD`. Đoạn giao việc gửi Antigravity phải nhắc Bước Z. Khi QA, Claude luôn kiểm tra nhánh có trên remote trước; không có thì báo "chưa push", không QA.
 - Lệnh viết cho **PowerShell** (người chạy dùng Windows). `git add` file có thể không tồn tại thì bọc `if (Test-Path …)`.
 - Mô tả vấn đề phải dựa trên code đã đọc (file:dòng). Không bịa API, phần tử, thuộc tính; điểm chưa chắc ghi "chưa xác minh" và yêu cầu agent đánh dấu `TODO(verify)`.
 - Dữ liệu ví dụ luôn giả (`Học viên Test 01`, `@example.com`, GUID toàn số 0).

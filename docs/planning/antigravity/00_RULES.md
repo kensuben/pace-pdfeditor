@@ -26,6 +26,19 @@ Sau Bước A mới chạy "Bước 0" của prompt task (tạo nhánh, `npm ci`
 - Mỗi task một nhánh, tạo từ `main` mới nhất (`git pull --ff-only`). Tên nhánh + commit message lấy đúng từ prompt.
 - Được tự commit + push **nhánh của task**. KHÔNG push `main`, KHÔNG force-push, KHÔNG tạo PR, KHÔNG rebase lịch sử đã push.
 - Chỉ báo "done" khi đã `git push` và `git log --oneline -1 origin/<nhánh>` in ra đúng commit vừa tạo. Ở ĐẦU báo cáo dán: output `git rev-parse` của Bước A, output `git push`, output `git log origin/<nhánh>`.
+
+## Bước Z — Xác nhận nhánh đã lên remote (bắt buộc trước khi báo "done")
+Chạy sau `git push` (PowerShell):
+```powershell
+git fetch origin
+git ls-remote --heads origin <nhánh>
+git rev-parse --short HEAD
+git log --oneline -1 origin/<nhánh>
+```
+- `git ls-remote` phải in **đúng 1 dòng** chứa `refs/heads/<nhánh>`. SHA trên dòng đó phải trùng SHA của `git rev-parse HEAD`.
+- In rỗng, SHA lệch, hoặc `git push` báo lỗi → **CHƯA XONG**. Không được báo "done". Dán nguyên thông báo lỗi và dừng lại. KHÔNG force-push, KHÔNG đổi tên nhánh, KHÔNG push `main`.
+- Báo cáo thiếu bất kỳ output nào trong 4 lệnh trên (cùng output `git push`) thì người giao việc **coi là chưa làm xong**, kể cả khi code trên máy đã chạy được.
+- Nếu `git remote -v` hiện URL có token, che token khi dán vào báo cáo.
 - Lệnh trong prompt viết cho **PowerShell** (Windows).
 
 ## Phạm vi
@@ -45,7 +58,7 @@ Sau Bước A mới chạy "Bước 0" của prompt task (tạo nhánh, `npm ci`
 - Trước commit phải xanh: `npm run lint`, `npm run build`, và `npm test` (từ W-0 trở đi).
 - UI: tiếng Việt, dùng token trong `src/pace-theme.css`, không vỡ ở 390/768/1280px.
 
-## Báo cáo (sau 2 output git ở đầu)
+## Báo cáo (sau các output git ở đầu: `git rev-parse` của Bước A, `git push`, 4 lệnh của Bước Z)
 1. File tạo/sửa + lý do (1 dòng/file).
 2. Output tóm tắt `lint` / `test` / `build`.
 3. Version chính xác của dependency/action mới.
