@@ -8,7 +8,6 @@ on:
 
 permissions:
   contents: read
-  packages: write
 
 jobs:
   verify:
@@ -39,7 +38,11 @@ jobs:
   publish:
     name: Build and Publish Images to GHCR
     needs: verify
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -59,10 +62,10 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: ghcr.io/${{ github.repository_owner }}/pace-pdfeditor-web
-          tags:
-            - type=raw,value=latest
-            - type=sha,prefix=sha-,format=short
-          labels:
+          tags: |
+            type=raw,value=latest
+            type=sha,prefix=sha-,format=short
+          labels: |
             org.opencontainers.image.revision=${{ github.sha }}
 
       - name: Build and push Web image
@@ -84,10 +87,10 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: ghcr.io/${{ github.repository_owner }}/pace-pdfeditor-api
-          tags:
-            - type=raw,value=latest
-            - type=sha,prefix=sha-,format=short
-          labels:
+          tags: |
+            type=raw,value=latest
+            type=sha,prefix=sha-,format=short
+          labels: |
             org.opencontainers.image.revision=${{ github.sha }}
 
       - name: Build and push API image

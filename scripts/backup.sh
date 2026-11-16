@@ -3,6 +3,8 @@
 # Giữ tối đa BACKUP_KEEP bản sao lưu gần nhất trong thư mục backups/
 set -euo pipefail
 
+cd "$(dirname "${BASH_SOURCE[0]}")/.."
+
 DATA_VOLUME="${DATA_VOLUME:-pace-pdfeditor_paperly_data}"
 BACKUP_DIR="${BACKUP_DIR:-backups}"
 BACKUP_KEEP="${BACKUP_KEEP:-14}"
