@@ -419,4 +419,121 @@ describe('Server Authentication & Tenant Validation (F-6)', () => {
     expect(FORBIDDEN_TENANTS).toContain('organizations')
     expect(FORBIDDEN_TENANTS).toContain('consumers')
   })
+
+  describe('F-7 QA Fixes: Tenant lowercase normalization and dev environment', () => {
+    const UPPER_TENANT_ID = 'ABCDEF12-3456-7890-ABCD-EF1234567890'
+    const LOWER_TENANT_ID = 'abcdef12-3456-7890-abcd-ef1234567890'
+    const UPPER_CLIENT_ID = '12345678-ABCD-EF12-3456-7890ABCDEF12'
+    const LOWER_CLIENT_ID = '12345678-abcd-ef12-3456-7890abcdef12'
+
+    // F-7 K1: validateAuthConfig converts uppercase tenant/client IDs to lowercase; verified token is accepted
+    it('F-7 K1: validateAuthConfig normalizes uppercase tenantId and clientId to lowercase; verified token with lowercase claims is accepted', async () => {
+      const config = validateAuthConfig({
+        tenantId: UPPER_TENANT_ID,
+        clientId: UPPER_CLIENT_ID,
+      })
+
+      expect(config.tenantId).toBe(LOWER_TENANT_ID)
+      expect(config.clientId).toBe(LOWER_CLIENT_ID)
+
+      const verifyToken = createTokenVerifier({
+        clientId: config.clientId,
+        tenantId: config.tenantId,
+        jwks: localJwks,
+      })
+
+      const token = await signToken(
+        {
+          preferred_username: 'student@example.com',
+          tid: LOWER_TENANT_ID,
+          oid: '00000000-user-0001-0000-000000000001',
+        },
+        {
+          issuer: `https://login.microsoftonline.com/${LOWER_TENANT_ID}/v2.0`,
+          audience: LOWER_CLIENT_ID,
+        }
+      )
+
+      const payload = await verifyToken(token)
+      expect(payload).toBeDefined()
+      expect(payload.tid).toBe(LOWER_TENANT_ID)
+      expect(payload.preferred_username).toBe('student@example.com')
+    })
+
+    // F-7 K2: createTokenVerifier normalizes uppercase tenantId/clientId directly passed to it
+    it('F-7 K2: calling createTokenVerifier directly with uppercase tenantId/clientId normalizes them so valid token is accepted', async () => {
+      const verifyToken = createTokenVerifier({
+        clientId: UPPER_CLIENT_ID,
+        tenantId: UPPER_TENANT_ID,
+        jwks: localJwks,
+      })
+
+      // Token generated with standard lowercase claims from Microsoft Entra
+      const token = await signToken(
+        {
+          preferred_username: 'student@example.com',
+          tid: LOWER_TENANT_ID,
+          oid: '00000000-user-0001-0000-000000000001',
+        },
+        {
+          issuer: `https://login.microsoftonline.com/${LOWER_TENANT_ID}/v2.0`,
+          audience: LOWER_CLIENT_ID,
+        }
+      )
+
+      const payload = await verifyToken(token)
+      expect(payload).toBeDefined()
+      expect(payload.tid).toBe(LOWER_TENANT_ID)
+    })
+
+    // F-7 K3: Tenant COMMON (uppercase) fails closed on startup
+    it('F-7 K3: server process fails closed (exit code != 0) when tenant is COMMON (uppercase)', async () => {
+      const tempDir = mkdtempSync(join(tmpdir(), 'pace-auth-f7-'))
+      try {
+        let failed = false
+        try {
+          await execFileAsync('node', ['server/index.mjs'], {
+            env: {
+              ...process.env,
+              MICROSOFT_CLIENT_ID: TEST_CLIENT_ID,
+              MICROSOFT_TENANT_ID: 'COMMON',
+              DATA_FILE: join(tempDir, 'store.json'),
+              PORT: '39999',
+            },
+            timeout: 5000,
+          })
+        } catch (err) {
+          failed = true
+          expect(err.code).not.toBe(0)
+          expect(err.stderr).toContain('[AUTH CONFIG ERROR]')
+          expect(err.stderr).toContain("Single-tenant PACE application does not allow 'common'")
+        }
+        expect(failed).toBe(true)
+      } finally {
+        rmSync(tempDir, { recursive: true, force: true })
+      }
+    })
+
+    // F-7 K4: .env.example contains all 4 vars and no "common" in tenant values
+    it('F-7 K4: .env.example contains all 4 auth vars without "common" as tenant value, matching compose.yaml requirements', () => {
+      const envExample = readFileSync('.env.example', 'utf8')
+      const composeYaml = readFileSync('compose.yaml', 'utf8')
+
+      // Check all 4 variables exist
+      expect(envExample).toMatch(/^VITE_MICROSOFT_CLIENT_ID=00000000-0000-0000-0000-000000000000/m)
+      expect(envExample).toMatch(/^VITE_MICROSOFT_TENANT_ID=00000000-0000-0000-0000-000000000000/m)
+      expect(envExample).toMatch(/^MICROSOFT_CLIENT_ID=00000000-0000-0000-0000-000000000000/m)
+      expect(envExample).toMatch(/^MICROSOFT_TENANT_ID=00000000-0000-0000-0000-000000000000/m)
+
+      // Ensure "common" is not assigned to any variable
+      expect(envExample).not.toMatch(/TENANT_ID\s*=\s*common/i)
+
+      // Ensure compose.yaml required variables are satisfied by .env.example
+      const requiredVarsInCompose = ['MICROSOFT_CLIENT_ID', 'MICROSOFT_TENANT_ID']
+      for (const v of requiredVarsInCompose) {
+        expect(composeYaml).toContain(`\${${v}:?`)
+        expect(envExample).toMatch(new RegExp(`^${v}=.+`, 'm'))
+      }
+    })
+  })
 })

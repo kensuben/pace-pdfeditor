@@ -92,11 +92,16 @@ docker compose up -d
 1. Tạo **App registration** trong Microsoft Entra admin center (chọn *Accounts in this organizational directory only* - Single tenant).
 2. Chọn nền tảng **Single-page application (SPA)**.
 3. Thêm redirect URI `http://localhost:5173/redirect.html` cho môi trường local và `https://your-domain/redirect.html` cho production, với loại nền tảng **Single-page application (SPA)**.
-4. Sao chép `.env.example` thành `.env`, sau đó điền Application (client) ID và Directory (tenant) ID dạng GUID:
+4. Sao chép `.env.example` thành `.env`, sau đó điền Application (client) ID và Directory (tenant) ID dạng GUID cho frontend và API:
 
 ```env
+# Dùng cho frontend (Vite build / dev)
 VITE_MICROSOFT_CLIENT_ID=00000000-0000-0000-0000-000000000000
 VITE_MICROSOFT_TENANT_ID=00000000-0000-0000-0000-000000000000
+
+# Dùng cho backend API khi chạy Docker Compose local (thường cùng giá trị với biến VITE_* tương ứng)
+MICROSOFT_CLIENT_ID=00000000-0000-0000-0000-000000000000
+MICROSOFT_TENANT_ID=00000000-0000-0000-0000-000000000000
 ```
 
 > **Bảo mật & Xác thực Token Single-Tenant**:
