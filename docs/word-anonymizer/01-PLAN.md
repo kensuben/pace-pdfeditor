@@ -1,7 +1,7 @@
 # Word Comment Anonymizer — Kế hoạch triển khai
 
 > Trạng thái: **PLANNING** · Người viết: Claude Code (AI) · Người duyệt: DIGITECH
-> Tài liệu này chỉ là kế hoạch. Code sẽ do Antigravity viết theo `02-ANTIGRAVITY-PROMPT.md`, sau đó QA theo `03-QA-CHECKLIST.md`.
+> Tài liệu này chỉ là kế hoạch. Code sẽ do Antigravity viết theo các prompt trong `docs/planning/antigravity/` (`00_RULES.md`, W-0 → W-3), sau đó QA theo `03-QA-CHECKLIST.md`.
 
 ---
 
