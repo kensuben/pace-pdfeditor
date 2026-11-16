@@ -30,6 +30,7 @@ import { recordActivity } from './activityLog'
 import ActivityPanel from './ActivityPanel'
 import AdminPage from './AdminPage'
 import { apiRequest, authorizeSession, type ApiUser } from './api'
+import WordAnonymizerPage from './word-anonymizer/WordAnonymizerPage'
 
 // Query version bypasses any previously cached worker response that may have
 // been served with an incorrect MIME type before the Nginx fix.
@@ -279,6 +280,26 @@ function App() {
   const [showDigitalSign, setShowDigitalSign] = useState(false)
   const [apiUser,setApiUser]=useState<ApiUser|null>(null)
   const [showAdmin,setShowAdmin]=useState(false)
+  const [viewMode, setViewMode] = useState<'pdf' | 'word'>(() => {
+    return typeof window !== 'undefined' && window.location.hash === '#/word-anonymizer' ? 'word' : 'pdf'
+  })
+
+  useEffect(() => {
+    const handleHashChange = () => {
+      setViewMode(window.location.hash === '#/word-anonymizer' ? 'word' : 'pdf')
+    }
+    window.addEventListener('hashchange', handleHashChange)
+    return () => window.removeEventListener('hashchange', handleHashChange)
+  }, [])
+
+  const switchView = (mode: 'pdf' | 'word') => {
+    if (mode === 'word') {
+      window.location.hash = '#/word-anonymizer'
+    } else {
+      window.location.hash = '#/'
+    }
+  }
+
   const annotations = history[historyIndex]
   const selectedImage = useMemo(()=>annotations.find((annotation)=>annotation.id===selectedId&&annotation.type==='image'),[annotations,selectedId])
 
@@ -554,7 +575,38 @@ function App() {
   }
 
   const login = async () => {
-    if (!isMicrosoftAuthConfigured) { alert('Microsoft Login chưa được cấu hình. Hãy sao chép .env.example thành .env và điền VITE_MICROSOFT_CLIENT_ID.'); return }
+    if (!isMicrosoftAuthConfigured) {
+      if (import.meta.env.DEV) {
+        const mockAccount: AccountInfo = {
+          homeAccountId: 'mock-account-id',
+          environment: 'login.windows.net',
+          tenantId: 'mock-tenant-id',
+          username: 'hocvien.test01@example.com',
+          localAccountId: 'mock-local-id',
+          name: 'Học viên Test 01',
+        }
+        setAccount(mockAccount)
+        setApiUser({
+          id: 'mock-user-id',
+          email: 'hocvien.test01@example.com',
+          name: 'Học viên Test 01',
+          role: 'user',
+          active: true,
+          groupIds: [],
+        })
+        recordActivity({
+          userId: mockAccount.homeAccountId,
+          userName: mockAccount.name || mockAccount.username,
+          action: 'auth.login',
+          description: 'Đăng nhập giả lập môi trường DEV',
+          level: 'security',
+          metadata: { username: mockAccount.username },
+        })
+        return
+      }
+      alert('Microsoft Login chưa được cấu hình. Hãy sao chép .env.example thành .env và điền VITE_MICROSOFT_CLIENT_ID.')
+      return
+    }
     setBusy(true)
     try { const signedIn = await signInMicrosoft();const session=await authorizeSession();setApiUser(session.user);setAccount(signedIn);recordActivity({ userId: signedIn.homeAccountId, userName: signedIn.name || signedIn.username, action: 'auth.login', description: 'Đăng nhập bằng Microsoft', level: 'security', metadata: { username: signedIn.username } }) }
     catch (error) { console.error(error);await signOutMicrosoft().catch(()=>{});alert(error instanceof Error?error.message:'Tài khoản không được phép sử dụng hệ thống.') }
@@ -570,15 +622,46 @@ function App() {
     <input ref={imageInput} hidden type="file" accept="image/png,image/jpeg" onChange={(e)=>{const file=e.target.files?.[0];if(file)insertImage(file);e.target.value=''}}/>
     <input ref={insertPdfInput} hidden type="file" accept="application/pdf,.pdf" onChange={(e)=>{const file=e.target.files?.[0];if(file)insertPages(file);e.target.value=''}}/>
     <header className="topbar">
-      <button className="brand" onClick={() => fileInput.current?.click()}><img className="official-logo" src="/pace-logo.svg" alt="PACE Institute of Management"/><span className="product-name">PDF Workspace<small>DOCUMENT EDITOR</small></span></button>
-      {info&&<div className="file-title"><FileText size={17}/><span>{info.name}</span><small>{formatBytes(info.size)}</small></div>}
+      <button className="brand" onClick={() => (viewMode === 'pdf' ? fileInput.current?.click() : switchView('pdf'))}><img className="official-logo" src="/pace-logo.svg" alt="PACE Institute of Management"/><span className="product-name">PDF Workspace<small>DOCUMENT EDITOR</small></span></button>
+      <div className="view-switcher" role="tablist" aria-label="Bộ chọn chế độ">
+        <button
+          type="button"
+          role="tab"
+          aria-selected={viewMode === 'pdf'}
+          className={`view-tab ${viewMode === 'pdf' ? 'active' : ''}`}
+          onClick={() => switchView('pdf')}
+        >
+          PDF Editor
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={viewMode === 'word'}
+          className={`view-tab ${viewMode === 'word' ? 'active' : ''}`}
+          onClick={() => switchView('word')}
+        >
+          Ẩn danh Word
+        </button>
+      </div>
+      {viewMode === 'pdf' && info && <div className="file-title"><FileText size={17}/><span>{info.name}</span><small>{formatBytes(info.size)}</small></div>}
       <div className="top-actions">
-        {info && <><button className="secondary" onClick={() => fileInput.current?.click()}><Upload size={16}/> Mở file</button><button className="primary" onClick={exportPdf} disabled={busy}><Download size={16}/> Xuất PDF</button></>}
+        {viewMode === 'pdf' && info && <><button className="secondary" onClick={() => fileInput.current?.click()}><Upload size={16}/> Mở file</button><button className="primary" onClick={exportPdf} disabled={busy}><Download size={16}/> Xuất PDF</button></>}
         {account ? <div className="account-menu"><button className="activity-button" onClick={() => setShowActivities(true)} title="Activity log"><Activity/></button>{apiUser?.role==='admin'&&<button className="activity-button" onClick={()=>setShowAdmin(true)} title="Administration"><Settings/></button>}<button className="user-chip" title={account.username}><span>{(account.name || account.username).split(' ').map((x) => x[0]).slice(0,2).join('').toUpperCase()}</span><b>{account.name || account.username}</b></button><button className="logout-button" onClick={logout} title="Đăng xuất"><LogOut/></button></div> : <button className="microsoft-login" onClick={login} disabled={!authReady}><span className="ms-logo"><i/><i/><i/><i/></span><LogIn/> Sign in with Microsoft</button>}
       </div>
     </header>
 
-    {!pdf || !info ? <EmptyState onOpen={() => fileInput.current?.click()}/> : <div className="workspace">
+    {viewMode === 'word' ? (
+      <WordAnonymizerPage
+        account={account}
+        apiUser={apiUser}
+        authReady={authReady}
+        onSignInMicrosoft={login}
+        log={log}
+      />
+    ) : !pdf || !info ? (
+      <EmptyState onOpen={() => fileInput.current?.click()}/>
+    ) : (
+      <div className="workspace">
       <aside className={`sidebar ${sidebar ? '' : 'collapsed'}`}>
         <div className="sidebar-head"><b>Pages</b><button onClick={() => setSidebar(false)}><ChevronLeft/></button></div>
         <div className="thumbs">{Array.from({length: info.pages}, (_,i) => <button key={i} className={`thumb ${page===i+1?'active':''}`} onClick={() => { setPage(i+1); log('navigation.page_changed', 'Chuyển trang', { from: page, to: i+1 }) }}><div className="thumb-paper"><FileText/><span/><span/><span/></div><small>{i+1}</small></button>)}</div>
@@ -615,7 +698,7 @@ function App() {
           <span className="saved"><Check/> Changes saved locally</span>
         </div>
       </section>
-    </div>}
+    </div>)}
     {busy && <div className="loading"><div/><span>Preparing your document…</span></div>}
     {showActivities && <ActivityPanel userId={identity.userId} onClose={() => setShowActivities(false)}/>} 
     {showAdmin&&apiUser?.role==='admin'&&<AdminPage onClose={()=>setShowAdmin(false)}/>}
