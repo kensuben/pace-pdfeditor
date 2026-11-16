@@ -26,11 +26,21 @@ describe('Word Anonymizer Core (W-1)', () => {
     const report = await inspectDocx(input)
     expect(report.identities.length).toBe(2)
     expect(report.identities[0].author).toBe('Nguyễn Văn A')
+    expect(report.identities[0].kind).toBe('contributor')
     expect(report.identities[1].author).toBe('Trần Thị B')
+    expect(report.identities[1].kind).toBe('contributor')
 
     const mapping = buildDefaultMapping(report)
-    expect(mapping['Nguyễn Văn A']).toEqual({ label: 'Người góp ý 1', initials: 'NG1' })
-    expect(mapping['Trần Thị B']).toEqual({ label: 'Người góp ý 2', initials: 'NG2' })
+    expect(mapping['Nguyễn Văn A']).toEqual({
+      label: 'Người góp ý 1',
+      initials: 'NG1',
+      alias: 'nguoi-gop-y-1',
+    })
+    expect(mapping['Trần Thị B']).toEqual({
+      label: 'Người góp ý 2',
+      initials: 'NG2',
+      alias: 'nguoi-gop-y-2',
+    })
 
     const valResult = validateMapping(mapping, report.identities)
     expect(valResult.valid).toBe(true)
@@ -231,9 +241,9 @@ describe('Word Anonymizer Core (W-1)', () => {
     const input1 = await makeDoc()
     const report1 = await inspectDocx(input1)
     expect(report1.identities.length).toBe(1)
-    const mapping1: Record<string, { label: string; initials: string }> = {
-      'Trần Thị B': { label: 'Người góp ý 1', initials: 'NG1' },
-      'Nguyễn Văn A': { label: 'Người góp ý 2', initials: 'NG2' },
+    const mapping1: Record<string, { label: string; initials: string; alias: string }> = {
+      'Trần Thị B': { label: 'Người góp ý 1', initials: 'NG1', alias: 'nguoi-gop-y-1' },
+      'Nguyễn Văn A': { label: 'Người góp ý 2', initials: 'NG2', alias: 'nguoi-gop-y-2' },
     }
 
     // replaceMentions: true
@@ -325,7 +335,6 @@ describe('Word Anonymizer Core (W-1)', () => {
   // K10: Mỗi mã lỗi ở mục 9 có 1 test; zip bomb không làm treo test (< 5 s)
   describe('K10: Input validation error codes', () => {
     it('throws TOO_LARGE for buffer > 50 MB', async () => {
-      // Mock large buffer via proxy property to avoid 50MB memory allocation in test
       const largeBuffer = new ArrayBuffer(0)
       Object.defineProperty(largeBuffer, 'byteLength', { value: 51 * 1024 * 1024 })
 
@@ -425,5 +434,291 @@ describe('Word Anonymizer Core (W-1)', () => {
 
     expect(outImgBytes.length).toBe(imageBytes.length)
     expect(Array.from(outImgBytes)).toEqual(Array.from(imageBytes))
+  })
+})
+
+describe('QA Fixes (F-2)', () => {
+  // K1: Fixture nén DEFLATE có word/document.xml khoảng 500 KB chữ lặp → output byteLength <= 1.5 x input
+  it('F-2 K1: output size with DEFLATE is <= 1.5x input size for 500 KB repeated text', async () => {
+    const largeText = 'Nội dung kiểm tra nén lặp lại của tài liệu Word. '.repeat(10500) // ~500 KB
+    const input = await createMockDocx({
+      documentText: largeText,
+      comments: [{ id: 1, author: 'Nguyễn Văn A', initials: 'NVA', text: 'Bình luận' }],
+      compression: 'DEFLATE',
+    })
+
+    const report = await inspectDocx(input)
+    const mapping = buildDefaultMapping(report)
+    const result = await anonymizeDocx(input, mapping)
+    const outBuffer = await result.blob.arrayBuffer()
+
+    expect(outBuffer.byteLength).toBeLessThanOrEqual(input.byteLength * 1.5)
+  })
+
+  // K2: Mention người chưa bình luận (@Giảng viên Test 09 + mailto:giangvien.test09@example.com)
+  it('F-2 K2: mention of non-commenter creates mentioned identity, anonymizes text and rel, residual PASS; replaceMentions=false does not PASS', async () => {
+    const makeDoc = () =>
+      createMockDocx({
+        comments: [
+          {
+            id: 1,
+            author: 'Học viên Test 01',
+            initials: 'HV01',
+            text: '',
+            hyperlink: {
+              rId: 'rId99',
+              text: '@Giảng viên Test 09',
+            },
+          },
+        ],
+        mentions: [{ relId: 'rId99', email: 'giangvien.test09@example.com' }],
+      })
+
+    const input1 = await makeDoc()
+    const report1 = await inspectDocx(input1)
+    expect(report1.identities.length).toBe(2)
+    const mentionedIdent = report1.identities.find((i) => i.kind === 'mentioned')
+    expect(mentionedIdent).toBeDefined()
+    expect(mentionedIdent!.author).toBe('Giảng viên Test 09')
+    expect(mentionedIdent!.email).toBe('giangvien.test09@example.com')
+
+    const mapping1 = buildDefaultMapping(report1)
+    expect(mapping1['Giảng viên Test 09']).toEqual({
+      label: 'Người được nhắc 1',
+      initials: 'NN1',
+      alias: 'nguoi-duoc-nhac-1',
+    })
+
+    // Case with replaceMentions: true
+    const result1 = await anonymizeDocx(input1, mapping1, { replaceMentions: true })
+    const outZip1 = await JSZip.loadAsync(await result1.blob.arrayBuffer())
+    const cXml1 = await outZip1.file('word/comments.xml')!.async('string')
+    expect(cXml1).not.toContain('Giảng viên Test 09')
+    expect(cXml1).toContain('@Người được nhắc 1')
+
+    const rels1 = await outZip1.file('word/_rels/comments.xml.rels')!.async('string')
+    expect(rels1).toContain('mailto:nguoi-duoc-nhac-1@anonymized.invalid')
+
+    const resReport1 = await scanResidual(await result1.blob.arrayBuffer(), report1.identities)
+    expect(resReport1.status).toBe('PASS')
+
+    // Case with replaceMentions: false
+    const input2 = await makeDoc()
+    const result2 = await anonymizeDocx(input2, mapping1, { replaceMentions: false })
+    const resReport2 = await scanResidual(await result2.blob.arrayBuffer(), report1.identities)
+    expect(resReport2.status).not.toBe('PASS')
+  })
+
+  // K3: <w:ins w:author="Học viên Test 01"> bên trong w:comment → đã thay nhãn; residual PASS; revisionCount tăng đúng 1
+  it('F-2 K3: revision inside w:comment is anonymized, revisionCount increases, residual PASS', async () => {
+    const input = await createMockDocx({
+      comments: [
+        {
+          id: 1,
+          author: 'Người Tạo Comment',
+          initials: 'NTC',
+          text: 'Phần gốc',
+          innerRevisions: [
+            {
+              type: 'ins',
+              author: 'Học viên Test 01',
+              text: 'Đoạn văn được sửa trong comment',
+            },
+          ],
+        },
+      ],
+    })
+
+    const report = await inspectDocx(input)
+    expect(report.stats.revisionCount).toBe(1)
+    expect(report.identities.some((i) => i.author === 'Học viên Test 01')).toBe(true)
+
+    const mapping = buildDefaultMapping(report)
+    const result = await anonymizeDocx(input, mapping)
+    const outZip = await JSZip.loadAsync(await result.blob.arrayBuffer())
+
+    const cXml = await outZip.file('word/comments.xml')!.async('string')
+    expect(cXml).not.toContain('Học viên Test 01')
+    expect(cXml).toContain(mapping['Học viên Test 01'].label)
+
+    const resReport = await scanResidual(await result.blob.arrayBuffer(), report.identities)
+    expect(resReport.status).toBe('PASS')
+  })
+
+  // K4: Comment của người thứ 2 mention chính người thứ 2 bằng email không giống tên
+  it('F-2 K4: mention mapped by display text to contributor 2, foreign mention creates new mentioned identity', async () => {
+    const input = await createMockDocx({
+      comments: [
+        { id: 1, author: 'Nguyễn Văn A', initials: 'NVA', text: 'Comment 1' },
+        {
+          id: 2,
+          author: 'Trần Thị B',
+          initials: 'TTB',
+          text: '',
+          hyperlink: {
+            rId: 'rId20',
+            text: '@Trần Thị B',
+          },
+        },
+        {
+          id: 3,
+          author: 'Trần Thị B',
+          initials: 'TTB',
+          text: '',
+          hyperlink: {
+            rId: 'rId21',
+            text: '@Người Lạ Khác',
+          },
+        },
+      ],
+      mentions: [
+        { relId: 'rId20', email: 'vanthikhach@example.com' },
+        { relId: 'rId21', email: 'nguoila@example.com' },
+      ],
+    })
+
+    const report = await inspectDocx(input)
+    const mapping = buildDefaultMapping(report)
+
+    expect(mapping['Trần Thị B'].alias).toBe('nguoi-gop-y-2')
+    expect(mapping['Người Lạ Khác'].alias).toBe('nguoi-duoc-nhac-1')
+
+    const result = await anonymizeDocx(input, mapping, { replaceMentions: true })
+    const outZip = await JSZip.loadAsync(await result.blob.arrayBuffer())
+
+    const relsXml = await outZip.file('word/_rels/comments.xml.rels')!.async('string')
+    expect(relsXml).toContain('mailto:nguoi-gop-y-2@anonymized.invalid')
+    expect(relsXml).toContain('mailto:nguoi-duoc-nhac-1@anonymized.invalid')
+    expect(relsXml).not.toContain('mailto:nguoi-gop-y-1@anonymized.invalid')
+  })
+
+  // K5: removeDates=true trên fixture có w16du:dateUtc và một dateUtc thuộc namespace Word khác
+  it('F-2 K5: removeDates=true removes w16du:dateUtc and any other dateUtc in Word namespace', async () => {
+    const input = await createMockDocx({
+      comments: [
+        {
+          id: 1,
+          author: 'Nguyễn Văn A',
+          initials: 'NVA',
+          date: '2026-01-01T00:00:00Z',
+          dateUtc: {
+            ns: 'http://schemas.microsoft.com/office/word/2023/wordml/du',
+            name: 'dateUtc',
+            value: '2026-01-01T00:00:00Z',
+          },
+          text: 'Comment with dates',
+        },
+      ],
+      commentsExtended: [
+        {
+          paraId: '11111111',
+          dateUtc: '2026-01-01T00:00:00Z',
+        },
+      ],
+    })
+
+    const report = await inspectDocx(input)
+    const mapping = buildDefaultMapping(report)
+    const result = await anonymizeDocx(input, mapping, { removeDates: true })
+    const outZip = await JSZip.loadAsync(await result.blob.arrayBuffer())
+
+    const cXml = await outZip.file('word/comments.xml')!.async('string')
+    expect(cXml).not.toContain('dateUtc')
+    expect(cXml).not.toContain('w:date')
+
+    const extXml = await outZip.file('word/commentsExtended.xml')!.async('string')
+    expect(extXml).not.toContain('dateUtc')
+  })
+
+  // K6: presenceInfo w15:userId="S::hocvien.test03@example.com::00000000-0000-0000-0000-000000000000"
+  it('F-2 K6: presenceInfo S::<email>::<guid> extracts clean email, detects standalone email in comment text as WARN', async () => {
+    const input = await createMockDocx({
+      comments: [
+        {
+          id: 1,
+          author: 'Học viên Test 03',
+          initials: 'HV03',
+          text: 'Vui lòng liên hệ hocvien.test03@example.com để biết thêm chi tiết',
+        },
+      ],
+      people: [
+        {
+          author: 'Học viên Test 03',
+          userId: 'S::hocvien.test03@example.com::00000000-0000-0000-0000-000000000000',
+        },
+      ],
+    })
+
+    const report = await inspectDocx(input)
+    const ident = report.identities.find((i) => i.author === 'Học viên Test 03')
+    expect(ident).toBeDefined()
+    expect(ident!.email).toBe('hocvien.test03@example.com')
+    expect(ident!.userId).toBe('S::hocvien.test03@example.com::00000000-0000-0000-0000-000000000000')
+
+    const mapping = buildDefaultMapping(report)
+    const result = await anonymizeDocx(input, mapping)
+
+    const resReport = await scanResidual(await result.blob.arrayBuffer(), report.identities)
+    expect(resReport.status).toBe('WARN')
+    const emailFinding = resReport.findings.find((f) => f.matchedString === 'hocvien.test03@example.com')
+    expect(emailFinding).toBeDefined()
+    expect(emailFinding!.category).toBe('comment-text')
+  })
+
+  // K7: Tên tác giả nằm trong w:delText ở document.xml → residual WARN, category body-text
+  it('F-2 K7: author name in w:delText in document.xml classified as body-text (WARN, not FAIL)', async () => {
+    const input = await createMockDocx({
+      comments: [{ id: 1, author: 'Nguyễn Văn A', initials: 'NVA', text: 'Comment' }],
+      revisions: [
+        {
+          type: 'del',
+          author: 'Nguyễn Văn A',
+          part: 'document',
+          text: 'Đoạn văn xoá của Nguyễn Văn A',
+          isDelText: true,
+        },
+      ],
+    })
+
+    const report = await inspectDocx(input)
+    const mapping = buildDefaultMapping(report)
+    const result = await anonymizeDocx(input, mapping)
+
+    const resReport = await scanResidual(await result.blob.arrayBuffer(), report.identities)
+    expect(resReport.status).toBe('WARN')
+    const bodyFinding = resReport.findings.find((f) => f.category === 'body-text')
+    expect(bodyFinding).toBeDefined()
+  })
+
+  // K8: Một entry giải nén 400 MB (toàn byte 0, nén DEFLATE) → ZIP_BOMB trong < 5 s, không hết bộ nhớ
+  it('F-2 K8: 400 MB uncompressed entry triggers ZIP_BOMB in < 5s without memory exhaustion', async () => {
+    const zip = new JSZip()
+    zip.file('[Content_Types].xml', '<Types/>')
+    zip.file('word/document.xml', '<w:document/>')
+    zip.file('huge.bin', 'compressed test data')
+
+    const data = await zip.generateAsync({ type: 'uint8array' })
+    const view = new DataView(data.buffer, data.byteOffset, data.byteLength)
+
+    // Patch Central Directory uncompressedSize to 400 MB (419,430,400 bytes)
+    for (let i = 0; i < data.length - 30; i++) {
+      if (
+        data[i] === 0x50 &&
+        data[i + 1] === 0x4b &&
+        data[i + 2] === 0x01 &&
+        data[i + 3] === 0x02
+      ) {
+        const fnLen = view.getUint16(i + 28, true)
+        const fn = Buffer.from(data.buffer, data.byteOffset + i + 46, fnLen).toString()
+        if (fn === 'huge.bin') {
+          // uncompressed size at offset 24
+          view.setUint32(i + 24, 400 * 1024 * 1024, true)
+        }
+      }
+    }
+
+    const start = Date.now()
+    await expect(inspectDocx(data.buffer as ArrayBuffer)).rejects.toMatchObject({ code: 'ZIP_BOMB' })
+    expect(Date.now() - start).toBeLessThan(5000)
   })
 })

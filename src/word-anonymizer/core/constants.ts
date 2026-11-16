@@ -2,7 +2,9 @@ export const OOXML_NAMESPACES = {
   w: 'http://schemas.openxmlformats.org/wordprocessingml/2006/main',
   w14: 'http://schemas.microsoft.com/office/word/2010/wordml',
   w15: 'http://schemas.microsoft.com/office/word/2012/wordml',
-  w16du: 'http://schemas.microsoft.com/office/word/2015/wordml/symex',
+  // TODO(verify): URI w16du - Tài liệu [MS-DOCX] xác định w16du cho Word 365 có thể là http://schemas.microsoft.com/office/word/2023/wordml/du hoặc 2018/wordml/du; cần xác nhận thêm trên các bản Office 365 khác nhau.
+  w16du: 'http://schemas.microsoft.com/office/word/2023/wordml/du',
+  // TODO(verify): Thuộc tính w16cex:dateUtc - Thuộc tính dateUtc trong namespace w16cex (http://schemas.microsoft.com/office/word/2018/wordml/cex) được dùng trong thread comment mở rộng, cần đối chiếu với tài liệu ECMA/MS-DOCX.
   w16cex: 'http://schemas.microsoft.com/office/word/2018/wordml/cex',
   rels: 'http://schemas.openxmlformats.org/package/2006/relationships',
   coreProps: 'http://schemas.openxmlformats.org/package/2006/metadata/core-properties',

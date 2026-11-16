@@ -16,8 +16,11 @@ export class AnonymizerError extends Error {
   }
 }
 
+export type IdentityKind = 'contributor' | 'mentioned'
+
 export interface KnownIdentity {
   author: string
+  kind: IdentityKind
   initials?: string
   email?: string
   userId?: string
@@ -41,6 +44,7 @@ export interface InspectionReport {
 export interface MappedIdentity {
   label: string
   initials: string
+  alias: string
 }
 
 export type IdentityMapping = Record<string, MappedIdentity>
