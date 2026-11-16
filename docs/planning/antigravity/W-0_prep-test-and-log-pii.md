@@ -6,6 +6,7 @@ Nhánh: `chore/w0-pin-deps-vitest-log-pii` (tạo từ `main`) · Commit: `chore
 **Chỉ báo "done" khi đã chạy `git push` và `git log --oneline -1 origin/chore/w0-pin-deps-vitest-log-pii` in ra đúng commit vừa tạo – dán 2 output này ở ĐẦU báo cáo.**
 
 ## Bước 0 (PowerShell)
+Chạy **Bước A** trong `00_RULES.md` trước (repo bẩn hoặc `main` lệch `origin/main` → dừng, báo lại). Sau đó:
 ```powershell
 git checkout main
 git pull --ff-only

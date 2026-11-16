@@ -7,6 +7,7 @@ Nhánh: `feat/w1-docx-anonymizer-core` (tạo từ `main`) · Commit: `feat(W-1)
 **Chỉ báo "done" khi đã chạy `git push` và `git log --oneline -1 origin/feat/w1-docx-anonymizer-core` in ra đúng commit vừa tạo – dán 2 output này ở ĐẦU báo cáo.**
 
 ## Bước 0 (PowerShell)
+Chạy **Bước A** trong `00_RULES.md` trước (repo bẩn hoặc `main` lệch `origin/main` → dừng, báo lại). Sau đó:
 ```powershell
 git checkout main
 git pull --ff-only

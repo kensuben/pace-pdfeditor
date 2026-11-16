@@ -2,10 +2,30 @@
 
 Đọc file này trước mỗi task. Prompt task chỉ ghi phần riêng; mọi thứ ở đây luôn áp dụng.
 
+## Bước A — Lấy repo sạch, mới nhất (bắt buộc trước MỌI task)
+Chạy ở thư mục gốc repo (PowerShell):
+```powershell
+git status --porcelain
+```
+- In ra BẤT KỲ dòng nào → **DỪNG**, báo danh sách file cho người giao việc. KHÔNG tự `git reset --hard`, `git clean`, `git stash` hay xoá file.
+- Không in gì → chạy tiếp:
+```powershell
+git fetch origin
+git checkout main
+git pull --ff-only
+git rev-parse --short HEAD
+git rev-parse --short origin/main
+```
+- Hai dòng cuối phải in **cùng một commit**. `git pull --ff-only` lỗi hoặc hai commit khác nhau → **DỪNG** và báo lại, không tự merge/rebase.
+- Kiểm tra `Test-Path docs/planning/antigravity/00_RULES.md` và `Test-Path <file prompt task>` đều in `True`.
+- Dán output 2 lệnh `git rev-parse` vào đầu báo cáo (commit `main` dùng làm gốc).
+
+Sau Bước A mới chạy "Bước 0" của prompt task (tạo nhánh, `npm ci`…).
+
 ## Git
 - Mỗi task một nhánh, tạo từ `main` mới nhất (`git pull --ff-only`). Tên nhánh + commit message lấy đúng từ prompt.
 - Được tự commit + push **nhánh của task**. KHÔNG push `main`, KHÔNG force-push, KHÔNG tạo PR, KHÔNG rebase lịch sử đã push.
-- Chỉ báo "done" khi đã `git push` và `git log --oneline -1 origin/<nhánh>` in ra đúng commit vừa tạo — dán 2 output này ở ĐẦU báo cáo.
+- Chỉ báo "done" khi đã `git push` và `git log --oneline -1 origin/<nhánh>` in ra đúng commit vừa tạo. Ở ĐẦU báo cáo dán: output `git rev-parse` của Bước A, output `git push`, output `git log origin/<nhánh>`.
 - Lệnh trong prompt viết cho **PowerShell** (Windows).
 
 ## Phạm vi
