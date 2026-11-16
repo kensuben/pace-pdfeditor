@@ -5,7 +5,7 @@ services:
       context: .
       args:
         VITE_MICROSOFT_CLIENT_ID: ${VITE_MICROSOFT_CLIENT_ID:-}
-        VITE_MICROSOFT_TENANT_ID: ${VITE_MICROSOFT_TENANT_ID:-common}
+        VITE_MICROSOFT_TENANT_ID: ${VITE_MICROSOFT_TENANT_ID:-}
         VITE_SIGNING_API_URL: ${VITE_SIGNING_API_URL:-}
         VITE_USB_SIGNING_AGENT_URL: ${VITE_USB_SIGNING_AGENT_URL:-}
     ports:
@@ -38,8 +38,8 @@ services:
       context: .
       dockerfile: Dockerfile.api
     environment:
-      MICROSOFT_CLIENT_ID: ${VITE_MICROSOFT_CLIENT_ID}
-      MICROSOFT_TENANT_ID: ${VITE_MICROSOFT_TENANT_ID:-common}
+      MICROSOFT_CLIENT_ID: ${MICROSOFT_CLIENT_ID:?MICROSOFT_CLIENT_ID bat buoc phai co (Application ID dang GUID)}
+      MICROSOFT_TENANT_ID: ${MICROSOFT_TENANT_ID:?MICROSOFT_TENANT_ID bat buoc phai co (Directory tenant ID dang GUID cua PACE)}
       ADMIN_EMAILS: ${ADMIN_EMAILS:-}
       DATA_FILE: /data/store.json
     volumes:

@@ -40,8 +40,8 @@ services:
     cap_drop:
       - ALL
     environment:
-      MICROSOFT_CLIENT_ID: ${MICROSOFT_CLIENT_ID}
-      MICROSOFT_TENANT_ID: ${MICROSOFT_TENANT_ID:-common}
+      MICROSOFT_CLIENT_ID: ${MICROSOFT_CLIENT_ID:?MICROSOFT_CLIENT_ID bat buoc phai co (Application ID dang GUID)}
+      MICROSOFT_TENANT_ID: ${MICROSOFT_TENANT_ID:?MICROSOFT_TENANT_ID bat buoc phai co (Directory tenant ID dang GUID cua PACE)}
       ADMIN_EMAILS: ${ADMIN_EMAILS:-}
       DATA_FILE: /data/store.json
     volumes:
