@@ -240,10 +240,14 @@ describe('Word Anonymizer Core (W-1)', () => {
 
     const input1 = await makeDoc()
     const report1 = await inspectDocx(input1)
-    expect(report1.identities.length).toBe(1)
+    expect(report1.identities.length).toBe(2)
+    expect(report1.identities[0].author).toBe('Trần Thị B')
+    expect(report1.identities[1].author).toBe('nguyen.vana@example.com')
+    expect(report1.identities[1].kind).toBe('mentioned')
     const mapping1: Record<string, { label: string; initials: string; alias: string }> = {
       'Trần Thị B': { label: 'Người góp ý 1', initials: 'NG1', alias: 'nguoi-gop-y-1' },
       'Nguyễn Văn A': { label: 'Người góp ý 2', initials: 'NG2', alias: 'nguoi-gop-y-2' },
+      'nguyen.vana@example.com': { label: 'Người được nhắc 1', initials: 'NN1', alias: 'nguoi-gop-y-2' },
     }
 
     // replaceMentions: true
@@ -722,3 +726,158 @@ describe('QA Fixes (F-2)', () => {
     expect(Date.now() - start).toBeLessThan(5000)
   })
 })
+
+describe('QA Fixes (F-4)', () => {
+    // K1: comments.xml.rels có 2 rel mailto: mồ côi (vanthikhach@example.com, nguoila.test@example.com) → inspect có 2 danh tính mentioned; output không còn 2 email đó ở bất kỳ part nào; residual PASS. Cùng fixture với replaceMentions=false → residual không PASS.
+    it('F-4 K1: orphan mailto rels inspected as mentioned identities, removed on replaceMentions=true (PASS), retained on false (FAIL)', async () => {
+      const input = await createMockDocx({
+        comments: [
+          {
+            id: 1,
+            author: 'Học viên Test 01',
+            initials: 'HV01',
+            text: 'Nội dung bình luận mẫu',
+          },
+        ],
+        mentions: [
+          { relId: 'rIdOrphan1', email: 'vanthikhach@example.com' },
+          { relId: 'rIdOrphan2', email: 'nguoila.test@example.com' },
+        ],
+      })
+
+      const report = await inspectDocx(input)
+      expect(report.identities.length).toBe(3)
+
+      const orphan1 = report.identities.find((i) => i.author === 'vanthikhach@example.com')
+      expect(orphan1).toBeDefined()
+      expect(orphan1!.kind).toBe('mentioned')
+      expect(orphan1!.email).toBe('vanthikhach@example.com')
+
+      const orphan2 = report.identities.find((i) => i.author === 'nguoila.test@example.com')
+      expect(orphan2).toBeDefined()
+      expect(orphan2!.kind).toBe('mentioned')
+      expect(orphan2!.email).toBe('nguoila.test@example.com')
+
+      const mapping = buildDefaultMapping(report)
+
+      // 1. replaceMentions: true -> output không còn 2 email, residual PASS
+      const resTrue = await anonymizeDocx(input, mapping, { replaceMentions: true })
+      const outTrueBuf = await resTrue.blob.arrayBuffer()
+      const outTrueZip = await JSZip.loadAsync(outTrueBuf)
+
+      for (const [path, file] of Object.entries(outTrueZip.files)) {
+        if (!path.endsWith('.xml') && !path.endsWith('.rels')) continue
+        const text = await file.async('string')
+        expect(text).not.toContain('vanthikhach@example.com')
+        expect(text).not.toContain('nguoila.test@example.com')
+      }
+
+      const residualTrue = await scanResidual(outTrueBuf, report.identities)
+      expect(residualTrue.status).toBe('PASS')
+
+      // 2. replaceMentions: false -> residual KHÔNG PASS
+      const resFalse = await anonymizeDocx(input, mapping, { replaceMentions: false })
+      const outFalseBuf = await resFalse.blob.arrayBuffer()
+      const residualFalse = await scanResidual(outFalseBuf, report.identities)
+      expect(residualFalse.status).not.toBe('PASS')
+    })
+
+    // K2: Rel mồ côi có email trùng email của một người góp ý (lấy từ people.xml) → Target = alias của người đó; không tạo danh tính mentioned mới.
+    it('F-4 K2: orphan mailto matching people.xml contributor email uses contributor alias, no duplicate mentioned identity', async () => {
+      const input = await createMockDocx({
+        comments: [
+          {
+            id: 1,
+            author: 'Giảng viên Test 02',
+            initials: 'GV02',
+            text: 'Bình luận của giảng viên',
+          },
+        ],
+        people: [
+          {
+            author: 'Giảng viên Test 02',
+            userId: 'giangvien.test02@example.com',
+          },
+        ],
+        mentions: [
+          {
+            relId: 'rIdOrphanContributor',
+            email: 'giangvien.test02@example.com',
+          },
+        ],
+      })
+
+      const report = await inspectDocx(input)
+      expect(report.identities.length).toBe(1)
+      expect(report.identities[0].author).toBe('Giảng viên Test 02')
+      expect(report.identities[0].kind).toBe('contributor')
+      expect(report.identities[0].email).toBe('giangvien.test02@example.com')
+
+      const mapping = buildDefaultMapping(report)
+      expect(mapping['Giảng viên Test 02'].alias).toBe('nguoi-gop-y-1')
+
+      const result = await anonymizeDocx(input, mapping, { replaceMentions: true })
+      const outZip = await JSZip.loadAsync(await result.blob.arrayBuffer())
+      const relsXml = await outZip.file('word/_rels/comments.xml.rels')!.async('string')
+
+      expect(relsXml).toContain('mailto:nguoi-gop-y-1@anonymized.invalid')
+      expect(relsXml).not.toContain('giangvien.test02@example.com')
+    })
+
+    // K3: replaceNamesInCommentText=true; comment có <w:hyperlink r:id="rIdWeb"> trỏ https://example.com với text chứa tên Học viên Test 01 → tên đã được thay; mention mailto: trong cùng comment vẫn chỉ có đúng một @<nhãn> (không thay 2 lần).
+    it('F-4 K3: replaceNamesInCommentText replaces name inside web hyperlink while mention mailto has exactly one @label', async () => {
+      const input = await createMockDocx({
+        comments: [
+          {
+            id: 1,
+            author: 'Giảng viên Test 01',
+            initials: 'GV01',
+            rawContent: `<w:hyperlink r:id="rIdMention"><w:r><w:t>@Học viên Test 01</w:t></w:r></w:hyperlink><w:r><w:t> vui lòng xem bài nộp của </w:t></w:r><w:hyperlink r:id="rIdWeb"><w:r><w:t>Học viên Test 01 trang web</w:t></w:r></w:hyperlink>`,
+          },
+        ],
+        mentions: [
+          {
+            relId: 'rIdMention',
+            email: 'hocvien.test01@example.com',
+          },
+          {
+            relId: 'rIdWeb',
+            target: 'https://example.com/baitap',
+          },
+        ],
+      })
+
+      const report = await inspectDocx(input)
+      expect(report.identities.some((i) => i.author === 'Giảng viên Test 01')).toBe(true)
+      expect(report.identities.some((i) => i.author === 'Học viên Test 01')).toBe(true)
+
+      const mapping = buildDefaultMapping(report)
+      const hvMapped = mapping['Học viên Test 01']
+      expect(hvMapped).toBeDefined()
+
+      const result = await anonymizeDocx(input, mapping, {
+        replaceMentions: true,
+        replaceNamesInCommentText: true,
+      })
+
+      const outZip = await JSZip.loadAsync(await result.blob.arrayBuffer())
+      const commentsXml = await outZip.file('word/comments.xml')!.async('string')
+
+      // 1. Text inside web hyperlink must have name replaced
+      expect(commentsXml).toContain(`${hvMapped.label} trang web`)
+      expect(commentsXml).not.toContain('Học viên Test 01 trang web')
+
+      // 2. Mention must have exactly one @<label>, not replaced twice
+      expect(commentsXml).toContain(`@${hvMapped.label}`)
+      const mentionOccurrences = (commentsXml.match(new RegExp(`@${hvMapped.label}`, 'g')) || []).length
+      expect(mentionOccurrences).toBe(1)
+      expect(commentsXml).not.toContain(`@@${hvMapped.label}`)
+      expect(commentsXml).not.toContain(`@${hvMapped.label}${hvMapped.label}`)
+
+      // 3. Web hyperlink relationship is preserved, mention rel is anonymized
+      const relsXml = await outZip.file('word/_rels/comments.xml.rels')!.async('string')
+      expect(relsXml).toContain('https://example.com/baitap')
+      expect(relsXml).toContain(`mailto:${hvMapped.alias}@anonymized.invalid`)
+      expect(relsXml).not.toContain('hocvien.test01@example.com')
+    })
+  })
