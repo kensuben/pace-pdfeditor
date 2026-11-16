@@ -1,7 +1,7 @@
 # [W-2] Word Anonymizer: giao diện + điều hướng + log
 
 Đọc `docs/planning/antigravity/00_RULES.md` trước khi làm.
-Tiền điều kiện: W-1 đã merge vào `main`.
+Tiền điều kiện: W-1 (PR #7) và F-2 (PR #11) đã merge vào `main`.
 Nhánh: `feat/w2-docx-anonymizer-ui` (tạo từ `main`) · Commit: `feat(W-2): word anonymizer page with preview, options and residual report`
 Được tự commit + push nhánh này. KHÔNG push `main`, KHÔNG force-push.
 **Chỉ báo "done" khi đã chạy `git push` và `git log --oneline -1 origin/feat/w2-docx-anonymizer-ui` in ra đúng commit vừa tạo – dán 2 output này ở ĐẦU báo cáo.**
@@ -16,15 +16,26 @@ npm ci
 ```
 
 ## Vấn đề
-Core ở `src/word-anonymizer/core/` (W-1) chưa có giao diện. App hiện là một SPA không có router: `src/App.tsx` chỉ có PDF editor, topbar có nút đăng nhập Microsoft, Activity log, Administration.
+Core ở `src/word-anonymizer/core/` (W-1, đã sửa ở F-2) chưa có giao diện. Từ F-2, kiểu dữ liệu core có thêm:
+- `KnownIdentity.kind: 'contributor' | 'mentioned'`: `contributor` là người có comment/revision/metadata; `mentioned` là người chỉ được @mention.
+- `MappedIdentity.alias`: dùng làm email ẩn danh (`<alias>@anonymized.invalid`), do `buildDefaultMapping` sinh ra.
+
+`buildDefaultMapping` đặt nhãn `Người góp ý N` / `NG<N>` cho `contributor` và `Người được nhắc N` / `NN<N>` cho `mentioned`. `validateMapping(mapping, identities)` kiểm tra nhãn rỗng, trùng nhau, trùng tên thật. App hiện là một SPA không có router: `src/App.tsx` chỉ có PDF editor, topbar có nút đăng nhập Microsoft, Activity log, Administration.
 
 ## Logic cần đạt (quyết định của chủ dự án)
 1. **Điều hướng**: switcher trên topbar "PDF Editor | Ẩn danh Word", đồng bộ hash `#/word-anonymizer` (F5/back/forward giữ đúng màn hình). Không thêm thư viện router.
 2. **Bắt buộc đăng nhập**: chưa có `account`/`apiUser` → màn hình yêu cầu đăng nhập Microsoft, không cho chọn file.
 3. **Luồng** trong `WordAnonymizerPage.tsx`:
    - (a) Chọn/kéo-thả `.docx`. Lỗi `AnonymizerError` hiện message tiếng Việt.
-   - (b) Bảng xem trước người tham gia: nhãn (sửa được, validate theo core), số comment, số revision, cờ "có email/presence". Danh sách cảnh báo từ `inspectDocx`.
-   - (c) Tuỳ chọn = `AnonymizeOptions`, mặc định theo W-1.
+   - (b) Bảng xem trước, chia **2 nhóm**:
+     - **"Người góp ý"** (`kind: 'contributor'`): nhãn, initials (sửa được), nguồn xuất hiện (`sources`: comment / revision / metadata), cờ "có email/presence".
+     - **"Người được nhắc"** (`kind: 'mentioned'`): nhãn (sửa được), cờ "có email".
+     - Nhóm nào rỗng thì ẩn.
+     - **Không** hiển thị và không cho sửa `alias`; luôn giữ `alias` từ `buildDefaultMapping` khi người dùng đổi nhãn.
+     - Validate bằng `validateMapping`; có lỗi thì hiện cạnh ô tương ứng và khoá nút "Ẩn danh".
+     - Thống kê tổng (`stats.commentCount`, `stats.revisionCount`) hiện phía trên bảng.
+     - Danh sách cảnh báo lấy từ `inspectDocx().warnings`.
+   - (c) Tuỳ chọn = `AnonymizeOptions`, mặc định theo core (`removeDates=false`, `replaceMentions=true`, `replaceNamesInCommentText=false`, `scrubDocProps=true`, `customPropsPolicy='keep-sensitivity-labels'`). Tắt `replaceMentions` → hiện cảnh báo "Tên người được nhắc sẽ còn trong file".
    - (d) Nút "Ẩn danh" → báo cáo residual: `PASS` xanh, `WARN` vàng (liệt kê part + category), `FAIL` đỏ.
    - (e) Tải file.
 4. `FAIL` → nút tải bị vô hiệu; chỉ mở khi tick "Tôi đã hiểu rủi ro".
@@ -36,13 +47,13 @@ Core ở `src/word-anonymizer/core/` (W-1) chưa có giao diện. App hiện là
 
 ## Ràng buộc
 - Tạo `src/word-anonymizer/WordAnonymizerPage.tsx`, `src/word-anonymizer/word-anonymizer.css`. Sửa `src/App.tsx` chỉ ở: topbar (switcher), chọn màn hình theo hash, truyền `account`/`apiUser`/`log` vào trang mới. Import CSS ở `src/main.tsx`.
-- Không sửa `src/word-anonymizer/core/*` (lỗi core → ghi báo cáo, không tự sửa).
+- Không sửa `src/word-anonymizer/core/*` (lỗi core → ghi báo cáo, không tự sửa). Task F-4 có thể đang sửa core song song; W-2 chỉ dùng API công khai qua `src/word-anonymizer/core/index.ts`.
 - Không đổi hành vi PDF editor.
 - Không gửi file/nội dung/mapping qua mạng.
 
 ## Tiêu chí hoàn thành
 - K1: Vào `#/word-anonymizer` khi chưa đăng nhập → thấy yêu cầu đăng nhập, không chọn được file.
-- K2: Đăng nhập, upload file fixture 2 tác giả (sinh từ helper W-1 rồi lưu tạm ngoài repo) → bảng hiện 2 người; sửa nhãn trùng → báo lỗi, không cho chạy.
+- K2: Đăng nhập, upload file fixture có 2 người góp ý + 1 người chỉ được @mention (sinh từ helper test của core rồi lưu tạm ngoài repo) → nhóm "Người góp ý" có 2 dòng, nhóm "Người được nhắc" có 1 dòng, không có cột alias. Sửa nhãn trùng → báo lỗi, nút "Ẩn danh" bị khoá. Đổi nhãn người được nhắc thành `Giảng viên A` → file tải về có `@Giảng viên A` trong comment, rel vẫn là `nguoi-duoc-nhac-1@anonymized.invalid`.
 - K3: Chạy → `PASS`, tải `document_anonymized.docx`; giải nén thấy nhãn ẩn danh.
 - K4: Fixture có tên trong text comment → `WARN` hiện part. Fixture giả lập `FAIL` → nút tải khoá đến khi tick xác nhận.
 - K5: Activity log có `word_anonymizer.completed` chỉ với 4 trường số lượng/status.
