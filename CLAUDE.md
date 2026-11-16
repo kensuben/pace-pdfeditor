@@ -14,6 +14,7 @@ Khi người dùng yêu cầu "chỉ làm planning / viết prompt cho Antigravi
 ## Quy ước viết prompt cho Antigravity (bắt buộc)
 - Quy tắc chung nằm ở `docs/planning/antigravity/00_RULES.md`. Prompt task **không lặp lại** quy tắc chung, chỉ dẫn tới file này.
 - **Mỗi prompt = một task nhỏ = một nhánh = một commit.** Không gộp nhiều việc vào một prompt.
+  - Ngoại lệ: khi chủ dự án yêu cầu gộp, một prompt được chứa nhiều phần (A, B, C…) trên **một nhánh**, nhưng **mỗi phần một commit** với message riêng (`<type>(<ID>a)`, `<ID>b`…), có tiêu chí riêng và phải xanh lint/test/build sau từng commit. Ghi rõ quyết định gộp trong prompt.
 - Lưu tại `docs/planning/antigravity/<ID>_<slug>.md`. ID theo tiền tố: `F-` (fix), `W-` (feature/work), có số thứ tự.
 - Cấu trúc bắt buộc, theo đúng thứ tự:
 
