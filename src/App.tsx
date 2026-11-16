@@ -345,11 +345,11 @@ function App() {
       const loaded = await pdfjs.getDocument({ data: data.slice() }).promise
       setBytes(data); setPdf(loaded); setInfo({ name: file.name, size: file.size, pages: loaded.numPages })
       setPage(1); setZoom(1); setHistory([[]]); setHistoryIndex(0); setSelectedId(null); setTextRegions({})
-      log('document.opened', 'Mở tài liệu PDF', { fileName: file.name, fileSize: file.size, pageCount: loaded.numPages }, 'success')
+      log('document.opened', 'Mở tài liệu PDF', { fileExt: 'pdf', fileSize: file.size, pageCount: loaded.numPages }, 'success')
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error)
       console.error('Unable to open PDF:', error)
-      log('document.open_failed', 'Không thể mở tài liệu PDF', { fileName: file.name, reason }, 'warning')
+      log('document.open_failed', 'Không thể mở tài liệu PDF', { fileExt: 'pdf', reason }, 'warning')
       alert(`Không thể mở tài liệu PDF.\n\nChi tiết: ${reason}`)
     }
     finally { setBusy(false) }
@@ -424,8 +424,8 @@ function App() {
     try {
       const out=await buildPdfBytes(), blob = new Blob([out as BlobPart], { type: 'application/pdf' }), url = URL.createObjectURL(blob)
       const a = document.createElement('a'); a.href=url; a.download=info.name.replace(/\.pdf$/i,'')+'-edited.pdf'; a.click(); URL.revokeObjectURL(url)
-      log('document.exported', 'Xuất tài liệu PDF thành công', { fileName: info.name, annotationCount: annotations.length, pageCount: info.pages }, 'success')
-    } catch { log('document.export_failed', 'Xuất tài liệu PDF thất bại', { fileName: info.name }, 'warning'); alert('Could not export this PDF.') } finally { setBusy(false) }
+      log('document.exported', 'Xuất tài liệu PDF thành công', { fileExt: 'pdf', annotationCount: annotations.length, pageCount: info.pages }, 'success')
+    } catch { log('document.export_failed', 'Xuất tài liệu PDF thất bại', { fileExt: 'pdf' }, 'warning'); alert('Could not export this PDF.') } finally { setBusy(false) }
   }
 
   const insertImage = async (file: File) => {
@@ -549,7 +549,7 @@ function App() {
       const response=await fetch(`${String(endpoint).replace(/\/$/,'')}/v1/pdf/sign`,{method:'POST',body:form,credentials:'include'})
       if(!response.ok)throw new Error((await response.text())||`Signing service returned ${response.status}`)
       const signed=await response.blob(),url=URL.createObjectURL(signed),a=document.createElement('a');a.href=url;a.download=info.name.replace(/\.pdf$/i,'')+'-signed.pdf';a.click();URL.revokeObjectURL(url)
-      log('signature.digital_completed','Ký số tài liệu thành công',{mode,fileName:info.name},'security');setShowDigitalSign(false)
+      log('signature.digital_completed','Ký số tài liệu thành công',{mode,fileExt:'pdf'},'security');setShowDigitalSign(false)
     }catch(error){console.error(error);log('signature.digital_failed','Ký số tài liệu thất bại',{mode,reason:error instanceof Error?error.message:String(error)},'warning');alert(`Không thể ký số.\n\n${error instanceof Error?error.message:String(error)}`)}finally{setBusy(false)}
   }
 
