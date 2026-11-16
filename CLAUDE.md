@@ -27,6 +27,7 @@ Nhánh: `<loại>/<id-slug>` (tạo từ `main`) · Commit: `<type>(<ID>): <mô 
 **Chỉ báo "done" khi đã chạy `git push` và `git log --oneline -1 origin/<nhánh>` in ra đúng commit vừa tạo – dán 2 output này ở ĐẦU báo cáo.**
 
 ## Bước 0 (PowerShell)
+Chạy **Bước A** trong `00_RULES.md` trước (repo bẩn hoặc `main` lệch `origin/main` → dừng, báo lại). Sau đó:
 git checkout main / git pull --ff-only / git checkout -b <nhánh> (+ npm ci nếu cần)
 
 ## Vấn đề
@@ -49,6 +50,7 @@ Kỳ vọng: <output mong đợi của từng lệnh>.
 2 output git ở đầu, rồi theo `00_RULES.md` + phần riêng của task.
 ```
 
+- **Bước A (lấy repo sạch)** định nghĩa một lần trong `00_RULES.md`: kiểm `git status --porcelain` (bẩn → dừng, không reset/clean/stash), `git fetch` → `checkout main` → `pull --ff-only`, so `HEAD` với `origin/main`. Mọi prompt task phải gọi Bước A ở đầu Bước 0; đoạn giao việc gửi Antigravity cũng phải nhắc Bước A.
 - Lệnh viết cho **PowerShell** (người chạy dùng Windows). `git add` file có thể không tồn tại thì bọc `if (Test-Path …)`.
 - Mô tả vấn đề phải dựa trên code đã đọc (file:dòng). Không bịa API, phần tử, thuộc tính; điểm chưa chắc ghi "chưa xác minh" và yêu cầu agent đánh dấu `TODO(verify)`.
 - Dữ liệu ví dụ luôn giả (`Học viên Test 01`, `@example.com`, GUID toàn số 0).
