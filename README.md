@@ -9,6 +9,8 @@ npm install
 npm run dev
 ```
 
+> **Lưu ý về đăng nhập giả lập khi DEV**: Khi chạy `npm run dev` mà chưa cấu hình `VITE_MICROSOFT_CLIENT_ID`, nút đăng nhập sẽ sử dụng tài khoản giả lập `Học viên Test 01` để thử giao diện. Cơ chế này chỉ hoạt động ở chế độ DEV, **hoàn toàn không có trong bản build production** (được Vite tự động loại bỏ). Lưu ý rằng các thao tác gọi API backend vẫn sẽ lỗi do không có token Microsoft thật.
+
 Build và kiểm tra:
 
 ```bash

@@ -77,6 +77,20 @@ export default function WordAnonymizerPage({
   const [keepOriginalName, setKeepOriginalName] = useState(false)
   const [exportMappingJson, setExportMappingJson] = useState(false)
   const [acknowledgeRisk, setAcknowledgeRisk] = useState(false)
+  const [configChangedAfterRun, setConfigChangedAfterRun] = useState(false)
+
+  const resetStaleResults = () => {
+    if (anonymizeResult || residualReport || downloadBlobUrl) {
+      if (downloadBlobUrl) {
+        URL.revokeObjectURL(downloadBlobUrl)
+      }
+      setDownloadBlobUrl(null)
+      setAnonymizeResult(null)
+      setResidualReport(null)
+      setAcknowledgeRisk(false)
+      setConfigChangedAfterRun(true)
+    }
+  }
 
   // Clean up object URLs on unmount
   useEffect(() => {
@@ -106,6 +120,7 @@ export default function WordAnonymizerPage({
     setResidualReport(null)
     setErrorMessage(null)
     setAcknowledgeRisk(false)
+    setConfigChangedAfterRun(false)
     if (fileInputRef.current) {
       fileInputRef.current.value = ''
     }
@@ -167,6 +182,7 @@ export default function WordAnonymizerPage({
   }
 
   const handleLabelChange = (authorKey: string, nextLabel: string) => {
+    resetStaleResults()
     setMapping((prev) => {
       const current = prev[authorKey]
       if (!current) return prev
@@ -181,6 +197,7 @@ export default function WordAnonymizerPage({
   }
 
   const handleInitialsChange = (authorKey: string, nextInitials: string) => {
+    resetStaleResults()
     setMapping((prev) => {
       const current = prev[authorKey]
       if (!current) return prev
@@ -199,6 +216,7 @@ export default function WordAnonymizerPage({
 
     setBusy(true)
     setErrorMessage(null)
+    setConfigChangedAfterRun(false)
 
     try {
       const result = await anonymizeDocx(fileBuffer, mapping, options)
@@ -570,9 +588,10 @@ export default function WordAnonymizerPage({
                   <input
                     type="checkbox"
                     checked={options.removeDates}
-                    onChange={(e) =>
+                    onChange={(e) => {
+                      resetStaleResults()
                       setOptions((prev) => ({ ...prev, removeDates: e.target.checked }))
-                    }
+                    }}
                   />
                   <div className="word-option-label">
                     <b>Xóa ngày giờ bình luận và sửa đổi (removeDates)</b>
@@ -584,9 +603,10 @@ export default function WordAnonymizerPage({
                   <input
                     type="checkbox"
                     checked={options.replaceMentions}
-                    onChange={(e) =>
+                    onChange={(e) => {
+                      resetStaleResults()
                       setOptions((prev) => ({ ...prev, replaceMentions: e.target.checked }))
-                    }
+                    }}
                   />
                   <div className="word-option-label">
                     <b>Thay thế tên người được @mention (replaceMentions)</b>
@@ -605,12 +625,13 @@ export default function WordAnonymizerPage({
                   <input
                     type="checkbox"
                     checked={options.replaceNamesInCommentText}
-                    onChange={(e) =>
+                    onChange={(e) => {
+                      resetStaleResults()
                       setOptions((prev) => ({
                         ...prev,
                         replaceNamesInCommentText: e.target.checked,
                       }))
-                    }
+                    }}
                   />
                   <div className="word-option-label">
                     <b>Thay thế tên người xuất hiện trong nội dung bình luận (replaceNamesInCommentText)</b>
@@ -622,9 +643,10 @@ export default function WordAnonymizerPage({
                   <input
                     type="checkbox"
                     checked={options.scrubDocProps}
-                    onChange={(e) =>
+                    onChange={(e) => {
+                      resetStaleResults()
                       setOptions((prev) => ({ ...prev, scrubDocProps: e.target.checked }))
-                    }
+                    }}
                   />
                   <div className="word-option-label">
                     <b>Làm sạch thuộc tính tài liệu (scrubDocProps)</b>
@@ -639,12 +661,13 @@ export default function WordAnonymizerPage({
                   <select
                     id="custom-props-policy-select"
                     value={options.customPropsPolicy}
-                    onChange={(e) =>
+                    onChange={(e) => {
+                      resetStaleResults()
                       setOptions((prev) => ({
                         ...prev,
                         customPropsPolicy: e.target.value as CustomPropsPolicy,
                       }))
-                    }
+                    }}
                   >
                     <option value="keep-sensitivity-labels">
                       Giữ nhãn bảo mật MSIP (keep-sensitivity-labels)
@@ -654,6 +677,13 @@ export default function WordAnonymizerPage({
                   </select>
                 </div>
               </div>
+
+              {configChangedAfterRun && (
+                <div className="word-alert info" style={{ marginTop: '12px' }}>
+                  <Info size={16} />
+                  <span>Cấu hình đã thay đổi — bấm &quot;Ẩn danh tài liệu&quot; để tạo lại file.</span>
+                </div>
+              )}
 
               {/* Anonymize Action */}
               <div className="word-actions-row" style={{ marginTop: '12px' }}>
@@ -827,21 +857,20 @@ export default function WordAnonymizerPage({
                 </div>
 
                 <div className="word-actions-row" style={{ marginTop: '12px' }}>
-                  <a
-                    href={downloadBlobUrl}
-                    download={getDownloadDocTitle()}
-                    className={`primary large ${
-                      residualReport.status === 'FAIL' && !acknowledgeRisk ? 'disabled' : ''
-                    }`}
-                    style={{
-                      textDecoration: 'none',
-                      pointerEvents:
-                        residualReport.status === 'FAIL' && !acknowledgeRisk ? 'none' : 'auto',
-                      opacity: residualReport.status === 'FAIL' && !acknowledgeRisk ? 0.5 : 1,
-                    }}
-                  >
-                    <Download size={18} /> Tải tài liệu đã ẩn danh
-                  </a>
+                  {residualReport.status === 'FAIL' && !acknowledgeRisk ? (
+                    <button type="button" disabled className="primary large disabled">
+                      <Download size={18} /> Tải tài liệu đã ẩn danh
+                    </button>
+                  ) : (
+                    <a
+                      href={downloadBlobUrl}
+                      download={getDownloadDocTitle()}
+                      className="primary large"
+                      style={{ textDecoration: 'none' }}
+                    >
+                      <Download size={18} /> Tải tài liệu đã ẩn danh
+                    </a>
+                  )}
                 </div>
               </div>
             )}

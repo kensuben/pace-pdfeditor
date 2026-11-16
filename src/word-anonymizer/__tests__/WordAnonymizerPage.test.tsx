@@ -8,6 +8,13 @@ import type { AccountInfo } from '@azure/msal-browser'
 // @ts-expect-error global act flag
 globalThis.IS_REACT_ACT_ENVIRONMENT = true
 
+function setInputValue(input: HTMLInputElement, value: string) {
+  const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')?.set
+  setter?.call(input, value)
+  input.dispatchEvent(new Event('input', { bubbles: true }))
+  input.dispatchEvent(new Event('change', { bubbles: true }))
+}
+
 async function uploadMockFile(fileInput: HTMLInputElement, file: File) {
   Object.defineProperty(fileInput, 'files', {
     value: [file],
@@ -396,9 +403,12 @@ describe('WordAnonymizerPage Component Tests (W-2)', () => {
 
     expect(container2.textContent).toContain('KHÔNG ĐẠT (FAIL)')
 
-    // Download button link has disabled class
-    const downloadLink = container2.querySelector('a.primary') as HTMLAnchorElement
-    expect(downloadLink.className).toContain('disabled')
+    // Download button is a disabled button, no a[href] in DOM
+    expect(container2.querySelector('a[href]')).toBeNull()
+    const downloadBtn = container2.querySelector('button.disabled') as HTMLButtonElement
+    expect(downloadBtn).not.toBeNull()
+    expect(downloadBtn.disabled).toBe(true)
+    expect(downloadBtn.textContent).toContain('Tải tài liệu đã ẩn danh')
 
     // Find acknowledgeRisk checkbox
     const acknowledgeCheckbox = Array.from(container2.querySelectorAll('input[type="checkbox"]')).find(
@@ -412,10 +422,223 @@ describe('WordAnonymizerPage Component Tests (W-2)', () => {
       await new Promise((r) => setTimeout(r, 50))
     })
 
-    // Now download button is unlocked
+    // Now download button is unlocked as an <a> tag
+    const downloadLink = container2.querySelector('a.primary') as HTMLAnchorElement
+    expect(downloadLink).not.toBeNull()
+    expect(downloadLink.getAttribute('href')).toBeTruthy()
     expect(downloadLink.className).not.toContain('disabled')
 
     root2.unmount()
     container2.remove()
+  })
+
+  // F-5 K1: FAIL locks download button, no a[href], Tab/Enter cannot download; unlocked on acknowledge
+  it('F-5 K1: FAIL status strictly locks download with disabled button (no a[href]); unlocked on acknowledge', async () => {
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const root = createRoot(container)
+
+    const failDocxBytes = await createMockDocx({
+      comments: [
+        {
+          id: 1,
+          author: 'Tác giả A',
+          initials: 'TA',
+          text: 'Comment',
+        },
+      ],
+      customProps: [
+        {
+          name: 'MSIP_Label_Test',
+          value: 'Tác giả A',
+        },
+      ],
+    })
+
+    act(() => {
+      root.render(
+        <WordAnonymizerPage
+          account={mockAccount}
+          apiUser={null}
+          authReady={true}
+          onSignInMicrosoft={vi.fn()}
+          log={vi.fn()}
+        />
+      )
+    })
+
+    const fileInput = container.querySelector('input[type="file"]') as HTMLInputElement
+    const file = new File([failDocxBytes], 'fail_test.docx', {
+      type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    })
+    await uploadMockFile(fileInput, file)
+
+    const anonymizeBtn = Array.from(container.querySelectorAll('button')).find((b) =>
+      b.textContent?.includes('Ẩn danh tài liệu')
+    )
+    await act(async () => {
+      anonymizeBtn!.click()
+      await new Promise((r) => setTimeout(r, 150))
+    })
+
+    expect(container.textContent).toContain('KHÔNG ĐẠT (FAIL)')
+
+    // Must NOT have any <a> with download or href
+    expect(container.querySelector('a[download]')).toBeNull()
+    expect(container.querySelector('a[href]')).toBeNull()
+
+    // Must have disabled button
+    const downloadBtn = container.querySelector('button.disabled') as HTMLButtonElement
+    expect(downloadBtn).not.toBeNull()
+    expect(downloadBtn.disabled).toBe(true)
+
+    // Acknowledge risk checkbox
+    const ackCb = Array.from(container.querySelectorAll('input[type="checkbox"]')).find((cb) =>
+      (cb as HTMLInputElement).parentElement?.textContent?.includes('Tôi đã hiểu rủi ro')
+    ) as HTMLInputElement
+    expect(ackCb).toBeDefined()
+
+    await act(async () => {
+      ackCb.click()
+      await new Promise((r) => setTimeout(r, 50))
+    })
+
+    // Now rendered as <a> with download and href
+    const downloadLink = container.querySelector('a.primary') as HTMLAnchorElement
+    expect(downloadLink).not.toBeNull()
+    expect(downloadLink.getAttribute('download')).toBe('document_anonymized.docx')
+    expect(downloadLink.getAttribute('href')).toBeTruthy()
+
+    root.unmount()
+    container.remove()
+  })
+
+  // F-5 K2: Changing config resets stale results and shows reminder; re-running updates; keepOriginalName does not reset
+  it('F-5 K2: editing label/initials/options clears stale result and displays reminder; re-run clears reminder; keepOriginalName keeps result', async () => {
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const root = createRoot(container)
+
+    const mockDocxBytes = await createMockDocx({
+      comments: [
+        {
+          id: 1,
+          author: 'Người dùng Một',
+          initials: 'NDM',
+          text: 'Bình luận thử nghiệm',
+        },
+      ],
+    })
+
+    act(() => {
+      root.render(
+        <WordAnonymizerPage
+          account={mockAccount}
+          apiUser={null}
+          authReady={true}
+          onSignInMicrosoft={vi.fn()}
+          log={vi.fn()}
+        />
+      )
+    })
+
+    const fileInput = container.querySelector('input[type="file"]') as HTMLInputElement
+    const file = new File([mockDocxBytes], 'demo.docx', {
+      type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    })
+    await uploadMockFile(fileInput, file)
+
+    const anonymizeBtn = Array.from(container.querySelectorAll('button')).find((b) =>
+      b.textContent?.includes('Ẩn danh tài liệu')
+    )
+
+    // 1. Run first time
+    await act(async () => {
+      anonymizeBtn!.click()
+      await new Promise((r) => setTimeout(r, 150))
+    })
+
+    expect(container.textContent).toContain('ĐẠT BẢO MẬT (PASS)')
+    expect(container.querySelector('.residual-card')).not.toBeNull()
+    expect(container.querySelector('a.primary')).not.toBeNull()
+    expect(container.textContent).not.toContain('Cấu hình đã thay đổi')
+
+    // 2. Toggle "Giữ tên gốc khi tải về" -> should NOT reset results
+    const keepOriginalNameCb = Array.from(
+      container.querySelectorAll('input[type="checkbox"]')
+    ).find((cb) =>
+      (cb as HTMLInputElement).parentElement?.textContent?.includes('Giữ tên gốc khi tải về')
+    ) as HTMLInputElement
+    expect(keepOriginalNameCb).toBeDefined()
+
+    await act(async () => {
+      keepOriginalNameCb.click()
+      await new Promise((r) => setTimeout(r, 50))
+    })
+
+    // Result must still be present!
+    expect(container.querySelector('.residual-card')).not.toBeNull()
+    expect(container.querySelector('a.primary')).not.toBeNull()
+    expect(container.textContent).not.toContain('Cấu hình đã thay đổi')
+
+    // 3. Edit author label -> stale results cleared, reminder shown
+    const labelInput = container.querySelector('input[placeholder="Nhãn thay thế"]') as HTMLInputElement
+    expect(labelInput).not.toBeNull()
+
+    await act(async () => {
+      setInputValue(labelInput, 'Tác giả VIP')
+      await new Promise((r) => setTimeout(r, 50))
+    })
+
+    // Result and download button must disappear
+    expect(container.querySelector('.residual-card')).toBeNull()
+    expect(container.querySelector('a.primary')).toBeNull()
+    expect(container.querySelector('button.disabled')).toBeNull()
+    // Reminder message must be displayed
+    expect(container.textContent).toContain(
+      'Cấu hình đã thay đổi — bấm "Ẩn danh tài liệu" để tạo lại file.'
+    )
+
+    // 4. Click "Ẩn danh tài liệu" again -> result reappears, reminder cleared
+    await act(async () => {
+      anonymizeBtn!.click()
+      await new Promise((r) => setTimeout(r, 150))
+    })
+
+    expect(container.querySelector('.residual-card')).not.toBeNull()
+    expect(container.querySelector('a.primary')).not.toBeNull()
+    expect(container.textContent).not.toContain('Cấu hình đã thay đổi')
+
+    // 5. Change option "removeDates" -> stale results cleared, reminder shown
+    const removeDatesCb = Array.from(
+      container.querySelectorAll('input[type="checkbox"]')
+    ).find((cb) =>
+      (cb as HTMLInputElement).parentElement?.textContent?.includes('removeDates')
+    ) as HTMLInputElement
+    expect(removeDatesCb).toBeDefined()
+
+    await act(async () => {
+      removeDatesCb.click()
+      await new Promise((r) => setTimeout(r, 50))
+    })
+
+    expect(container.querySelector('.residual-card')).toBeNull()
+    expect(container.querySelector('a.primary')).toBeNull()
+    expect(container.textContent).toContain(
+      'Cấu hình đã thay đổi — bấm "Ẩn danh tài liệu" để tạo lại file.'
+    )
+
+    // 6. Click "Ẩn danh tài liệu" again -> result reappears, reminder cleared
+    await act(async () => {
+      anonymizeBtn!.click()
+      await new Promise((r) => setTimeout(r, 150))
+    })
+
+    expect(container.querySelector('.residual-card')).not.toBeNull()
+    expect(container.querySelector('a.primary')).not.toBeNull()
+    expect(container.textContent).not.toContain('Cấu hình đã thay đổi')
+
+    root.unmount()
+    container.remove()
   })
 })
