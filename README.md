@@ -87,15 +87,23 @@ docker compose up -d
 
 ## Cấu hình Microsoft Login
 
-1. Tạo **App registration** trong Microsoft Entra admin center.
+Ứng dụng được thiết kế theo mô hình **single-tenant**, chỉ chấp nhận các tài khoản thuộc tenant Microsoft Entra của PACE.
+
+1. Tạo **App registration** trong Microsoft Entra admin center (chọn *Accounts in this organizational directory only* - Single tenant).
 2. Chọn nền tảng **Single-page application (SPA)**.
 3. Thêm redirect URI `http://localhost:5173/redirect.html` cho môi trường local và `https://your-domain/redirect.html` cho production, với loại nền tảng **Single-page application (SPA)**.
-4. Sao chép `.env.example` thành `.env`, sau đó điền Application (client) ID và tenant ID.
+4. Sao chép `.env.example` thành `.env`, sau đó điền Application (client) ID và Directory (tenant) ID dạng GUID:
 
 ```env
-VITE_MICROSOFT_CLIENT_ID=your-application-client-id
-VITE_MICROSOFT_TENANT_ID=common
+VITE_MICROSOFT_CLIENT_ID=00000000-0000-0000-0000-000000000000
+VITE_MICROSOFT_TENANT_ID=00000000-0000-0000-0000-000000000000
 ```
+
+> **Bảo mật & Xác thực Token Single-Tenant**:
+> - Cả `VITE_MICROSOFT_TENANT_ID` (frontend / GitHub Variables) và `MICROSOFT_TENANT_ID` (backend API / VPS) đều bắt buộc phải là **Directory (tenant) ID dạng GUID**.
+> - Tuyệt đối không dùng `common`, `organizations` hay `consumers`. Backend API sẽ kiểm tra định dạng và **từ chối khởi động (fail-closed)** nếu thiếu hoặc cấu hình sai.
+> - Backend API xác thực chữ ký token, đối chiếu chặt chẽ `aud`, `iss` (`https://login.microsoftonline.com/<tenantId>/v2.0`) và `tid`.
+> - Tài khoản người dùng được gắn cố định với Object ID (`oid`) của Microsoft Entra. Ở lần đăng nhập hợp lệ đầu tiên sau khi cập nhật hệ thống, user cũ (hoặc user mới được admin tạo theo email) sẽ được tự động liên kết với `oid` và `tid`. Các lần đăng nhập sau nếu phát hiện khác `oid` sẽ bị chặn (403 Forbidden).
 
 Không đặt client secret trong frontend. SPA sử dụng authorization code flow với PKCE thông qua MSAL.
 
@@ -182,7 +190,7 @@ Dữ liệu backend nằm ở `/data/store.json` trong volume. Cần backup volu
    cp deploy/.env.production.example deploy/.env.production
    nano deploy/.env.production
    ```
-   *(Điền `MICROSOFT_CLIENT_ID`, `MICROSOFT_TENANT_ID`, `ADMIN_EMAILS` phù hợp với tổ chức)*
+   *(Điền `MICROSOFT_CLIENT_ID` và `MICROSOFT_TENANT_ID` dạng GUID của PACE, và `ADMIN_EMAILS`. Lưu ý: ứng dụng là single-tenant, `MICROSOFT_TENANT_ID` bắt buộc là GUID, API sẽ fail-closed và dừng nếu để `common`/`organizations` hoặc rỗng. Ở lần đăng nhập đầu tiên sau cập nhật, tài khoản cũ được tự động gắn `oid`)*
 4. Kiểm tra volume dữ liệu đã có từ trước:
    ```bash
    docker volume ls
@@ -278,8 +286,8 @@ Khi cần khôi phục:
 
 Để workflow `.github/workflows/docker-publish.yml` tự động build và đính kèm biến môi trường frontend vào image web, hãy khai báo các biến trong mục **Settings > Secrets and variables > Actions > Variables** của repository GitHub:
 
-- `VITE_MICROSOFT_CLIENT_ID`: Application (client) ID của Microsoft Entra ID.
-- `VITE_MICROSOFT_TENANT_ID`: Tenant ID hoặc `common`.
+- `VITE_MICROSOFT_CLIENT_ID`: Application (client) ID dạng GUID của Microsoft Entra ID.
+- `VITE_MICROSOFT_TENANT_ID`: Directory (tenant) ID dạng GUID của tổ chức PACE (bắt buộc dạng GUID, không dùng `common` hoặc `organizations` do ứng dụng là single-tenant).
 - `VITE_SIGNING_API_URL`: URL API gateway ký số (nếu có).
 - `VITE_USB_SIGNING_AGENT_URL`: URL local agent USB Token (nếu có).
 
