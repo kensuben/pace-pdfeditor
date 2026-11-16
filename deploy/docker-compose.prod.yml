@@ -1,0 +1,59 @@
+services:
+  web:
+    image: ${WEB_IMAGE:-ghcr.io/kensuben/pace-pdfeditor-web}:${APP_TAG:-latest}
+    ports:
+      - "${APP_BIND:-127.0.0.1}:${APP_PORT:-8080}:8080"
+    restart: unless-stopped
+    depends_on:
+      app:
+        condition: service_healthy
+    read_only: true
+    tmpfs:
+      - /var/cache/nginx:size=16m
+      - /var/run:size=1m
+      - /tmp:size=8m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - SETGID
+      - SETUID
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/healthz"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+
+  app:
+    image: ${APP_IMAGE:-ghcr.io/kensuben/pace-pdfeditor-api}:${APP_TAG:-latest}
+    networks:
+      default:
+        aliases:
+          - api
+    restart: unless-stopped
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    environment:
+      MICROSOFT_CLIENT_ID: ${MICROSOFT_CLIENT_ID}
+      MICROSOFT_TENANT_ID: ${MICROSOFT_TENANT_ID:-common}
+      ADMIN_EMAILS: ${ADMIN_EMAILS:-}
+      DATA_FILE: /data/store.json
+    volumes:
+      - paperly_data:/data
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3001/healthz"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+
+volumes:
+  paperly_data:
+    external: true
+    name: ${DATA_VOLUME:-pace-pdfeditor_paperly_data}
