@@ -69,6 +69,8 @@ docker compose up -d
 
 ## Tính năng hiện có
 
+> Hướng dẫn sử dụng cho người dùng cuối: `/huong-dan/` trên domain của ứng dụng (mã nguồn: `public/huong-dan/index.html`).
+
 - Mở hoặc kéo-thả file PDF từ máy
 - Render PDF, thumbnails, chuyển trang và zoom 50–250%
 - Thêm text, highlight, vẽ tay và chữ ký dạng nét vẽ
@@ -169,7 +171,7 @@ USB Token không thể được trình duyệt truy cập khóa riêng trực ti
 Activity log được gửi về API và lưu trong Docker volume `paperly_data`; user không có quyền xóa log. Cấu hình ít nhất một email admin bootstrap trước khi build/deploy:
 
 ```env
-ADMIN_EMAILS=admin@pace.edu.vn,security@pace.edu.vn
+ADMIN_EMAILS=admin.test@example.com,security.test@example.com
 ```
 
 Sau khi admin đăng nhập Microsoft, nút Administration xuất hiện cạnh Activity Log. Admin có thể tạo group, thêm email được phép đăng nhập, bật/tắt tài khoản, cấp quyền admin, gán group, xem user online, tìm kiếm/lọc log và xóa log trong một khoảng thời gian xác định. User online được xác định bằng heartbeat 30 giây và thời hạn hiện diện 90 giây.
@@ -195,8 +197,23 @@ Dữ liệu backend nằm ở `/data/store.json` trong volume. Cần backup volu
    cp deploy/.env.production.example deploy/.env.production
    nano deploy/.env.production
    ```
+   > **Lưu ý:**
+   > - File bắt đầu bằng dấu chấm là **file ẩn**: dùng `ls -la deploy/` mới thấy `.env.production`.
+   > - Đường dẫn là **tương đối** từ thư mục repo (`deploy/.env.production`), không có `/` ở đầu. `nano /deploy/.env.production` sẽ mở nhầm thư mục `/deploy` ở gốc ổ đĩa.
+   > - Không để nguyên GUID toàn số 0 của file mẫu: API vẫn khởi động (vì là GUID hợp lệ) nhưng **không ai đăng nhập được**.
+
    *(Điền `MICROSOFT_CLIENT_ID` và `MICROSOFT_TENANT_ID` dạng GUID của PACE, và `ADMIN_EMAILS`. Lưu ý: ứng dụng là single-tenant, `MICROSOFT_TENANT_ID` bắt buộc là GUID, API sẽ fail-closed và dừng nếu để `common`/`organizations` hoặc rỗng. Ở lần đăng nhập đầu tiên sau cập nhật, tài khoản cũ được tự động gắn `oid`)*
-4. Kiểm tra volume dữ liệu đã có từ trước:
+4. **Chọn cổng và địa chỉ lắng nghe** theo vị trí reverse proxy HTTPS (sửa `APP_BIND`, `APP_PORT` trong `deploy/.env.production`):
+
+   | Reverse proxy | `APP_BIND` | `APP_PORT` |
+   |---|---|---|
+   | Chạy **trên chính VPS** (nginx/Caddy trên host) | `127.0.0.1` (mặc định) | tuỳ chọn, ví dụ `8080` |
+   | Chạy **ở máy khác** trong LAN (ví dụ Nginx Proxy Manager trên máy riêng) | IP LAN của VPS, ví dụ `192.168.x.y` | **trùng với Forward Port** đang cấu hình trên proxy |
+
+   > Để `127.0.0.1` khi proxy ở máy khác → proxy không gọi được container → trình duyệt báo **502 Bad Gateway**.
+   > Khi bind vào IP LAN, nên dùng firewall chỉ cho IP của máy proxy truy cập cổng này.
+
+5. Kiểm tra volume dữ liệu đã có từ trước:
    ```bash
    docker volume ls
    ```
@@ -217,16 +234,45 @@ Thực hiện tuần tự theo các bước sau để đảm bảo an toàn dữ
    docker compose down
    ```
    > **CẢNH BÁO**: TUYỆT ĐỐI KHÔNG thêm cờ `-v` khi chạy lệnh down (sẽ xoá vĩnh viễn volume dữ liệu người dùng).
+
+   Nếu lệnh báo `required variable MICROSOFT_CLIENT_ID is missing a value` (từ F-6, `compose.yaml` bắt buộc 2 biến này trong khi file `.env` cũ chỉ có `VITE_*`), truyền giá trị giả **trên cùng một dòng**. Lệnh `down` không dùng tới giá trị thật:
+   ```bash
+   MICROSOFT_CLIENT_ID=00000000-0000-0000-0000-000000000000 MICROSOFT_TENANT_ID=00000000-0000-0000-0000-000000000000 docker compose down
+   ```
+   Cách dự phòng: dừng và xoá trực tiếp container của project cũ (xoá container **không** xoá volume có tên):
+   ```bash
+   docker ps -a --filter label=com.docker.compose.project=pace-pdfeditor --format '{{.Names}}'
+   docker stop <tên_container> ...
+   docker rm <tên_container> ...
+   ```
+   Nếu bỏ qua bước này, `./scripts/deploy.sh` sẽ dừng ở bước preflight với thông báo `Phát hiện container '...' đang gắn volume` — đó là cơ chế bảo vệ dữ liệu, không phải lỗi.
 3. **Kiểm tra trạng thái**:
    ```bash
    docker ps -a --filter volume=pace-pdfeditor_paperly_data
    ```
-   Đảm bảo không còn container nào đang gắn volume và cổng `8080` đã được giải phóng.
+   Đảm bảo không còn container nào đang gắn volume và cổng `APP_PORT` đã được giải phóng. Kiểm tra volume vẫn còn:
+   ```bash
+   docker volume ls --filter name=pace-pdfeditor_paperly_data
+   ```
 4. **Khởi chạy stack production mới**:
    ```bash
    ./scripts/deploy.sh
    ```
-5. **Kế hoạch lùi bước (Rollback) nếu có sự cố**:
+5. **Kiểm tra sau khi deploy**:
+   ```bash
+   ./scripts/deploy.sh status
+   curl -s http://<APP_BIND>:<APP_PORT>/healthz
+   ```
+   Lệnh `curl` phải in `ok`. Nếu reverse proxy ở máy khác, chạy thêm lệnh `curl` đó **từ máy proxy**. Sau đó kiểm tay: đăng nhập Microsoft, mở 1 PDF, ẩn danh 1 file `.docx` thử nghiệm, mở Administration (tài khoản admin).
+
+   | Triệu chứng | Nguyên nhân thường gặp |
+   |---|---|
+   | 502 Bad Gateway | `APP_BIND`/`APP_PORT` không khớp với Forward Host/Port của reverse proxy |
+   | Container `app` khởi động lại liên tục, log `[AUTH CONFIG ERROR]` | `MICROSOFT_CLIENT_ID`/`MICROSOFT_TENANT_ID` sai định dạng hoặc là `common` |
+   | Đăng nhập xong báo không được phép | Email chưa có trong danh sách user hoặc `ADMIN_EMAILS`, hoặc tenant ID là GUID giả |
+   | `deploy.sh` báo không kéo được image (`denied`) | Chưa `docker login ghcr.io` hoặc PAT thiếu quyền `read:packages` |
+
+6. **Kế hoạch lùi bước (Rollback) nếu có sự cố**:
    Script deploy không tự động xoá hay chỉnh sửa dữ liệu trong volume. Nếu cần quay lại stack cũ:
    ```bash
    docker compose -p pace-pdf -f deploy/docker-compose.prod.yml down
