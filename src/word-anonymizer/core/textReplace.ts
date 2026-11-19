@@ -1,5 +1,5 @@
 import { OOXML_NAMESPACES } from './constants'
-import { findSensitive, maskSensitive } from './sensitive'
+import { findSensitive, maskAddress, maskSensitive } from './sensitive'
 import {
   AnonymizeOptions,
   AnonymizeReplacements,
@@ -34,11 +34,58 @@ function isWordChar(char: string | undefined): boolean {
   return /[\p{L}\p{N}]/u.test(char)
 }
 
+function subtractRanges(
+  rangeStart: number,
+  rangeEnd: number,
+  occupied: { start: number; end: number }[]
+): [number, number][] {
+  const relevant = occupied
+    .map((o) => ({
+      start: Math.max(rangeStart, o.start),
+      end: Math.min(rangeEnd, o.end),
+    }))
+    .filter((o) => o.start < o.end)
+    .sort((a, b) => a.start - b.start)
+
+  if (relevant.length === 0) {
+    return [[rangeStart, rangeEnd]]
+  }
+
+  const merged: { start: number; end: number }[] = []
+  for (const seg of relevant) {
+    if (merged.length === 0) {
+      merged.push({ ...seg })
+    } else {
+      const last = merged[merged.length - 1]
+      if (seg.start <= last.end) {
+        last.end = Math.max(last.end, seg.end)
+      } else {
+        merged.push({ ...seg })
+      }
+    }
+  }
+
+  const result: [number, number][] = []
+  let cursor = rangeStart
+  for (const m of merged) {
+    if (m.start > cursor) {
+      result.push([cursor, m.start])
+    }
+    cursor = Math.max(cursor, m.end)
+  }
+  if (cursor < rangeEnd) {
+    result.push([cursor, rangeEnd])
+  }
+
+  return result
+}
+
 export function findEntityMatches(
   text: string,
   entities: CustomEntity[]
 ): ReplacementSpan[] {
   const spans: ReplacementSpan[] = []
+  // text is already normalized to NFC by caller
   const textNormalized = text.normalize('NFC')
   const textLower = textNormalized.toLowerCase()
 
@@ -113,48 +160,100 @@ export function replaceParagraphText(
   const tNodes = getDirectParagraphTNodes(p)
   if (tNodes.length === 0) return false
 
-  // Build concatenated string and node offset map
+  // NFD safety (Requirement 3):
+  // Normalize each w:t node to NFC and write it back so paragraph text and nodes share exact same NFC string.
   let paraText = ''
   const nodeRanges: { node: Element; start: number; end: number; originalText: string }[] = []
 
   for (const node of tNodes) {
-    const originalText = node.textContent || ''
+    const raw = node.textContent || ''
+    const nfc = raw.normalize('NFC')
+    if (raw !== nfc) {
+      node.textContent = nfc
+    }
     const start = paraText.length
-    paraText += originalText
+    paraText += nfc
     const end = paraText.length
-    nodeRanges.push({ node, start, end, originalText })
+    nodeRanges.push({ node, start, end, originalText: nfc })
   }
 
   if (paraText.length === 0) return false
 
-  // 1. Entity matches
+  // Step (a): Entity matches
   const entitySpans = findEntityMatches(paraText, customEntities)
+  const occupiedRanges: { start: number; end: number }[] = entitySpans.map((s) => ({
+    start: s.start,
+    end: s.end,
+  }))
 
-  // 2. Sensitive data matches
-  const sensitiveMatches = findSensitive(paraText)
-  const sensitiveSpans: ReplacementSpan[] = []
+  // Step (b): Detect sensitive data (email, phone, CCCD, MST, STK) outside entity ranges
+  const allSensitive = findSensitive(paraText)
+  const specificMatches = allSensitive.filter((s) => s.kind !== 'address')
+  const specificSpans: ReplacementSpan[] = []
 
-  for (const sMatch of sensitiveMatches) {
+  for (const sMatch of specificMatches) {
     if (!maskKinds[sMatch.kind]) continue
     if (keepValues.includes(sMatch.normalized)) continue
 
-    // Must not overlap with any entity span (entity replaced first)
+    // Skip if overlaps with any entity span
     const overlapsEntity = entitySpans.some(
       (e) => Math.max(sMatch.start, e.start) < Math.min(sMatch.end, e.end)
     )
     if (overlapsEntity) continue
 
     const replacementText = maskSensitive(sMatch.kind, sMatch.value, sMatch.normalized)
-    sensitiveSpans.push({
+    specificSpans.push({
       start: sMatch.start,
       end: sMatch.end,
       replacementText,
       type: 'sensitive',
       kind: sMatch.kind,
     })
+    occupiedRanges.push({ start: sMatch.start, end: sMatch.end })
   }
 
-  const allSpans = [...entitySpans, ...sensitiveSpans]
+  // Step (c): Address masking outside entity and step (b) ranges
+  const addressMatches = allSensitive.filter((s) => s.kind === 'address')
+  const addressSpans: ReplacementSpan[] = []
+
+  if (maskKinds.address) {
+    for (const addrMatch of addressMatches) {
+      if (keepValues.includes(addrMatch.normalized)) continue
+
+      const subRanges = subtractRanges(
+        addrMatch.start,
+        addrMatch.end,
+        occupiedRanges
+      )
+
+      let addrReplaced = false
+      for (const [subStart, subEnd] of subRanges) {
+        const subRaw = paraText.slice(subStart, subEnd)
+        const trimmed = subRaw.trim()
+        if (trimmed.length < 3) continue
+
+        const leadingSpace = subRaw.length - subRaw.trimStart().length
+        const actualStart = subStart + leadingSpace
+        const actualEnd = actualStart + trimmed.length
+        const replacementText = maskAddress(trimmed)
+
+        addressSpans.push({
+          start: actualStart,
+          end: actualEnd,
+          replacementText,
+          type: 'sensitive',
+          kind: 'address',
+        })
+        addrReplaced = true
+      }
+
+      if (addrReplaced) {
+        stats.byKind.address++
+      }
+    }
+  }
+
+  const allSpans = [...entitySpans, ...specificSpans, ...addressSpans]
   if (allSpans.length === 0) return false
 
   allSpans.sort((a, b) => a.start - b.start)
@@ -179,7 +278,7 @@ export function replaceParagraphText(
         // Count replacement
         if (span.type === 'entity') {
           stats.entities++
-        } else if (span.kind) {
+        } else if (span.kind && span.kind !== 'address') {
           stats.byKind[span.kind]++
         }
       }

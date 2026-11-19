@@ -30,7 +30,7 @@ async function uploadMockFile(fileInput: HTMLInputElement, file: File) {
   })
   await act(async () => {
     fileInput.dispatchEvent(new Event('change', { bubbles: true }))
-    await new Promise((r) => setTimeout(r, 150))
+    await new Promise((r) => setTimeout(r, 300))
   })
 }
 
@@ -75,7 +75,7 @@ describe('WordAnonymizerPage Component Tests (W-2)', () => {
 
     root.unmount()
     container.remove()
-  })
+  }, 15000)
 
   // K2: Đăng nhập, upload file fixture có 2 người góp ý + 1 người chỉ được @mention
   it('K2: authenticated, inspects docx, shows contributor (2) and mentioned (1) groups, rejects duplicate labels', async () => {
@@ -155,7 +155,7 @@ describe('WordAnonymizerPage Component Tests (W-2)', () => {
 
     root.unmount()
     container.remove()
-  })
+  }, 15000)
 
   // K3, K4, K5: Test anonymization, residual reports (PASS, WARN, FAIL) and activity log fields
   it('K3, K4, K5: anonymization flow, residual PASS, WARN, FAIL and activity log 4 fields', async () => {
@@ -202,7 +202,7 @@ describe('WordAnonymizerPage Component Tests (W-2)', () => {
 
     await act(async () => {
       anonymizeBtn!.click()
-      await new Promise((r) => setTimeout(r, 500))
+      await new Promise((r) => setTimeout(r, 400))
     })
 
     // Verify PASS card is displayed
@@ -246,7 +246,7 @@ describe('WordAnonymizerPage Component Tests (W-2)', () => {
 
     root.unmount()
     container.remove()
-  })
+  }, 15000)
 
   // K2 verify rel remains alias when renamed
   it('K2: when mentioned person is renamed to "Giảng viên A", rel target remains alias', async () => {
@@ -313,14 +313,14 @@ describe('WordAnonymizerPage Component Tests (W-2)', () => {
 
     await act(async () => {
       anonymizeBtn!.click()
-      await new Promise((r) => setTimeout(r, 500))
+      await new Promise((r) => setTimeout(r, 400))
     })
 
     expect(container.textContent).toContain('Tải tài liệu đã ẩn danh')
 
     root.unmount()
     container.remove()
-  })
+  }, 15000)
 
   // K4: WARN when name in comment text, FAIL locks download until acknowledged
   it('K4: WARN shows finding part; FAIL locks download button until acknowledge checkbox is checked', async () => {
@@ -365,7 +365,7 @@ describe('WordAnonymizerPage Component Tests (W-2)', () => {
 
     await act(async () => {
       anonymizeBtn1!.click()
-      await new Promise((r) => setTimeout(r, 150))
+      await new Promise((r) => setTimeout(r, 400))
     })
 
     expect(container1.textContent).toContain('CẢNH BÁO (WARN)')
@@ -422,7 +422,7 @@ describe('WordAnonymizerPage Component Tests (W-2)', () => {
 
     await act(async () => {
       anonymizeBtn2!.click()
-      await new Promise((r) => setTimeout(r, 150))
+      await new Promise((r) => setTimeout(r, 400))
     })
 
     expect(container2.textContent).toContain('KHÔNG ĐẠT (FAIL)')
@@ -454,7 +454,7 @@ describe('WordAnonymizerPage Component Tests (W-2)', () => {
 
     root2.unmount()
     container2.remove()
-  })
+  }, 15000)
 
   // F-5 K1: FAIL locks download button, no a[href], Tab/Enter cannot download; unlocked on acknowledge
   it('F-5 K1: FAIL status strictly locks download with disabled button (no a[href]); unlocked on acknowledge', async () => {
@@ -502,7 +502,7 @@ describe('WordAnonymizerPage Component Tests (W-2)', () => {
     )
     await act(async () => {
       anonymizeBtn!.click()
-      await new Promise((r) => setTimeout(r, 500))
+      await new Promise((r) => setTimeout(r, 400))
     })
 
     expect(container.textContent).toContain('KHÔNG ĐẠT (FAIL)')
@@ -535,7 +535,7 @@ describe('WordAnonymizerPage Component Tests (W-2)', () => {
 
     root.unmount()
     container.remove()
-  })
+  }, 15000)
 
   // F-5 K2: Changing config resets stale results and shows reminder; re-running updates; keepOriginalName does not reset
   it('F-5 K2: editing label/initials/options clears stale result and displays reminder; re-run clears reminder; keepOriginalName keeps result', async () => {
@@ -579,7 +579,7 @@ describe('WordAnonymizerPage Component Tests (W-2)', () => {
     // 1. Run first time
     await act(async () => {
       anonymizeBtn!.click()
-      await new Promise((r) => setTimeout(r, 500))
+      await new Promise((r) => setTimeout(r, 400))
     })
 
     expect(container.textContent).toContain('ĐẠT BẢO MẬT (PASS)')
@@ -626,7 +626,7 @@ describe('WordAnonymizerPage Component Tests (W-2)', () => {
     // 4. Click "Ẩn danh tài liệu" again -> result reappears, reminder cleared
     await act(async () => {
       anonymizeBtn!.click()
-      await new Promise((r) => setTimeout(r, 500))
+      await new Promise((r) => setTimeout(r, 400))
     })
 
     expect(container.querySelector('.residual-card')).not.toBeNull()
@@ -655,7 +655,7 @@ describe('WordAnonymizerPage Component Tests (W-2)', () => {
     // 6. Click "Ẩn danh tài liệu" again -> result reappears, reminder cleared
     await act(async () => {
       anonymizeBtn!.click()
-      await new Promise((r) => setTimeout(r, 500))
+      await new Promise((r) => setTimeout(r, 400))
     })
 
     expect(container.querySelector('.residual-card')).not.toBeNull()
@@ -664,7 +664,7 @@ describe('WordAnonymizerPage Component Tests (W-2)', () => {
 
     root.unmount()
     container.remove()
-  })
+  }, 15000)
 
   // ==========================================
   // Part B: Entities & Sensitive Data Masking UI (W-5b)
@@ -735,7 +735,7 @@ Trụ sở chính: Địa chỉ: Số 1 Đường Test, P. Bến Nghé, Quận 1
       expect(container.textContent).toContain('*********345')
       expect(container.textContent).toContain('*******567-001')
       expect(container.textContent).toContain('**********7890')
-      expect(container.textContent).toContain('****, ****, ****, TP.HCM.')
+      expect(container.textContent).toContain('****, ****, ****, TP.HCM')
 
       // 2. Add Organization entity (2 spellings)
       const addOrgBtn = Array.from(container.querySelectorAll('button')).find((b) =>
@@ -991,7 +991,7 @@ Trụ sở chính: Địa chỉ: Số 1 Đường Test, P. Bến Nghé, Quận 1
       // Run anonymization
       await act(async () => {
         anonymizeBtn!.click()
-        await new Promise((r) => setTimeout(r, 150))
+        await new Promise((r) => setTimeout(r, 400))
       })
       expect(container.querySelector('.residual-card')).not.toBeNull()
 

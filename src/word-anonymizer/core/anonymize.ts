@@ -71,12 +71,12 @@ function replaceEntitiesInMetadataDoc(
   walk(doc.documentElement)
 
   for (const tNode of textNodes) {
-    let text = tNode.textContent || ''
+    let text = (tNode.textContent || '').normalize('NFC')
     let textChanged = false
 
     for (const entity of entities) {
       for (const val of entity.values) {
-        const trimmedVal = val.trim()
+        const trimmedVal = val.trim().normalize('NFC')
         if (trimmedVal.length < 2) continue
 
         const valLower = trimmedVal.toLowerCase()
