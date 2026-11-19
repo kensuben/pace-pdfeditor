@@ -1,4 +1,4 @@
-import { appendFile, writeFile, rename, mkdir } from 'node:fs/promises'
+import { appendFile, writeFile, rename, mkdir, readFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 
 export const DEFAULT_LOG_MAX_IN_STORE = 20000
@@ -39,6 +39,24 @@ export function cleanStaleSessions(sessions, maxAgeMs = 10 * 60 * 1000) {
   }
 }
 
+async function getExistingArchiveIds(archivePath) {
+  try {
+    const content = await readFile(archivePath, 'utf8')
+    const ids = new Set()
+    for (const line of content.split('\n')) {
+      const trimmed = line.trim()
+      if (!trimmed) continue
+      try {
+        const item = JSON.parse(trimmed)
+        if (item && item.id) ids.add(item.id)
+      } catch {}
+    }
+    return ids
+  } catch {
+    return new Set()
+  }
+}
+
 export async function rotateLogs(store, { dataDir, maxInStore = parseLogMaxInStore(), appendFn = appendFile } = {}) {
   if (!store || !Array.isArray(store.logs) || store.logs.length <= maxInStore) {
     return { rotated: 0 }
@@ -58,16 +76,66 @@ export async function rotateLogs(store, { dataDir, maxInStore = parseLogMaxInSto
     byMonth.get(key).push(log)
   }
 
-  // Attempt to write all archive files
+  // Attempt to write archive files
+  const successfullyArchivedLogs = []
   try {
-    for (const [month, logs] of byMonth.entries()) {
-      const content = logs.map(l => JSON.stringify(l)).join('\n') + '\n'
+    for (const [month, candidateLogs] of byMonth.entries()) {
       const archivePath = join(dataDir, `logs-archive-${month}.jsonl`)
-      await appendFn(archivePath, content, 'utf8')
+      const existingIds = await getExistingArchiveIds(archivePath)
+
+      // Before writing, filter candidate logs:
+      // 1. Must still be in store.logs (not deleted by admin)
+      // 2. Must not already exist in archive file (deduplication from previous partial failure)
+      const currentStoreIdsBefore = new Set(store.logs.map(l => l.id))
+      const toWrite = candidateLogs.filter(l => currentStoreIdsBefore.has(l.id) && !existingIds.has(l.id))
+
+      if (toWrite.length > 0) {
+        const content = toWrite.map(l => JSON.stringify(l)).join('\n') + '\n'
+        await appendFn(archivePath, content, 'utf8')
+      }
+
+      for (const log of candidateLogs) {
+        if (existingIds.has(log.id) || toWrite.some(w => w.id === log.id)) {
+          successfullyArchivedLogs.push(log)
+        }
+      }
     }
-    // Only remove from store after archive write succeeds
-    store.logs.splice(0, excess)
-    return { rotated: excess }
+
+    // Check if any log was deleted from store.logs by admin during the in-flight write
+    const currentStoreIdsAfter = new Set(store.logs.map(l => l.id))
+    const deletedByAdmin = successfullyArchivedLogs.filter(l => !currentStoreIdsAfter.has(l.id))
+
+    if (deletedByAdmin.length > 0) {
+      const deletedSet = new Set(deletedByAdmin.map(l => l.id))
+      for (const month of byMonth.keys()) {
+        const archivePath = join(dataDir, `logs-archive-${month}.jsonl`)
+        try {
+          const content = await readFile(archivePath, 'utf8')
+          const filteredLines = content.split('\n').filter(line => {
+            const trimmed = line.trim()
+            if (!trimmed) return false
+            try {
+              const item = JSON.parse(trimmed)
+              return !deletedSet.has(item.id)
+            } catch {
+              return true
+            }
+          })
+          await writeFile(archivePath, filteredLines.length > 0 ? filteredLines.join('\n') + '\n' : '', 'utf8')
+        } catch {}
+      }
+    }
+
+    // Only remove from store.logs the IDs that were archived and NOT deleted by admin
+    const archivedIdsToRemove = new Set(
+      successfullyArchivedLogs
+        .filter(l => currentStoreIdsAfter.has(l.id))
+        .map(l => l.id)
+    )
+
+    store.logs = store.logs.filter(l => !archivedIdsToRemove.has(l.id))
+
+    return { rotated: archivedIdsToRemove.size }
   } catch (err) {
     console.error('[STORE ERROR] Failed to archive logs to disk:', err.message)
     // Do NOT remove logs from store on error
@@ -87,14 +155,18 @@ export class CoalescedStore {
     this.timer = null
     this.pendingResolvers = []
     this.isWriting = false
-    this.hasPendingRequestDuringWrite = false
+    this.requestedSaveVersion = 0
+    this.completedSaveVersion = 0
+    this.currentWrite = null
   }
 
   scheduleSave() {
+    this.requestedSaveVersion++
+    const targetVersion = this.requestedSaveVersion
+
     return new Promise((resolve, reject) => {
-      this.pendingResolvers.push({ resolve, reject })
+      this.pendingResolvers.push({ resolve, reject, targetVersion })
       if (this.isWriting) {
-        this.hasPendingRequestDuringWrite = true
         return
       }
       if (!this.timer) {
@@ -109,53 +181,87 @@ export class CoalescedStore {
       this.timer = null
     }
 
-    if (this.isWriting) {
-      this.hasPendingRequestDuringWrite = true
-      return
+    this.requestedSaveVersion++
+    const targetVersion = this.requestedSaveVersion
+
+    const waiter = new Promise((resolve, reject) => {
+      this.pendingResolvers.push({ resolve, reject, targetVersion })
+    })
+
+    this._triggerWrite()
+
+    return waiter
+  }
+
+  _triggerWrite() {
+    if (this.currentWrite) {
+      return this.currentWrite
     }
 
-    const resolvers = this.pendingResolvers
-    this.pendingResolvers = []
-    this.hasPendingRequestDuringWrite = false
     this.isWriting = true
+    this.currentWrite = (async () => {
+      while (this.requestedSaveVersion > this.completedSaveVersion) {
+        const versionBeingWritten = this.requestedSaveVersion
+        let writeError = null
 
-    try {
-      const store = this.getStore()
+        try {
+          const store = this.getStore()
 
-      // Log rotation before save
-      try {
-        await rotateLogs(store, {
-          dataDir: this.dataDir,
-          maxInStore: this.logMaxInStore,
-          appendFn: this.appendFn,
-        })
-      } catch {
-        // rotation error is logged, store retains logs, continue writing store.json
-      }
+          // Log rotation before save
+          try {
+            await rotateLogs(store, {
+              dataDir: this.dataDir,
+              maxInStore: this.logMaxInStore,
+              appendFn: this.appendFn,
+            })
+          } catch {
+            // rotation error is logged, store retains logs, continue writing store.json
+          }
 
-      // Write store.json without sessions
-      const toSave = {
-        users: store.users || [],
-        groups: store.groups || [],
-        logs: store.logs || [],
-      }
-      await mkdir(this.dataDir, { recursive: true })
-      const temp = `${this.file}.tmp`
-      await writeFile(temp, JSON.stringify(toSave), 'utf8')
-      await rename(temp, this.file)
+          // Write store.json without sessions
+          const toSave = {
+            users: store.users || [],
+            groups: store.groups || [],
+            logs: store.logs || [],
+          }
+          await mkdir(this.dataDir, { recursive: true })
+          const temp = `${this.file}.tmp`
+          await writeFile(temp, JSON.stringify(toSave), 'utf8')
+          await rename(temp, this.file)
 
-      for (const r of resolvers) r.resolve()
-    } catch (err) {
-      console.error('[STORE ERROR] Coalesced write failed:', err)
-      for (const r of resolvers) r.reject(err)
-    } finally {
-      this.isWriting = false
-      if (this.hasPendingRequestDuringWrite || this.pendingResolvers.length > 0) {
-        this.hasPendingRequestDuringWrite = false
-        if (!this.timer) {
-          this.timer = setTimeout(() => this.flush(), this.delayMs)
+          this.completedSaveVersion = versionBeingWritten
+        } catch (err) {
+          console.error('[STORE ERROR] Coalesced write failed:', err)
+          writeError = err
+        }
+
+        const remaining = []
+        for (const r of this.pendingResolvers) {
+          if (r.targetVersion <= versionBeingWritten) {
+            if (writeError) {
+              r.reject(writeError)
+            } else {
+              r.resolve()
+            }
+          } else {
+            remaining.push(r)
+          }
+        }
+        this.pendingResolvers = remaining
+
+        if (writeError) {
+          this.completedSaveVersion = versionBeingWritten
+          break
         }
       }
-    }
+    })().finally(() => {
+      this.isWriting = false
+      this.currentWrite = null
+      if (this.requestedSaveVersion > this.completedSaveVersion) {
+        this._triggerWrite()
+      }
+    })
+
+    return this.currentWrite
   }
 }

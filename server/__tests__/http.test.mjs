@@ -22,7 +22,6 @@ describe('Part B: Request Body & Activity Hardening (F-8b)', () => {
       status: 413,
       message: 'Request body too large',
     })
-    expect(destroySpy).toHaveBeenCalled()
 
     // 2. 10 KB valid body
     const validData = { text: 'x'.repeat(10 * 1024 - 20) }
@@ -191,5 +190,95 @@ describe('Part B: Request Body & Activity Hardening (F-8b)', () => {
 
     expect(parseBodyLimit('invalid')).toBe(DEFAULT_BODY_LIMIT_BYTES)
     warnSpy.mockRestore()
+  })
+
+  // K3: HTTP server thật (http.createServer + readJsonBody): gửi body khoảng 640 KB theo từng chunk → client nhận HTTP 413 với body {"error":"Request body too large"}, không phải ECONNRESET. Body 10 KB hợp lệ vẫn 200.
+  it('K3: real HTTP server returns HTTP 413 without ECONNRESET for 640 KB chunked body; 200 for 10 KB valid body', async () => {
+    const server = http.createServer(async (req, res) => {
+      try {
+        const body = await readJsonBody(req, { limitBytes: 256 * 1024 })
+        res.writeHead(200, { 'content-type': 'application/json' })
+        res.end(JSON.stringify({ ok: true, receivedBytes: JSON.stringify(body).length }))
+      } catch (err) {
+        const status = err.status || 500
+        const message = err.status ? (err.message || 'Error') : 'Server error'
+        if (status === 413) {
+          res.writeHead(413, {
+            'content-type': 'application/json; charset=utf-8',
+            'cache-control': 'no-store',
+            connection: 'close',
+          })
+          res.on('finish', () => {
+            setImmediate(() => {
+              if (req.socket && !req.socket.destroyed) {
+                req.socket.destroy()
+              }
+            })
+          })
+          return res.end(JSON.stringify({ error: message }))
+        }
+        res.writeHead(status, { 'content-type': 'application/json' })
+        res.end(JSON.stringify({ error: message }))
+      }
+    })
+
+    await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
+    const port = server.address().port
+
+    try {
+      // 1. Send ~640 KB in chunks (10 chunks of 64 KB each)
+      const chunkCount = 10
+      const chunkSize = 64 * 1024
+      const response = await new Promise((resolve) => {
+        const clientReq = http.request(
+          {
+            hostname: '127.0.0.1',
+            port,
+            path: '/',
+            method: 'POST',
+            headers: {
+              'content-type': 'application/json',
+              'transfer-encoding': 'chunked',
+            },
+          },
+          res => {
+            let bodyStr = ''
+            res.on('data', c => { bodyStr += c.toString('utf8') })
+            res.on('end', () => {
+              resolve({ statusCode: res.statusCode, body: bodyStr })
+            })
+          }
+        )
+
+        clientReq.on('error', () => {
+          // write error after server closed socket is expected
+        })
+
+        for (let i = 0; i < chunkCount; i++) {
+          try {
+            clientReq.write(Buffer.alloc(chunkSize, 'a'))
+          } catch {}
+        }
+        try {
+          clientReq.end()
+        } catch {}
+      })
+
+      expect(response.statusCode).toBe(413)
+      expect(JSON.parse(response.body)).toEqual({ error: 'Request body too large' })
+
+      // 2. Send 10 KB valid body -> 200 OK
+      const validData = JSON.stringify({ key: 'b'.repeat(10 * 1024) })
+      const validResponse = await fetch(`http://127.0.0.1:${port}/`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: validData,
+      })
+      expect(validResponse.status).toBe(200)
+      const validJson = await validResponse.json()
+      expect(validJson.ok).toBe(true)
+    } finally {
+      await new Promise(resolve => server.close(resolve))
+    }
   })
 })

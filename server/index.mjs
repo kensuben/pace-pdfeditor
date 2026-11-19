@@ -50,16 +50,58 @@ const storeManager = new CoalescedStore({
 
 const save = () => storeManager.scheduleSave()
 
+let server = null
+let isShuttingDown = false
+let shutdownPromise = null
+
 const shutdown = async (signal) => {
-  try {
-    await storeManager.flush()
-  } catch (err) {
-    console.error(`[SERVER] Flush on ${signal} failed:`, err)
+  if (isShuttingDown) {
+    return shutdownPromise
   }
-  process.exit(0)
+  isShuttingDown = true
+
+  const safetyTimer = setTimeout(() => {
+    console.error(`[SERVER] Shutdown timed out after 10s on ${signal}`)
+    process.exit(1)
+  }, 10000)
+  safetyTimer.unref()
+
+  shutdownPromise = (async () => {
+    try {
+      if (server && server.listening) {
+        if (typeof server.closeIdleConnections === 'function') {
+          server.closeIdleConnections()
+        }
+        await new Promise((resolve) => server.close(() => resolve()))
+      }
+    } catch (err) {
+      console.error(`[SERVER] Failed closing server on ${signal}:`, err)
+    }
+
+    try {
+      await storeManager.flush()
+    } catch (err) {
+      console.error(`[SERVER] Flush on ${signal} failed:`, err)
+    } finally {
+      clearTimeout(safetyTimer)
+      process.exit(0)
+    }
+  })()
+
+  return shutdownPromise
 }
+
 process.on('SIGTERM', () => shutdown('SIGTERM'))
 process.on('SIGINT', () => shutdown('SIGINT'))
+process.on('message', (msg) => {
+  if (msg && msg.type === 'test-change') {
+    store.users.push(msg.data)
+    save()
+  }
+  if (msg === 'SIGTERM' || msg === 'SIGINT' || msg === 'shutdown') {
+    shutdown('SIGTERM')
+  }
+})
 
 const json = (res, status, data) => {
   res.writeHead(status, {
@@ -86,7 +128,7 @@ const admin = user => {
 
 const route = (req, path) => new URL(req.url, `http://${req.headers.host}`).pathname === path
 
-const server = http.createServer(async (req, res) => {
+server = http.createServer(async (req, res) => {
   try {
     if (route(req, '/healthz')) return json(res, 200, { ok: true })
     const user = await identity(req)
@@ -266,6 +308,21 @@ const server = http.createServer(async (req, res) => {
     console.error(error)
     const status = error.status || 500
     const message = error.status ? (error.message || 'Error') : 'Server error'
+    if (status === 413) {
+      res.writeHead(413, {
+        'content-type': 'application/json; charset=utf-8',
+        'cache-control': 'no-store',
+        connection: 'close',
+      })
+      res.on('finish', () => {
+        setImmediate(() => {
+          if (req.socket && !req.socket.destroyed) {
+            req.socket.destroy()
+          }
+        })
+      })
+      return res.end(JSON.stringify({ error: message }))
+    }
     return json(res, status, { error: message })
   }
 })

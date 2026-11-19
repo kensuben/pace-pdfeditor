@@ -1,6 +1,7 @@
 // @vitest-environment node
 import { describe, it, expect, vi } from 'vitest'
 import { mkdtempSync, rmSync, readFileSync, writeFileSync, statSync } from 'node:fs'
+import { appendFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -229,14 +230,22 @@ describe('Part C: Coalesced Store & Log Rotation (F-8c)', () => {
           process.exit(0)
         })
 
+        process.on('message', async msg => {
+          if (msg === 'SIGTERM') {
+            await storeManager.flush()
+            process.exit(0)
+          }
+        })
+
         process.stdout.write('READY\\n')
         `,
         'utf8'
       )
 
+      const isWin = process.platform === 'win32'
       const proc = spawn('node', [workerScript], {
         cwd: process.cwd(),
-        stdio: ['ignore', 'pipe', 'inherit'],
+        stdio: ['ignore', 'pipe', 'inherit', isWin ? 'ipc' : 'pipe'],
       })
 
       await new Promise(resolve => {
@@ -246,7 +255,11 @@ describe('Part C: Coalesced Store & Log Rotation (F-8c)', () => {
       })
 
       // Send SIGTERM while save is pending in delayMs
-      proc.kill('SIGTERM')
+      if (isWin) {
+        proc.send('SIGTERM')
+      } else {
+        proc.kill('SIGTERM')
+      }
 
       const exitCode = await new Promise(resolve => proc.on('exit', code => resolve(code)))
       expect(exitCode).toBe(0)
@@ -354,5 +367,291 @@ describe('Part C: Coalesced Store & Log Rotation (F-8c)', () => {
     // Non-integer warns and falls back to default
     expect(parseLogMaxInStore('invalid')).toBe(DEFAULT_LOG_MAX_IN_STORE)
     warnSpy.mockRestore()
+  })
+
+  // K1: Store khoảng 200.000 log (đủ lớn để ghi mất thời gian). Gọi flush() lần 1; trong lúc đang ghi, sửa store; gọi flush() lần 2 → khi lần 2 resolve, file trên đĩa chứa thay đổi vừa sửa.
+  it('K1: wait for in-flight write; second flush includes mid-flight modifications', async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), 'pace-store-k1-'))
+    try {
+      const dataFile = join(tempDir, 'store.json')
+      const logs = []
+      for (let i = 0; i < 200000; i++) {
+        logs.push({
+          id: `log-${i}`,
+          timestamp: '2026-11-19T00:00:00.000Z',
+          action: 'document.view',
+          level: 'info',
+        })
+      }
+      const store = { users: [], groups: [], logs }
+      const storeManager = new CoalescedStore({
+        file: dataFile,
+        getStore: () => store,
+        logMaxInStore: 300000,
+      })
+
+      // Call flush #1
+      const flush1 = storeManager.flush()
+
+      // While write #1 is in-flight, mutate store and call flush #2
+      store.users.push({ id: 'user-k1-midflight', name: 'Mid-Flight Added User' })
+      const flush2 = storeManager.flush()
+
+      await Promise.all([flush1, flush2])
+
+      const saved = JSON.parse(readFileSync(dataFile, 'utf8'))
+      expect(saved.users.some(u => u.id === 'user-k1-midflight')).toBe(true)
+      expect(saved.logs.length).toBe(200000)
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true })
+    }
+  }, 30000)
+
+  // K2: Test bằng child_process: server thật (DATA_FILE tạm, GUID giả), tạo thay đổi rồi gửi SIGTERM ngay → sau khi tiến trình thoát mã 0, file chứa thay đổi. Gửi SIGTERM 2 lần liên tiếp → không lỗi, không file .tmp sót lại.
+  it('K2: real server child process flushes changes on immediate SIGTERM; handles 2 consecutive SIGTERMs without error or leftover .tmp', async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), 'pace-store-k2-'))
+    try {
+      const dataFile = join(tempDir, 'store.json')
+      const isWin = process.platform === 'win32'
+
+      const serverProc = spawn('node', ['server/index.mjs'], {
+        cwd: process.cwd(),
+        env: {
+          ...process.env,
+          PORT: '0',
+          DATA_FILE: dataFile,
+          MICROSOFT_CLIENT_ID: '00000000-0000-0000-0000-000000000001',
+          MICROSOFT_TENANT_ID: '00000000-0000-0000-0000-000000000002',
+          ADMIN_EMAILS: 'admin@example.com',
+        },
+        stdio: ['ignore', 'pipe', 'inherit', isWin ? 'ipc' : 'pipe'],
+      })
+
+      // Wait until server starts listening
+      await new Promise((resolve, reject) => {
+        serverProc.stdout.on('data', chunk => {
+          if (chunk.toString().includes('API listening on')) {
+            resolve()
+          }
+        })
+        serverProc.on('error', reject)
+      })
+
+      // Stage a change and send SIGTERM immediately
+      if (isWin) {
+        serverProc.send({
+          type: 'test-change',
+          data: { id: 'k2-sigterm-user', name: 'K2 User Saved on Shutdown' },
+        })
+        serverProc.send('SIGTERM')
+        serverProc.send('SIGTERM')
+      } else {
+        serverProc.send({
+          type: 'test-change',
+          data: { id: 'k2-sigterm-user', name: 'K2 User Saved on Shutdown' },
+        })
+        serverProc.kill('SIGTERM')
+        serverProc.kill('SIGTERM')
+      }
+
+      const exitCode = await new Promise(resolve => serverProc.on('exit', code => resolve(code)))
+      expect(exitCode).toBe(0)
+
+      // Data file must exist and contain the change
+      const saved = JSON.parse(readFileSync(dataFile, 'utf8'))
+      expect(saved.users.some(u => u.id === 'k2-sigterm-user')).toBe(true)
+
+      // No leftover .tmp file
+      const tmpFile = `${dataFile}.tmp`
+      let tmpExists = false
+      try {
+        statSync(tmpFile)
+        tmpExists = true
+      } catch {
+        tmpExists = false
+      }
+      expect(tmpExists).toBe(false)
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true })
+    }
+  }, 15000)
+
+  // K4: 1.500 log, maxInStore=1000, appendFn bị chặn tới khi test cho phép. Trong lúc chặn, xoá log L0 và L700 bằng cách gán store.logs = store.logs.filter(...) → sau khi xong: archive không có L0; L500 có trong archive; tổng log ở store + archive = 1.498, mỗi id xuất hiện đúng 1 lần.
+  it('K4: log rotation by id without losing or duplicating logs during concurrent admin deletion', async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), 'pace-store-k4-'))
+    try {
+      const dataFile = join(tempDir, 'store.json')
+      const logs = []
+
+      // Create 1500 logs such that L0 is at index 0 and L500 is in the candidate excess (index 499)
+      logs.push({ id: 'L0', timestamp: '2026-11-19T00:00:00.000Z', action: 'view' })
+      for (let i = 2; i <= 500; i++) {
+        logs.push({ id: `L${i}`, timestamp: '2026-11-19T00:00:00.000Z', action: 'view' })
+      }
+      for (let i = 501; i <= 1500; i++) {
+        logs.push({ id: `L${i}`, timestamp: '2026-11-19T00:00:00.000Z', action: 'view' })
+      }
+      expect(logs.length).toBe(1500)
+
+      const store = { users: [], groups: [], logs }
+
+      let unblockAppend
+      const appendBlocked = new Promise(resolve => {
+        unblockAppend = resolve
+      })
+
+      let appendStarted = false
+      let notifyAppendStarted
+      const appendStartedPromise = new Promise(resolve => {
+        notifyAppendStarted = resolve
+      })
+
+      const blockedAppendFn = vi.fn(async (archivePath, content) => {
+        if (!appendStarted) {
+          appendStarted = true
+          notifyAppendStarted()
+          await appendBlocked
+        }
+        await appendFile(archivePath, content, 'utf8')
+      })
+
+      const storeManager = new CoalescedStore({
+        file: dataFile,
+        getStore: () => store,
+        logMaxInStore: 1000,
+        appendFn: blockedAppendFn,
+      })
+
+      // Start rotation via flush()
+      const flushPromise = storeManager.flush()
+
+      // Wait until appendFn starts and is blocked
+      await appendStartedPromise
+
+      // While appendFn is blocked, admin deletes L0 and L700
+      store.logs = store.logs.filter(x => x.id !== 'L0' && x.id !== 'L700')
+
+      // Now unblock appendFn
+      unblockAppend()
+
+      await flushPromise
+
+      // Verify outcomes:
+      // 1. Archive does NOT have L0
+      const archivePath = join(tempDir, 'logs-archive-2026-11.jsonl')
+      const archiveContent = readFileSync(archivePath, 'utf8')
+      const archiveLines = archiveContent.trim().split('\n').filter(Boolean)
+      const archiveIds = archiveLines.map(l => JSON.parse(l).id)
+
+      expect(archiveIds.includes('L0')).toBe(false)
+
+      // 2. Archive DOES have L500
+      expect(archiveIds.includes('L500')).toBe(true)
+
+      // 3. Total logs in store + archive = 1498
+      const savedStore = JSON.parse(readFileSync(dataFile, 'utf8'))
+      const storeIds = savedStore.logs.map(l => l.id)
+      expect(archiveIds.length + storeIds.length).toBe(1498)
+
+      // 4. Every id appears exactly once (no duplicates)
+      const allIds = [...archiveIds, ...storeIds]
+      const uniqueIds = new Set(allIds)
+      expect(uniqueIds.size).toBe(1498)
+      expect(uniqueIds.has('L0')).toBe(false)
+      expect(uniqueIds.has('L700')).toBe(false)
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true })
+    }
+  })
+
+  // K5: appendFn lỗi ở tháng thứ 2 → store giữ đủ log; chạy lại với appendFn bình thường → mỗi id chỉ xuất hiện 1 lần trong archive.
+  it('K5: failure in 2nd month retains all logs in store; retry does not duplicate 1st month in archive', async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), 'pace-store-k5-'))
+    try {
+      const dataFile = join(tempDir, 'store.json')
+      const logs = []
+
+      // Month 1: 2026-10 (300 logs)
+      for (let i = 1; i <= 300; i++) {
+        logs.push({
+          id: `log-oct-${i}`,
+          timestamp: '2026-10-15T00:00:00.000Z',
+          action: 'document.view',
+        })
+      }
+
+      // Month 2: 2026-11 (1200 logs)
+      for (let i = 1; i <= 1200; i++) {
+        logs.push({
+          id: `log-nov-${i}`,
+          timestamp: '2026-11-15T00:00:00.000Z',
+          action: 'document.view',
+        })
+      }
+
+      const store = { users: [], groups: [], logs: [...logs] }
+
+      // Faulty appendFn: succeeds for month 1, fails for month 2
+      const failingAppendFn = vi.fn(async (archivePath, content) => {
+        if (archivePath.includes('2026-11')) {
+          throw new Error('Simulated disk failure on month 2')
+        }
+        await appendFile(archivePath, content, 'utf8')
+      })
+
+      const storeManagerFail = new CoalescedStore({
+        file: dataFile,
+        getStore: () => store,
+        logMaxInStore: 1000,
+        appendFn: failingAppendFn,
+      })
+
+      await storeManagerFail.flush()
+
+      // Store retains all 1500 logs because archiving failed
+      expect(store.logs.length).toBe(1500)
+
+      // Month 1 archive was written on disk
+      const octArchive = join(tempDir, 'logs-archive-2026-10.jsonl')
+      const octContent1 = readFileSync(octArchive, 'utf8')
+      expect(octContent1.trim().split('\n').length).toBe(300)
+
+      // Run 2: retry with normal appendFn (appendFile)
+      const storeManagerRetry = new CoalescedStore({
+        file: dataFile,
+        getStore: () => store,
+        logMaxInStore: 1000,
+        appendFn: appendFile,
+      })
+
+      await storeManagerRetry.flush()
+
+      // Store now retains 1000 logs (500 rotated)
+      expect(store.logs.length).toBe(1000)
+
+      // Month 1 archive must NOT duplicate logs: still exactly 300 lines
+      const octContent2 = readFileSync(octArchive, 'utf8')
+      const octLines = octContent2.trim().split('\n')
+      expect(octLines.length).toBe(300)
+
+      const octIds = octLines.map(l => JSON.parse(l).id)
+      expect(new Set(octIds).size).toBe(300)
+
+      // Month 2 archive has 200 logs
+      const novArchive = join(tempDir, 'logs-archive-2026-11.jsonl')
+      const novContent = readFileSync(novArchive, 'utf8')
+      const novLines = novContent.trim().split('\n')
+      expect(novLines.length).toBe(200)
+
+      const novIds = novLines.map(l => JSON.parse(l).id)
+      expect(new Set(novIds).size).toBe(200)
+
+      // Total archived = 500, total store = 1000, all 1500 logs accounted for once
+      const allArchived = [...octIds, ...novIds]
+      expect(allArchived.length).toBe(500)
+      expect(new Set(allArchived).size).toBe(500)
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true })
+    }
   })
 })
