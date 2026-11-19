@@ -85,7 +85,7 @@
 <header class="hero">
   <div class="wrap">
     <h1>Hướng dẫn sử dụng PDF Workspace</h1>
-    <p>Chỉnh sửa PDF và ẩn danh người bình luận trong file Word trước khi đưa tài liệu vào công cụ AI. Tài liệu được xử lý <b>ngay trên trình duyệt của bạn</b>, không tải lên máy chủ.</p>
+    <p>Chỉnh sửa PDF và ẩn danh tài liệu Word (người bình luận, pháp nhân, người đại diện, thông tin nhạy cảm) trước khi đưa tài liệu vào công cụ AI. Tài liệu được xử lý <b>ngay trên trình duyệt của bạn</b>, không tải lên máy chủ.</p>
     <a class="back" href="/">← Mở PDF Workspace</a>
   </div>
 </header>
@@ -96,7 +96,7 @@
     <ol>
       <li><a href="#dang-nhap">Đăng nhập</a></li>
       <li><a href="#pdf">Chỉnh sửa PDF</a></li>
-      <li><a href="#word">Ẩn danh bình luận Word</a></li>
+      <li><a href="#word">Ẩn danh tài liệu Word</a></li>
       <li><a href="#ket-qua">Đọc kết quả PASS / WARN / FAIL</a></li>
       <li><a href="#truoc-khi-upload">Checklist trước khi đưa lên AI</a></li>
       <li><a href="#nhat-ky">Nhật ký hoạt động</a></li>
@@ -111,17 +111,23 @@
     <p class="lead">Dùng tài khoản Microsoft của PACE. Chỉ những tài khoản đã được quản trị viên cấp quyền mới đăng nhập được.</p>
     <figure>
       <a class="zoomable" href="img/01-dang-nhap.jpg" target="_blank" rel="noopener" title="Bấm để xem ảnh kích thước đầy đủ"><img src="img/01-dang-nhap.jpg" alt="Trang chủ PDF Workspace với nút Sign in with Microsoft được đánh dấu số 1" loading="lazy" width="1280" height="800"></a>
-      <figcaption><span class="n">1</span> Bấm <b>Sign in with Microsoft</b>, chọn tài khoản PACE trong cửa sổ đăng nhập của Microsoft.</figcaption>
+      <figcaption><span class="n">1</span> Mở lại trang hướng dẫn này bất cứ lúc nào. <span class="n">2</span> Bấm <b>Sign in with Microsoft</b>, chọn tài khoản PACE trong cửa sổ đăng nhập của Microsoft.</figcaption>
     </figure>
     <figure>
-      <a class="zoomable" href="img/02-trang-chu.jpg" target="_blank" rel="noopener" title="Bấm để xem ảnh kích thước đầy đủ"><img src="img/02-trang-chu.jpg" alt="Trang chủ sau khi đăng nhập, các vùng được đánh số 1 đến 3" loading="lazy" width="1280" height="800"></a>
+      <a class="zoomable" href="img/02-trang-chu.jpg" target="_blank" rel="noopener" title="Bấm để xem ảnh kích thước đầy đủ"><img src="img/02-trang-chu.jpg" alt="Trang chủ sau khi đăng nhập, các vùng được đánh số 1 đến 4" loading="lazy" width="1280" height="800"></a>
       <figcaption>Màn hình sau khi đăng nhập.</figcaption>
     </figure>
     <ul class="legend">
       <li><span class="n">1</span><span><b>Chọn công cụ:</b> <i>PDF Editor</i> để chỉnh sửa PDF, <i>Ẩn danh Word</i> để xử lý bình luận trong file Word.</span></li>
       <li><span class="n">2</span><span><b>Chọn tài liệu PDF</b> từ máy, hoặc kéo-thả file vào trang.</span></li>
-      <li><span class="n">3</span><span><b>Nhật ký hoạt động</b> của tài khoản bạn (xem <a href="#nhat-ky">mục 6</a>).</span></li>
+      <li><span class="n">3</span><span><b>Hướng dẫn:</b> mở trang này trong tab mới.</span></li>
+      <li><span class="n">4</span><span><b>Nhật ký hoạt động</b> của tài khoản bạn (xem <a href="#nhat-ky">mục 6</a>).</span></li>
     </ul>
+    <h3>Trên điện thoại</h3>
+    <figure style="max-width:420px">
+      <a class="zoomable" href="img/18-mobile-menu.jpg" target="_blank" rel="noopener" title="Bấm để xem ảnh kích thước đầy đủ"><img src="img/18-mobile-menu.jpg" alt="Menu ba chấm trên điện thoại với các mục Mở file, Hướng dẫn, Activity log, Đăng xuất" loading="lazy" width="390" height="400"></a>
+      <figcaption><span class="n">1</span> Màn hình hẹp chỉ hiện logo, bộ chuyển công cụ, nút Xuất PDF và nút <b>⋯</b>. Bấm <b>⋯</b> để mở: Mở file, Hướng dẫn, Activity log, Administration (quản trị viên), <b>Đăng xuất</b>.</figcaption>
+    </figure>
     <div class="note warn"><b>Cửa sổ đăng nhập không hiện?</b> Trình duyệt có thể đang chặn popup. Cho phép popup cho trang này rồi bấm đăng nhập lại.</div>
   </section>
 
@@ -161,14 +167,14 @@
 
   <!-- 3. Word -->
   <section id="word">
-    <h2>3. Ẩn danh bình luận Word</h2>
-    <p class="lead">Trước khi đưa file Word có <b>bình luận (comment)</b> hoặc <b>theo dõi thay đổi (Track Changes)</b> vào công cụ AI, dùng chức năng này để thay tên người góp ý bằng nhãn như <i>Người góp ý 1</i>. Nội dung tài liệu và nội dung bình luận được giữ nguyên.</p>
+    <h2>3. Ẩn danh tài liệu Word</h2>
+    <p class="lead">Trước khi đưa file Word có <b>bình luận (comment)</b> hoặc <b>theo dõi thay đổi (Track Changes)</b> vào công cụ AI, dùng chức năng này để thay tên người góp ý bằng nhãn như <i>Người góp ý 1</i>, thay tên <b>pháp nhân / người đại diện</b> bạn khai báo, và <b>che một phần</b> thông tin nhạy cảm trong văn bản. Phần còn lại của nội dung được giữ nguyên.</p>
 
     <div class="grid2">
-      <div class="note ok"><b>Được ẩn danh</b>
-        Tên và tên viết tắt người bình luận · tên người sửa trong Track Changes · người được @nhắc tên (kể cả email) · thông tin tác giả trong thuộc tính file (người tạo, người sửa cuối, công ty) · email/ID tài khoản Microsoft ẩn trong file.</div>
-      <div class="note warn"><b>KHÔNG được ẩn danh</b>
-        Tên người viết <b>trong thân văn bản</b> (ví dụ chữ ký cuối thư, danh sách học viên) · nội dung bên trong ảnh · file nhúng (Excel/Word lồng trong tài liệu). Bạn cần tự kiểm tra các phần này.</div>
+      <div class="note ok"><b>Được xử lý</b>
+        Tên và tên viết tắt người bình luận · tên người sửa trong Track Changes · người được @nhắc tên (kể cả email) · thông tin tác giả trong thuộc tính file · <b>tên pháp nhân, người đại diện bạn nhập</b> · <b>email, số điện thoại, CCCD/CMND, mã số thuế, số tài khoản, địa chỉ</b> nhận diện được theo mẫu, ở thân văn bản, header, footer, chú thích, bình luận.</div>
+      <div class="note warn"><b>KHÔNG được xử lý — bạn tự kiểm tra</b>
+        Tên người khác mà bạn <b>không khai báo</b> (vd. danh sách học viên) · thông tin viết không theo mẫu (vd. địa chỉ không có nhãn "Địa chỉ:") · <b>chữ đã xoá trong Track Changes</b> (chỉ được cảnh báo) · nội dung bên trong ảnh · file nhúng (Excel/Word lồng trong tài liệu).</div>
     </div>
 
     <ol class="steps">
@@ -176,7 +182,7 @@
         <b>Mở công cụ và chọn file.</b>
         <figure>
           <a class="zoomable" href="img/06-word-chon-file.jpg" target="_blank" rel="noopener" title="Bấm để xem ảnh kích thước đầy đủ"><img src="img/06-word-chon-file.jpg" alt="Màn hình Ẩn danh Word với vùng kéo thả file" loading="lazy" width="1280" height="800"></a>
-          <figcaption><span class="n">1</span> Chọn tab <b>Ẩn danh Word</b>. <span class="n">2</span> Kéo-thả hoặc bấm để chọn file <code>.docx</code> (tối đa 50 MB). <span class="n">3</span> Dòng nhắc luôn hiển thị: công cụ không ẩn danh tên trong thân văn bản.</figcaption>
+          <figcaption><span class="n">1</span> Chọn tab <b>Ẩn danh Word</b>. <span class="n">2</span> Kéo-thả hoặc bấm để chọn file <code>.docx</code> (tối đa 50 MB). <span class="n">3</span> Dòng nhắc luôn hiển thị phạm vi xử lý, kèm link tới trang hướng dẫn này.</figcaption>
         </figure>
       </li>
       <li>
@@ -197,6 +203,31 @@
         </figure>
       </li>
       <li>
+        <b>Khai báo pháp nhân và người đại diện</b> (nếu tài liệu có). Bấm <b>+ Thêm pháp nhân</b> / <b>+ Thêm người đại diện</b>, nhập <b>mọi cách viết</b> của cùng một đối tượng, mỗi dòng một cách (tên đầy đủ, tên viết tắt, tên tiếng Anh). Công cụ thay đúng những gì bạn nhập: không phân biệt hoa/thường, nhưng phân biệt có dấu/không dấu.
+        <figure>
+          <a class="zoomable" href="img/15-word-phap-nhan.jpg" target="_blank" rel="noopener" title="Bấm để xem ảnh kích thước đầy đủ"><img src="img/15-word-phap-nhan.jpg" alt="Thẻ Pháp nhân và người đại diện với ô tên gốc và nhãn thay thế" loading="lazy" width="1040" height="468"></a>
+          <figcaption><span class="n">1</span> Ô <b>Tên gốc</b>: mỗi dòng một cách viết. Nhãn mặc định là <i>Pháp nhân A</i>, <i>Người đại diện 1</i> — sửa được. <span class="n">2</span> Thêm đối tượng khác.</figcaption>
+        </figure>
+      </li>
+      <li>
+        <b>Xem lại thông tin nhạy cảm phát hiện được.</b> Công cụ tự tìm theo mẫu và cho xem trước dạng sau khi che. Mục nào cần giữ nguyên (vd. hotline công khai của PACE) thì <b>bỏ chọn ô "Che"</b>; không muốn xử lý cả một loại thì bỏ chọn loại đó ở hàng trên cùng.
+        <figure>
+          <a class="zoomable" href="img/16-word-nhay-cam.jpg" target="_blank" rel="noopener" title="Bấm để xem ảnh kích thước đầy đủ"><img src="img/16-word-nhay-cam.jpg" alt="Thẻ Thông tin nhạy cảm phát hiện được với bảng xem trước" loading="lazy" width="1040" height="915"></a>
+          <figcaption><span class="n">1</span> Bật/tắt theo loại. <span class="n">2</span> Ô <b>Che</b> từng mục. Danh sách có thể sót hoặc nhận nhầm — hãy xem lại trước khi chạy.</figcaption>
+        </figure>
+        <div class="table-wrap"><table>
+          <thead><tr><th>Loại</th><th>Nhận diện khi</th><th>Ví dụ</th><th>Sau khi che</th></tr></thead>
+          <tbody>
+            <tr><td>Email</td><td>Có dạng email</td><td><code>lienhe.test@example.com</code></td><td><code>l****@e****.com</code></td></tr>
+            <tr><td>Số điện thoại</td><td>Số di động/cố định Việt Nam (cả dạng <code>+84</code>, có dấu cách/chấm)</td><td><code>0912 345 678</code></td><td><code>09******78</code></td></tr>
+            <tr><td>CCCD/CMND</td><td>Có chữ "CCCD", "CMND", "căn cước"… đứng trước</td><td><code>CCCD số: 001234567890</code></td><td><code>*********890</code></td></tr>
+            <tr><td>Mã số thuế</td><td>Có chữ "MST", "mã số thuế"… đứng trước</td><td><code>MST: 0101234567-001</code></td><td><code>*******567-001</code></td></tr>
+            <tr><td>Số tài khoản</td><td>Có chữ "STK", "số tài khoản"… đứng trước</td><td><code>STK: 1234 5678 9012</code></td><td><code>********9012</code></td></tr>
+            <tr><td>Địa chỉ</td><td>Sau nhãn "Địa chỉ:", "Trụ sở:", "Trụ sở chính:", "Nơi cư trú:"…</td><td><code>Số 1 Đường Test, Phường Mẫu, Hà Nội</code></td><td><code>****, ****, Hà Nội</code></td></tr>
+          </tbody>
+        </table></div>
+      </li>
+      <li>
         <b>Chọn tuỳ chọn và bấm "Ẩn danh tài liệu".</b>
         <figure>
           <a class="zoomable" href="img/10-word-tuy-chon.jpg" target="_blank" rel="noopener" title="Bấm để xem ảnh kích thước đầy đủ"><img src="img/10-word-tuy-chon.jpg" alt="Thẻ Tùy chọn ẩn danh với nút Ẩn danh tài liệu" loading="lazy" width="1040" height="387"></a>
@@ -214,16 +245,20 @@
         </table></div>
       </li>
       <li>
-        <b>Đọc kết quả kiểm tra rò rỉ</b> (xem <a href="#ket-qua">mục 4</a>), rồi <b>tải file</b>.
+        <b>Đọc kết quả</b>: số lượng đã thay/che, và kết quả kiểm tra rò rỉ (xem <a href="#ket-qua">mục 4</a>), rồi <b>tải file</b>.
         <figure>
-          <a class="zoomable" href="img/12-word-tai-ve.jpg" target="_blank" rel="noopener" title="Bấm để xem ảnh kích thước đầy đủ"><img src="img/12-word-tai-ve.jpg" alt="Thẻ tải về tài liệu đã xử lý" loading="lazy" width="1040" height="249"></a>
+          <a class="zoomable" href="img/17-word-ket-qua-thay.jpg" target="_blank" rel="noopener" title="Bấm để xem ảnh kích thước đầy đủ"><img src="img/17-word-ket-qua-thay.jpg" alt="Kết quả thay thế và che dữ liệu" loading="lazy" width="1040" height="133"></a>
+        </figure>
+        <figure>
+          <a class="zoomable" href="img/12-word-tai-ve.jpg" target="_blank" rel="noopener" title="Bấm để xem ảnh kích thước đầy đủ"><img src="img/12-word-tai-ve.jpg" alt="Thẻ tải về tài liệu đã xử lý" loading="lazy" width="1040" height="252"></a>
           <figcaption><span class="n">1</span> Tải file đã ẩn danh. Tên file mặc định <code>document_anonymized.docx</code> (vì tên file gốc thường chứa tên người); có thể chọn giữ tên gốc.</figcaption>
         </figure>
       </li>
       <li><b>Bấm "Xoá khỏi bộ nhớ"</b> khi xong việc, nhất là trên máy dùng chung.</li>
     </ol>
 
-    <div class="note bad"><b>File mapping (JSON) chứa tên thật.</b> Tuỳ chọn "Tải file mapping" cho biết <i>Người góp ý 1</i> là ai. Chỉ lưu nội bộ khi thật sự cần, <b>tuyệt đối không</b> tải file này lên công cụ AI hay gửi ra ngoài.</div>
+    <div class="note warn"><b>Có cảnh báo "chữ đã xoá trong Track Changes"?</b> Phần chữ đã xoá vẫn nằm trong file và AI vẫn đọc được, nhưng công cụ <b>không</b> sửa phần này. Mở file trong Word, chọn <b>Review → Accept/Reject All Changes</b>, lưu lại rồi chạy lại.</div>
+    <div class="note bad"><b>File mapping (JSON) chứa tên thật.</b> Tuỳ chọn "Tải file mapping" cho biết <i>Người góp ý 1</i> là ai. File này cũng chứa tên pháp nhân và giá trị gốc của thông tin đã che. Chỉ lưu nội bộ khi thật sự cần, <b>tuyệt đối không</b> tải file này lên công cụ AI hay gửi ra ngoài.</div>
   </section>
 
   <!-- 4. Kết quả -->
@@ -240,16 +275,16 @@
     </table></div>
     <div class="grid2">
       <figure>
-        <a class="zoomable" href="img/11-word-ket-qua-pass.jpg" target="_blank" rel="noopener" title="Bấm để xem ảnh kích thước đầy đủ"><img src="img/11-word-ket-qua-pass.jpg" alt="Kết quả PASS" loading="lazy" width="1040" height="185"></a>
+        <a class="zoomable" href="img/11-word-ket-qua-pass.jpg" target="_blank" rel="noopener" title="Bấm để xem ảnh kích thước đầy đủ"><img src="img/11-word-ket-qua-pass.jpg" alt="Kết quả PASS" loading="lazy" width="1040" height="189"></a>
         <figcaption>Ví dụ kết quả <span class="pill ok">PASS</span>.</figcaption>
       </figure>
       <figure>
-        <a class="zoomable" href="img/13-word-ket-qua-fail.jpg" target="_blank" rel="noopener" title="Bấm để xem ảnh kích thước đầy đủ"><img src="img/13-word-ket-qua-fail.jpg" alt="Kết quả FAIL kèm vị trí còn sót" loading="lazy" width="1040" height="284"></a>
+        <a class="zoomable" href="img/13-word-ket-qua-fail.jpg" target="_blank" rel="noopener" title="Bấm để xem ảnh kích thước đầy đủ"><img src="img/13-word-ket-qua-fail.jpg" alt="Kết quả FAIL kèm vị trí còn sót" loading="lazy" width="1040" height="290"></a>
         <figcaption>Ví dụ <span class="pill bad">FAIL</span>: còn sót trong <code>customXml</code> (dữ liệu SharePoint).</figcaption>
       </figure>
     </div>
     <figure>
-      <a class="zoomable" href="img/14-word-fail-khoa-tai.jpg" target="_blank" rel="noopener" title="Bấm để xem ảnh kích thước đầy đủ"><img src="img/14-word-fail-khoa-tai.jpg" alt="Nút tải bị khoá và ô xác nhận Tôi đã hiểu rủi ro" loading="lazy" width="1040" height="325"></a>
+      <a class="zoomable" href="img/14-word-fail-khoa-tai.jpg" target="_blank" rel="noopener" title="Bấm để xem ảnh kích thước đầy đủ"><img src="img/14-word-fail-khoa-tai.jpg" alt="Nút tải bị khoá và ô xác nhận Tôi đã hiểu rủi ro" loading="lazy" width="1040" height="327"></a>
       <figcaption><span class="n">1</span> Khi FAIL, nút tải bị khoá cho tới khi bạn tick xác nhận.</figcaption>
     </figure>
   </section>
@@ -259,7 +294,9 @@
     <h2>5. Checklist trước khi đưa tài liệu lên AI</h2>
     <ul class="checklist">
       <li>Kết quả kiểm tra là <span class="pill ok">PASS</span>, hoặc mọi vị trí <span class="pill warn">WARN</span> đã được xử lý.</li>
-      <li>Đã đọc lướt <b>thân văn bản</b>: không còn họ tên, số điện thoại, email, CCCD, lương… của học viên, khách hàng, đồng nghiệp.</li>
+      <li>Đã khai báo đủ <b>pháp nhân và người đại diện</b>, gồm cả tên viết tắt/tên tiếng Anh.</li>
+      <li>Đã đọc lướt <b>thân văn bản</b>: không còn họ tên người khác (học viên, đồng nghiệp…), lương, địa chỉ viết không theo mẫu, hoặc thông tin trong ảnh.</li>
+      <li>Không có cảnh báo <b>chữ đã xoá trong Track Changes</b>, hoặc đã Accept/Reject All Changes.</li>
       <li>Tên file tải lên không chứa tên người hoặc tên khách hàng.</li>
       <li>Chỉ dùng <b>công cụ AI đã được PACE phê duyệt</b>.</li>
       <li>Tài liệu không thuộc nhóm nội dung cốt lõi (học liệu, nội dung tư vấn, tài liệu chiến lược) chưa được phép xử lý bằng AI.</li>
@@ -293,6 +330,12 @@
       <p>Đó là dữ liệu ẩn do SharePoint/OneDrive gắn vào file (ví dụ trường "Người phụ trách"). Công cụ chỉ cảnh báo, không tự sửa phần này. Cách đơn giản: copy toàn bộ nội dung sang một file Word mới tạo trên máy rồi chạy lại, hoặc liên hệ bộ phận IT.</p></details>
     <details><summary>Đổi nhãn sau khi đã chạy thì sao?</summary>
       <p>Kết quả cũ sẽ bị xoá và có dòng nhắc "Cấu hình đã thay đổi". Bấm <b>Ẩn danh tài liệu</b> lần nữa để tạo file mới.</p></details>
+    <details><summary>Vì sao một địa chỉ / số trong văn bản không bị che?</summary>
+      <p>Công cụ chỉ nhận diện theo mẫu. Địa chỉ cần có nhãn như "Địa chỉ:", "Trụ sở chính:"; CCCD, mã số thuế, số tài khoản cần có từ khoá đứng trước (vd. "CCCD", "MST", "STK"). Thông tin viết khác mẫu cần bạn tự sửa trong Word trước khi chạy.</p></details>
+    <details><summary>Một con số không phải số điện thoại nhưng bị che?</summary>
+      <p>Ví dụ số hợp đồng dạng <code>0912345678/HĐ</code>. Ở thẻ "Thông tin nhạy cảm phát hiện được", <b>bỏ chọn ô "Che"</b> của mục đó rồi chạy lại.</p></details>
+    <details><summary>Trên điện thoại không thấy nút Đăng xuất?</summary>
+      <p>Bấm nút <b>⋯</b> ở góc phải thanh trên cùng, chọn <b>Đăng xuất</b>.</p></details>
     <details><summary>Đăng nhập xong báo "Account is not authorized" hoặc "Tài khoản không được phép sử dụng hệ thống"?</summary>
       <p>Tài khoản của bạn chưa được cấp quyền. Liên hệ quản trị viên hệ thống (bộ phận DIGITECH) để được thêm vào danh sách người dùng.</p></details>
   </section>
