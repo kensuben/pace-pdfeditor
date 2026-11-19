@@ -69,6 +69,8 @@ export interface FixtureOptions {
     content: Uint8Array
   }
   compression?: 'STORE' | 'DEFLATE'
+  extraXmlFiles?: Record<string, string>
+  documentXmlOverride?: string
 }
 
 export async function createMockDocx(options: FixtureOptions = {}): Promise<ArrayBuffer> {
@@ -99,29 +101,33 @@ export async function createMockDocx(options: FixtureOptions = {}): Promise<Arra
   )
 
   // word/document.xml
-  let documentBody = `<${wPrefix}:p><${wPrefix}:r><${wPrefix}:t>${options.documentText || 'Nội dung kiểm tra'}</${wPrefix}:t></${wPrefix}:r></${wPrefix}:p>`
-  if (options.revisions) {
-    for (const rev of options.revisions) {
-      if (rev.part === 'document') {
-        const dateAttr = rev.date ? ` ${wPrefix}:date="${rev.date}"` : ''
-        if (rev.isDelText) {
-          documentBody += `<${wPrefix}:${rev.type} ${wPrefix}:author="${rev.author}"${dateAttr}><${wPrefix}:r><${wPrefix}:delText>${rev.text || 'rev'}</${wPrefix}:delText></${wPrefix}:r></${wPrefix}:${rev.type}>`
-        } else {
-          documentBody += `<${wPrefix}:${rev.type} ${wPrefix}:author="${rev.author}"${dateAttr}><${wPrefix}:r><${wPrefix}:t>${rev.text || 'rev'}</${wPrefix}:t></${wPrefix}:r></${wPrefix}:${rev.type}>`
+  if (options.documentXmlOverride) {
+    zip.file('word/document.xml', options.documentXmlOverride)
+  } else {
+    let documentBody = `<${wPrefix}:p><${wPrefix}:r><${wPrefix}:t>${options.documentText || 'Nội dung kiểm tra'}</${wPrefix}:t></${wPrefix}:r></${wPrefix}:p>`
+    if (options.revisions) {
+      for (const rev of options.revisions) {
+        if (rev.part === 'document') {
+          const dateAttr = rev.date ? ` ${wPrefix}:date="${rev.date}"` : ''
+          if (rev.isDelText) {
+            documentBody += `<${wPrefix}:p><${wPrefix}:${rev.type} ${wPrefix}:author="${rev.author}"${dateAttr}><${wPrefix}:r><${wPrefix}:delText>${rev.text || 'rev'}</${wPrefix}:delText></${wPrefix}:r></${wPrefix}:${rev.type}></${wPrefix}:p>`
+          } else {
+            documentBody += `<${wPrefix}:p><${wPrefix}:${rev.type} ${wPrefix}:author="${rev.author}"${dateAttr}><${wPrefix}:r><${wPrefix}:t>${rev.text || 'rev'}</${wPrefix}:t></${wPrefix}:r></${wPrefix}:${rev.type}></${wPrefix}:p>`
+          }
         }
       }
     }
-  }
 
-  zip.file(
-    'word/document.xml',
-    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+    zip.file(
+      'word/document.xml',
+      `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <${wPrefix}:document xmlns:${wPrefix}="${wNs}">
   <${wPrefix}:body>
     ${documentBody}
   </${wPrefix}:body>
 </${wPrefix}:document>`
-  )
+    )
+  }
 
   // word/comments.xml
   if (options.comments && options.comments.length > 0) {
@@ -263,6 +269,13 @@ export async function createMockDocx(options: FixtureOptions = {}): Promise<Arra
     })
     customXml += `\n</Properties>`
     zip.file('docProps/custom.xml', customXml)
+  }
+
+  // extra XML files
+  if (options.extraXmlFiles) {
+    for (const [path, content] of Object.entries(options.extraXmlFiles)) {
+      zip.file(path, content)
+    }
   }
 
   // unrelated binary part

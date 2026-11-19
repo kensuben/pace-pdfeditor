@@ -283,6 +283,62 @@ function App() {
   const [viewMode, setViewMode] = useState<'pdf' | 'word'>(() => {
     return typeof window !== 'undefined' && window.location.hash === '#/word-anonymizer' ? 'word' : 'pdf'
   })
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
+  const menuButtonRef = useRef<HTMLButtonElement>(null)
+  const menuDropdownRef = useRef<HTMLDivElement>(null)
+  const wasMobileMenuOpenRef = useRef(false)
+
+  useEffect(() => {
+    if (mobileMenuOpen) {
+      wasMobileMenuOpenRef.current = true
+      const dropdown = menuDropdownRef.current
+      if (dropdown) {
+        const items = dropdown.querySelectorAll<HTMLElement>('[role="menuitem"]:not([disabled])')
+        items[0]?.focus()
+      }
+    } else if (wasMobileMenuOpenRef.current) {
+      wasMobileMenuOpenRef.current = false
+      menuButtonRef.current?.focus()
+    }
+  }, [mobileMenuOpen])
+
+  useEffect(() => {
+    if (!mobileMenuOpen) return
+    const handleClickOutside = (e: MouseEvent | PointerEvent) => {
+      if (
+        menuDropdownRef.current &&
+        !menuDropdownRef.current.contains(e.target as Node) &&
+        menuButtonRef.current &&
+        !menuButtonRef.current.contains(e.target as Node)
+      ) {
+        setMobileMenuOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside)
+    }
+  }, [mobileMenuOpen])
+
+  const handleMobileMenuKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    if (e.key === 'Escape') {
+      e.preventDefault()
+      setMobileMenuOpen(false)
+      return
+    }
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault()
+      const dropdown = menuDropdownRef.current
+      if (!dropdown) return
+      const items = Array.from(dropdown.querySelectorAll<HTMLElement>('[role="menuitem"]:not([disabled])'))
+      if (!items.length) return
+      const currentIndex = items.indexOf(document.activeElement as HTMLElement)
+      const nextIndex = e.key === 'ArrowDown'
+        ? (currentIndex >= 0 && currentIndex < items.length - 1 ? currentIndex + 1 : 0)
+        : (currentIndex > 0 ? currentIndex - 1 : items.length - 1)
+      items[nextIndex]?.focus()
+    }
+  }
 
   useEffect(() => {
     const handleHashChange = () => {
@@ -646,9 +702,120 @@ function App() {
       </div>
       {viewMode === 'pdf' && info && <div className="file-title"><FileText size={17}/><span>{info.name}</span><small>{formatBytes(info.size)}</small></div>}
       <div className="top-actions">
-        {viewMode === 'pdf' && info && <><button className="secondary" onClick={() => fileInput.current?.click()}><Upload size={16}/> Mở file</button><button className="primary" onClick={exportPdf} disabled={busy}><Download size={16}/> Xuất PDF</button></>}
-        <a href="/huong-dan/" target="_blank" rel="noopener" className="topbar-help-link" aria-label="Hướng dẫn sử dụng" title="Hướng dẫn sử dụng"><BookOpen size={16}/><span>Hướng dẫn</span></a>
-        {account ? <div className="account-menu"><button className="activity-button" onClick={() => setShowActivities(true)} title="Activity log"><Activity/></button>{apiUser?.role==='admin'&&<button className="activity-button" onClick={()=>setShowAdmin(true)} title="Administration"><Settings/></button>}<button className="user-chip" title={account.username}><span>{(account.name || account.username).split(' ').map((x) => x[0]).slice(0,2).join('').toUpperCase()}</span><b>{account.name || account.username}</b></button><button className="logout-button" onClick={logout} title="Đăng xuất"><LogOut/></button></div> : <button className="microsoft-login" onClick={login} disabled={!authReady}><span className="ms-logo"><i/><i/><i/><i/></span><LogIn/> Sign in with Microsoft</button>}
+        {viewMode === 'pdf' && info && <><button className="secondary desktop-only" onClick={() => fileInput.current?.click()}><Upload size={16}/> Mở file</button><button className="primary desktop-only" onClick={exportPdf} disabled={busy}><Download size={16}/> Xuất PDF</button></>}
+        <a href="/huong-dan/" target="_blank" rel="noopener" className="topbar-help-link desktop-only" aria-label="Hướng dẫn sử dụng" title="Hướng dẫn sử dụng"><BookOpen size={16}/><span>Hướng dẫn</span></a>
+        {account ? <div className="account-menu desktop-only"><button className="activity-button" onClick={() => setShowActivities(true)} title="Activity log"><Activity/></button>{apiUser?.role==='admin'&&<button className="activity-button" onClick={()=>setShowAdmin(true)} title="Administration"><Settings/></button>}<button className="user-chip" title={account.username}><span>{(account.name || account.username).split(' ').map((x) => x[0]).slice(0,2).join('').toUpperCase()}</span><b>{account.name || account.username}</b></button><button className="logout-button" onClick={logout} title="Đăng xuất"><LogOut/></button></div> : <button className="microsoft-login desktop-only" onClick={login} disabled={!authReady}><span className="ms-logo"><i/><i/><i/><i/></span><LogIn/> Sign in with Microsoft</button>}
+        {viewMode === 'pdf' && info && (
+          <button
+            type="button"
+            className="primary mobile-export-btn"
+            aria-label="Xuất PDF"
+            title="Xuất PDF"
+            onClick={exportPdf}
+            disabled={busy}
+          >
+            <Download size={16}/>
+          </button>
+        )}
+        <button
+          ref={menuButtonRef}
+          type="button"
+          className="mobile-menu-btn"
+          aria-label="Thêm thao tác"
+          aria-haspopup="menu"
+          aria-expanded={mobileMenuOpen}
+          onClick={() => setMobileMenuOpen((open) => !open)}
+        >
+          ⋯
+        </button>
+        {mobileMenuOpen && (
+          <div
+            ref={menuDropdownRef}
+            className="mobile-dropdown-menu"
+            role="menu"
+            aria-label="Menu thao tác"
+            onKeyDown={handleMobileMenuKeyDown}
+          >
+            {viewMode === 'pdf' && info && (
+              <button
+                type="button"
+                role="menuitem"
+                className="mobile-menu-item"
+                onClick={() => {
+                  setMobileMenuOpen(false)
+                  fileInput.current?.click()
+                }}
+              >
+                <Upload size={16}/> Mở file
+              </button>
+            )}
+            <a
+              role="menuitem"
+              href="/huong-dan/"
+              target="_blank"
+              rel="noopener"
+              className="mobile-menu-item"
+              onClick={() => setMobileMenuOpen(false)}
+            >
+              <BookOpen size={16}/> Hướng dẫn
+            </a>
+            {account ? (
+              <>
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="mobile-menu-item"
+                  onClick={() => {
+                    setMobileMenuOpen(false)
+                    setShowActivities(true)
+                  }}
+                >
+                  <Activity size={16}/> Activity log
+                </button>
+                {apiUser?.role === 'admin' && (
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className="mobile-menu-item"
+                    onClick={() => {
+                      setMobileMenuOpen(false)
+                      setShowAdmin(true)
+                    }}
+                  >
+                    <Settings size={16}/> Administration
+                  </button>
+                )}
+                <div className="mobile-menu-username" aria-disabled="true">
+                  {account.name || account.username}
+                </div>
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="mobile-menu-item logout"
+                  onClick={() => {
+                    setMobileMenuOpen(false)
+                    logout()
+                  }}
+                >
+                  <LogOut size={16}/> Đăng xuất
+                </button>
+              </>
+            ) : (
+              <button
+                type="button"
+                role="menuitem"
+                className="mobile-menu-item"
+                onClick={() => {
+                  setMobileMenuOpen(false)
+                  login()
+                }}
+                disabled={!authReady}
+              >
+                <LogIn size={16}/> Đăng nhập Microsoft
+              </button>
+            )}
+          </div>
+        )}
       </div>
     </header>
 

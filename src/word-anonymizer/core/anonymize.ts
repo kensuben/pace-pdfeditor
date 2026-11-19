@@ -1,21 +1,35 @@
 import { OOXML_NAMESPACES } from './constants'
 import { inspectLoadedDocx } from './inspect'
 import { normalizeString } from './normalize'
+import { maskPhone, normalizePhone } from './sensitive'
+import { replaceTextInXmlDocument } from './textReplace'
 import {
   AnonymizeOptions,
+  AnonymizeReplacements,
   AnonymizeResult,
+  CustomEntity,
   IdentityMapping,
   MappedIdentity,
 } from './types'
 import { parseXml, serializeXml } from './xml'
 import { loadSafeDocx } from './zip'
 
-const DEFAULT_OPTIONS: AnonymizeOptions = {
+const DEFAULT_OPTIONS: Required<AnonymizeOptions> = {
   removeDates: false,
   replaceMentions: true,
   replaceNamesInCommentText: false,
   scrubDocProps: true,
   customPropsPolicy: 'keep-sensitivity-labels',
+  customEntities: [],
+  maskKinds: {
+    email: true,
+    phone: true,
+    nationalId: true,
+    taxCode: true,
+    bankAccount: true,
+    address: true,
+  },
+  keepValues: [],
 }
 
 function findNearestHyperlinkAncestor(node: Node): Element | null {
@@ -33,19 +47,97 @@ function findNearestHyperlinkAncestor(node: Node): Element | null {
   return null
 }
 
+function escapeRegex(str: string): string {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+function replaceEntitiesInMetadataDoc(
+  doc: Document,
+  entities: CustomEntity[]
+): boolean {
+  if (entities.length === 0) return false
+  let modified = false
+
+  const textNodes: Node[] = []
+  const walk = (node: Node) => {
+    if (node.nodeType === 3 /* Node.TEXT_NODE */) {
+      textNodes.push(node)
+    } else if (node.nodeType === 1 /* Node.ELEMENT_NODE */) {
+      for (let i = 0; i < node.childNodes.length; i++) {
+        walk(node.childNodes[i])
+      }
+    }
+  }
+  walk(doc.documentElement)
+
+  for (const tNode of textNodes) {
+    let text = (tNode.textContent || '').normalize('NFC')
+    let textChanged = false
+
+    for (const entity of entities) {
+      for (const val of entity.values) {
+        const trimmedVal = val.trim().normalize('NFC')
+        if (trimmedVal.length < 2) continue
+
+        const valLower = trimmedVal.toLowerCase()
+        const textLower = text.toLowerCase()
+
+        if (textLower.includes(valLower)) {
+          const regex = new RegExp(
+            `(?<![\\p{L}\\p{N}])${escapeRegex(trimmedVal)}(?![\\p{L}\\p{N}])`,
+            'gui'
+          )
+          if (regex.test(text)) {
+            text = text.replace(regex, entity.label)
+            textChanged = true
+          }
+        }
+      }
+    }
+
+    if (textChanged) {
+      tNode.textContent = text
+      modified = true
+    }
+  }
+
+  return modified
+}
+
 // TODO(verify): Cấu trúc mention w:hyperlink kết hợp mailto: - Word 365 dùng w:hyperlink trỏ rel mailto, cần kiểm tra thêm khi mention nằm trong comment phức tạp hoặc phân tách nhiều w:r/w:t.
 export async function anonymizeDocx(
   input: ArrayBuffer,
   mapping: IdentityMapping,
   options?: Partial<AnonymizeOptions>
 ): Promise<AnonymizeResult> {
-  const opts: AnonymizeOptions = { ...DEFAULT_OPTIONS, ...options }
+  const opts: Required<AnonymizeOptions> = {
+    ...DEFAULT_OPTIONS,
+    ...options,
+    maskKinds: {
+      ...DEFAULT_OPTIONS.maskKinds,
+      ...(options?.maskKinds || {}),
+    },
+    customEntities: options?.customEntities || [],
+    keepValues: options?.keepValues || [],
+  }
   const zip = await loadSafeDocx(input)
-  const inspection = await inspectLoadedDocx(zip)
+  const inspection = await inspectLoadedDocx(zip, opts.customEntities)
 
   const modifiedParts: string[] = []
   const warnings: string[] = [...inspection.warnings]
   const processedMentionHyperlinks = new Set<Element>()
+
+  const replacements: AnonymizeReplacements = {
+    entities: 0,
+    byKind: {
+      email: 0,
+      phone: 0,
+      nationalId: 0,
+      taxCode: 0,
+      bankAccount: 0,
+      address: 0,
+    },
+  }
 
   const getMapped = (rawAuthor: string): MappedIdentity | undefined => {
     const key = normalizeString(rawAuthor)
@@ -79,7 +171,6 @@ export async function anonymizeDocx(
     email: string,
     displayText: string
   ): MappedIdentity | undefined => {
-    // 1. Match by email in known identities
     for (const ident of inspection.identities) {
       if (ident.email && ident.email.toLowerCase() === email.toLowerCase()) {
         const mapped = getMapped(ident.author)
@@ -87,17 +178,15 @@ export async function anonymizeDocx(
       }
     }
 
-    // 2. Match by display text in mapping
     if (displayText) {
       const mapped = getMapped(displayText)
       if (mapped) return mapped
     }
 
-    // 3. Match by email as mapping key directly
     return getMapped(email)
   }
 
-  // 1. Process word/comments.xml
+  // 1. Process word/comments.xml (participant metadata & author mentions)
   const commentsFile = zip.file('word/comments.xml')
   if (commentsFile) {
     const xmlText = await commentsFile.async('string')
@@ -223,7 +312,6 @@ export async function anonymizeDocx(
 
           const mapped = findMappedForMention(email, displayText)
           if (mapped) {
-            // First w:t becomes @<label>, remaining w:t become empty
             if (textNodes.length > 0) {
               textNodes[0].textContent = `@${mapped.label}`
               for (let k = 1; k < textNodes.length; k++) {
@@ -232,7 +320,6 @@ export async function anonymizeDocx(
               commentsModified = true
             }
 
-            // Update Target in rels
             relEl.setAttribute(
               'Target',
               `mailto:${mapped.alias}@anonymized.invalid`
@@ -260,7 +347,7 @@ export async function anonymizeDocx(
         }
       }
 
-      // Process any remaining mailto: in comments.xml.rels (orphan or not referenced by hyperlink)
+      // Process any remaining mailto: in comments.xml.rels
       if (commentsRelsDoc) {
         const relEls = commentsRelsDoc.getElementsByTagNameNS(
           OOXML_NAMESPACES.rels,
@@ -296,12 +383,11 @@ export async function anonymizeDocx(
       }
     }
 
-    // Process plain text inside comments: plain text @mentions and/or full names in text
+    // Process plain text inside comments for participants
     if (opts.replaceMentions || opts.replaceNamesInCommentText) {
       const textEls = doc.getElementsByTagNameNS(OOXML_NAMESPACES.w, 't')
       for (let i = 0; i < textEls.length; i++) {
         const textNode = textEls[i]
-        // If this textNode is inside a w:hyperlink mention that was already processed, skip to avoid double replacing
         const hl = findNearestHyperlinkAncestor(textNode)
         if (hl && processedMentionHyperlinks.has(hl)) {
           continue
@@ -347,8 +433,8 @@ export async function anonymizeDocx(
     modifiedParts.push('word/_rels/comments.xml.rels')
   }
 
-  // 2. Process all other XML parts under word/ (revisions in document, header, footer, etc.)
-  const entries = Object.keys(zip.files)
+  // 2. Process all other XML parts under word/ for revisions
+  const entries = Object.keys(zip.files).sort()
   for (const path of entries) {
     if (!path.startsWith('word/') || !path.endsWith('.xml')) continue
     if (
@@ -473,7 +559,6 @@ export async function anonymizeDocx(
         }
       }
 
-      // Xoá phần tử w15:presenceInfo
       const presenceEls = Array.from(
         personEl.getElementsByTagNameNS(OOXML_NAMESPACES.w15, 'presenceInfo')
       )
@@ -592,6 +677,172 @@ export async function anonymizeDocx(
     }
   }
 
+  // ==========================================
+  // W-5a: Text replacement (entities + sensitive)
+  // ==========================================
+
+  // Determine which emails and phones are masked to update links/fields
+  const isEmailMasked = (email: string): boolean => {
+    if (!opts.maskKinds.email) return false
+    const norm = email.trim().toLowerCase()
+    return !opts.keepValues.includes(norm)
+  }
+
+  const isPhoneMasked = (phone: string): { masked: boolean; maskedValue: string } => {
+    if (!opts.maskKinds.phone) return { masked: false, maskedValue: phone }
+    const norm = normalizePhone(phone)
+    if (!norm) return { masked: false, maskedValue: phone }
+    if (opts.keepValues.includes(norm)) return { masked: false, maskedValue: phone }
+    return { masked: true, maskedValue: maskPhone(norm) }
+  }
+
+  // 8. Run paragraph text replacement on all document text parts (document, header, footer, footnote, endnote, comments, etc.)
+  for (const path of entries) {
+    if (!path.startsWith('word/') || !path.endsWith('.xml') || path === 'word/people.xml') {
+      continue
+    }
+
+    const file = zip.file(path)
+    if (!file) continue
+
+    const xmlText = await file.async('string')
+    const doc = parseXml(xmlText)
+
+    let docModified = replaceTextInXmlDocument(
+      doc,
+      {
+        customEntities: opts.customEntities,
+        maskKinds: opts.maskKinds,
+        keepValues: opts.keepValues,
+      },
+      replacements
+    )
+
+    // Also replace HYPERLINK field codes in w:instrText and w:fldSimple
+    const fldSimples = doc.getElementsByTagNameNS(OOXML_NAMESPACES.w, 'fldSimple')
+    for (let i = 0; i < fldSimples.length; i++) {
+      const el = fldSimples[i]
+      const instr = el.getAttributeNS(OOXML_NAMESPACES.w, 'instr') || ''
+      if (/HYPERLINK/i.test(instr)) {
+        let newInstr = instr
+        // mailto:
+        const mailtoMatch = instr.match(/mailto:([^\s"]+)/i)
+        if (mailtoMatch && isEmailMasked(mailtoMatch[1])) {
+          newInstr = newInstr.replace(
+            /mailto:[^\s"]+/i,
+            'mailto:masked@anonymized.invalid'
+          )
+        }
+        // tel:
+        const telMatch = instr.match(/tel:([^\s"]+)/i)
+        if (telMatch) {
+          const { masked, maskedValue } = isPhoneMasked(telMatch[1])
+          if (masked) {
+            newInstr = newInstr.replace(/tel:[^\s"]+/i, `tel:${maskedValue}`)
+          }
+        }
+        if (newInstr !== instr) {
+          el.setAttributeNS(OOXML_NAMESPACES.w, 'instr', newInstr)
+          docModified = true
+        }
+      }
+    }
+
+    const instrTexts = doc.getElementsByTagNameNS(OOXML_NAMESPACES.w, 'instrText')
+    for (let i = 0; i < instrTexts.length; i++) {
+      const el = instrTexts[i]
+      const instr = el.textContent || ''
+      if (/HYPERLINK/i.test(instr)) {
+        let newInstr = instr
+        const mailtoMatch = instr.match(/mailto:([^\s"]+)/i)
+        if (mailtoMatch && isEmailMasked(mailtoMatch[1])) {
+          newInstr = newInstr.replace(
+            /mailto:[^\s"]+/i,
+            'mailto:masked@anonymized.invalid'
+          )
+        }
+        const telMatch = instr.match(/tel:([^\s"]+)/i)
+        if (telMatch) {
+          const { masked, maskedValue } = isPhoneMasked(telMatch[1])
+          if (masked) {
+            newInstr = newInstr.replace(/tel:[^\s"]+/i, `tel:${maskedValue}`)
+          }
+        }
+        if (newInstr !== instr) {
+          el.textContent = newInstr
+          docModified = true
+        }
+      }
+    }
+
+    if (docModified) {
+      zip.file(path, serializeXml(doc))
+      if (!modifiedParts.includes(path)) {
+        modifiedParts.push(path)
+      }
+    }
+  }
+
+  // 9. Process links in ALL .rels files EXCEPT comments.xml.rels (comments mentions handled in step 1)
+  for (const path of entries) {
+    if (!path.endsWith('.rels')) continue
+    if (path === 'word/_rels/comments.xml.rels') continue
+
+    const file = zip.file(path)
+    if (!file) continue
+
+    const xmlText = await file.async('string')
+    const doc = parseXml(xmlText)
+    let relsModified = false
+
+    const relEls = doc.getElementsByTagNameNS(OOXML_NAMESPACES.rels, 'Relationship')
+    for (let i = 0; i < relEls.length; i++) {
+      const rel = relEls[i]
+      const target = rel.getAttribute('Target') || ''
+
+      if (target.toLowerCase().startsWith('mailto:')) {
+        const rawEmail = target.slice('mailto:'.length).trim()
+        if (
+          !rawEmail.toLowerCase().endsWith('@anonymized.invalid') &&
+          isEmailMasked(rawEmail)
+        ) {
+          rel.setAttribute('Target', 'mailto:masked@anonymized.invalid')
+          relsModified = true
+        }
+      } else if (target.toLowerCase().startsWith('tel:')) {
+        const rawPhone = target.slice('tel:'.length).trim()
+        const { masked, maskedValue } = isPhoneMasked(rawPhone)
+        if (masked) {
+          rel.setAttribute('Target', `tel:${maskedValue}`)
+          relsModified = true
+        }
+      }
+    }
+
+    if (relsModified) {
+      zip.file(path, serializeXml(doc))
+      if (!modifiedParts.includes(path)) {
+        modifiedParts.push(path)
+      }
+    }
+  }
+
+  // 10. Replace entities in docProps metadata (core.xml, app.xml, custom.xml)
+  for (const metaPath of ['docProps/core.xml', 'docProps/app.xml', 'docProps/custom.xml']) {
+    const file = zip.file(metaPath)
+    if (!file) continue
+
+    const xmlText = await file.async('string')
+    const doc = parseXml(xmlText)
+
+    if (replaceEntitiesInMetadataDoc(doc, opts.customEntities)) {
+      zip.file(metaPath, serializeXml(doc))
+      if (!modifiedParts.includes(metaPath)) {
+        modifiedParts.push(metaPath)
+      }
+    }
+  }
+
   const blob = await zip.generateAsync({
     type: 'blob',
     compression: 'DEFLATE',
@@ -609,10 +860,7 @@ export async function anonymizeDocx(
       mapping,
       modifiedParts,
       warnings,
+      replacements,
     },
   }
-}
-
-function escapeRegex(str: string): string {
-  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }

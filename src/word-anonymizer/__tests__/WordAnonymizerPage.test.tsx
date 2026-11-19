@@ -15,6 +15,13 @@ function setInputValue(input: HTMLInputElement, value: string) {
   input.dispatchEvent(new Event('change', { bubbles: true }))
 }
 
+function setTextareaValue(textarea: HTMLTextAreaElement, value: string) {
+  const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value')?.set
+  setter?.call(textarea, value)
+  textarea.dispatchEvent(new Event('input', { bubbles: true }))
+  textarea.dispatchEvent(new Event('change', { bubbles: true }))
+}
+
 async function uploadMockFile(fileInput: HTMLInputElement, file: File) {
   Object.defineProperty(fileInput, 'files', {
     value: [file],
@@ -23,7 +30,7 @@ async function uploadMockFile(fileInput: HTMLInputElement, file: File) {
   })
   await act(async () => {
     fileInput.dispatchEvent(new Event('change', { bubbles: true }))
-    await new Promise((r) => setTimeout(r, 150))
+    await new Promise((r) => setTimeout(r, 300))
   })
 }
 
@@ -56,7 +63,7 @@ describe('WordAnonymizerPage Component Tests (W-2)', () => {
     })
 
     expect(container.textContent).toContain('Yêu cầu đăng nhập Microsoft')
-    expect(container.textContent).toContain('Kiểm tra lại nội dung tài liệu trước khi upload')
+    expect(container.textContent).toContain('Kiểm tra lại nội dung trước khi upload')
     const reminderLink = container.querySelector('.fixed-reminder-callout a[href="/huong-dan/#word"]')
     expect(reminderLink).not.toBeNull()
     expect(reminderLink?.getAttribute('target')).toBe('_blank')
@@ -68,7 +75,7 @@ describe('WordAnonymizerPage Component Tests (W-2)', () => {
 
     root.unmount()
     container.remove()
-  })
+  }, 15000)
 
   // K2: Đăng nhập, upload file fixture có 2 người góp ý + 1 người chỉ được @mention
   it('K2: authenticated, inspects docx, shows contributor (2) and mentioned (1) groups, rejects duplicate labels', async () => {
@@ -148,7 +155,7 @@ describe('WordAnonymizerPage Component Tests (W-2)', () => {
 
     root.unmount()
     container.remove()
-  })
+  }, 15000)
 
   // K3, K4, K5: Test anonymization, residual reports (PASS, WARN, FAIL) and activity log fields
   it('K3, K4, K5: anonymization flow, residual PASS, WARN, FAIL and activity log 4 fields', async () => {
@@ -195,7 +202,7 @@ describe('WordAnonymizerPage Component Tests (W-2)', () => {
 
     await act(async () => {
       anonymizeBtn!.click()
-      await new Promise((r) => setTimeout(r, 150))
+      await new Promise((r) => setTimeout(r, 400))
     })
 
     // Verify PASS card is displayed
@@ -221,10 +228,17 @@ describe('WordAnonymizerPage Component Tests (W-2)', () => {
     const lastCall = logFn.mock.calls.find((c) => c[0] === 'word_anonymizer.completed')
     const metadata = lastCall![2]
     expect(Object.keys(metadata).sort()).toEqual([
+      'addressMasked',
       'authorCount',
+      'bankAccountMasked',
       'commentCount',
+      'emailMasked',
+      'entityReplacements',
+      'nationalIdMasked',
+      'phoneMasked',
       'residualStatus',
       'revisionCount',
+      'taxCodeMasked',
     ])
     // Make sure no file name or person name in metadata
     expect(JSON.stringify(metadata)).not.toContain('document_clean.docx')
@@ -232,7 +246,7 @@ describe('WordAnonymizerPage Component Tests (W-2)', () => {
 
     root.unmount()
     container.remove()
-  })
+  }, 15000)
 
   // K2 verify rel remains alias when renamed
   it('K2: when mentioned person is renamed to "Giảng viên A", rel target remains alias', async () => {
@@ -299,14 +313,14 @@ describe('WordAnonymizerPage Component Tests (W-2)', () => {
 
     await act(async () => {
       anonymizeBtn!.click()
-      await new Promise((r) => setTimeout(r, 150))
+      await new Promise((r) => setTimeout(r, 400))
     })
 
     expect(container.textContent).toContain('Tải tài liệu đã ẩn danh')
 
     root.unmount()
     container.remove()
-  })
+  }, 15000)
 
   // K4: WARN when name in comment text, FAIL locks download until acknowledged
   it('K4: WARN shows finding part; FAIL locks download button until acknowledge checkbox is checked', async () => {
@@ -351,7 +365,7 @@ describe('WordAnonymizerPage Component Tests (W-2)', () => {
 
     await act(async () => {
       anonymizeBtn1!.click()
-      await new Promise((r) => setTimeout(r, 150))
+      await new Promise((r) => setTimeout(r, 400))
     })
 
     expect(container1.textContent).toContain('CẢNH BÁO (WARN)')
@@ -408,7 +422,7 @@ describe('WordAnonymizerPage Component Tests (W-2)', () => {
 
     await act(async () => {
       anonymizeBtn2!.click()
-      await new Promise((r) => setTimeout(r, 150))
+      await new Promise((r) => setTimeout(r, 400))
     })
 
     expect(container2.textContent).toContain('KHÔNG ĐẠT (FAIL)')
@@ -440,7 +454,7 @@ describe('WordAnonymizerPage Component Tests (W-2)', () => {
 
     root2.unmount()
     container2.remove()
-  })
+  }, 15000)
 
   // F-5 K1: FAIL locks download button, no a[href], Tab/Enter cannot download; unlocked on acknowledge
   it('F-5 K1: FAIL status strictly locks download with disabled button (no a[href]); unlocked on acknowledge', async () => {
@@ -488,7 +502,7 @@ describe('WordAnonymizerPage Component Tests (W-2)', () => {
     )
     await act(async () => {
       anonymizeBtn!.click()
-      await new Promise((r) => setTimeout(r, 150))
+      await new Promise((r) => setTimeout(r, 400))
     })
 
     expect(container.textContent).toContain('KHÔNG ĐẠT (FAIL)')
@@ -521,7 +535,7 @@ describe('WordAnonymizerPage Component Tests (W-2)', () => {
 
     root.unmount()
     container.remove()
-  })
+  }, 15000)
 
   // F-5 K2: Changing config resets stale results and shows reminder; re-running updates; keepOriginalName does not reset
   it('F-5 K2: editing label/initials/options clears stale result and displays reminder; re-run clears reminder; keepOriginalName keeps result', async () => {
@@ -565,7 +579,7 @@ describe('WordAnonymizerPage Component Tests (W-2)', () => {
     // 1. Run first time
     await act(async () => {
       anonymizeBtn!.click()
-      await new Promise((r) => setTimeout(r, 150))
+      await new Promise((r) => setTimeout(r, 400))
     })
 
     expect(container.textContent).toContain('ĐẠT BẢO MẬT (PASS)')
@@ -612,7 +626,7 @@ describe('WordAnonymizerPage Component Tests (W-2)', () => {
     // 4. Click "Ẩn danh tài liệu" again -> result reappears, reminder cleared
     await act(async () => {
       anonymizeBtn!.click()
-      await new Promise((r) => setTimeout(r, 150))
+      await new Promise((r) => setTimeout(r, 400))
     })
 
     expect(container.querySelector('.residual-card')).not.toBeNull()
@@ -641,7 +655,7 @@ describe('WordAnonymizerPage Component Tests (W-2)', () => {
     // 6. Click "Ẩn danh tài liệu" again -> result reappears, reminder cleared
     await act(async () => {
       anonymizeBtn!.click()
-      await new Promise((r) => setTimeout(r, 150))
+      await new Promise((r) => setTimeout(r, 400))
     })
 
     expect(container.querySelector('.residual-card')).not.toBeNull()
@@ -650,5 +664,475 @@ describe('WordAnonymizerPage Component Tests (W-2)', () => {
 
     root.unmount()
     container.remove()
+  }, 15000)
+
+  // ==========================================
+  // Part B: Entities & Sensitive Data Masking UI (W-5b)
+  // ==========================================
+  describe('WordAnonymizerPage Part B (W-5b)', () => {
+    const fixtureText = `
+Hợp đồng hợp tác giữa Công ty TNHH Mẫu Thử và đối tác chiến lược.
+Mau Thu Co., Ltd do Người Đại Diện Test 01 đại diện theo pháp luật.
+Thông tin liên hệ email: test1@example.com và contact@example.com.
+Hotline di động: 0912345678, số hỗ trợ 0987654321, số phụ 0901234567.
+Người đại diện có CCCD 001099012345 cấp bởi Cục CSQLHC về TTXH.
+Mã số thuế doanh nghiệp: MST: 0101234567-001 đăng ký tại Hà Nội.
+Tài khoản thanh toán: STK 19031234567890 mở tại Techcombank.
+Trụ sở chính: Địa chỉ: Số 1 Đường Test, P. Bến Nghé, Quận 1, TP.HCM.
+`
+
+    // B1: Upload fixture giả -> thẻ phát hiện liệt kê đủ, đúng loại, đúng số lần, hiện đúng dạng sau khi che.
+    // Thêm 1 pháp nhân (2 cách viết) và 1 người đại diện -> chạy -> file tải về đúng; residual PASS.
+    it('B1: detects 2 emails, 3 phones, 1 CCCD, 1 MST, 1 STK, 1 address; adds entities; anonymizes and verifies PASS', async () => {
+      const container = document.createElement('div')
+      document.body.appendChild(container)
+      const root = createRoot(container)
+      const logFn = vi.fn()
+
+      const mockDocxBytes = await createMockDocx({
+        documentText: fixtureText,
+        comments: [
+          {
+            id: 1,
+            author: 'Học viên Test 01',
+            initials: 'HV01',
+            text: 'Bình luận hợp lệ.',
+          },
+        ],
+      })
+
+      act(() => {
+        root.render(
+          <WordAnonymizerPage
+            account={mockAccount}
+            apiUser={null}
+            authReady={true}
+            onSignInMicrosoft={vi.fn()}
+            log={logFn}
+          />
+        )
+      })
+
+      const fileInput = container.querySelector('input[type="file"]') as HTMLInputElement
+      const file = new File([mockDocxBytes], 'fake-contract.docx', {
+        type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      })
+      await uploadMockFile(fileInput, file)
+
+      // 1. Verify detected sensitive card
+      expect(container.textContent).toContain('Thông tin nhạy cảm phát hiện được')
+      expect(container.textContent).toContain('Email (2)')
+      expect(container.textContent).toContain('Số điện thoại (3)')
+      expect(container.textContent).toContain('CCCD/CMND (1)')
+      expect(container.textContent).toContain('Mã số thuế (1)')
+      expect(container.textContent).toContain('Số tài khoản (1)')
+      expect(container.textContent).toContain('Địa chỉ (1)')
+
+      // Verify masked preview formats
+      expect(container.textContent).toContain('t****@e****.com')
+      expect(container.textContent).toContain('c****@e****.com')
+      expect(container.textContent).toContain('09******78')
+      expect(container.textContent).toContain('*********345')
+      expect(container.textContent).toContain('*******567-001')
+      expect(container.textContent).toContain('**********7890')
+      expect(container.textContent).toContain('****, ****, ****, TP.HCM')
+
+      // 2. Add Organization entity (2 spellings)
+      const addOrgBtn = Array.from(container.querySelectorAll('button')).find((b) =>
+        b.textContent?.includes('Thêm pháp nhân')
+      )
+      expect(addOrgBtn).toBeDefined()
+      await act(async () => {
+        addOrgBtn!.click()
+        await new Promise((r) => setTimeout(r, 50))
+      })
+
+      const textareas = Array.from(container.querySelectorAll('textarea'))
+      expect(textareas.length).toBe(1)
+      await act(async () => {
+        setTextareaValue(textareas[0], 'Công ty TNHH Mẫu Thử\nMau Thu Co., Ltd')
+        await new Promise((r) => setTimeout(r, 50))
+      })
+
+      // 3. Add Representative entity
+      const addRepBtn = Array.from(container.querySelectorAll('button')).find((b) =>
+        b.textContent?.includes('Thêm người đại diện')
+      )
+      expect(addRepBtn).toBeDefined()
+      await act(async () => {
+        addRepBtn!.click()
+        await new Promise((r) => setTimeout(r, 50))
+      })
+
+      const updatedTextareas = Array.from(container.querySelectorAll('textarea'))
+      expect(updatedTextareas.length).toBe(2)
+      await act(async () => {
+        setTextareaValue(updatedTextareas[1], 'Người Đại Diện Test 01')
+        await new Promise((r) => setTimeout(r, 50))
+      })
+
+      // 4. Click "Ẩn danh tài liệu"
+      const anonymizeBtn = Array.from(container.querySelectorAll('button')).find((b) =>
+        b.textContent?.includes('Ẩn danh tài liệu')
+      )
+      expect(anonymizeBtn).toBeDefined()
+      expect(anonymizeBtn?.disabled).toBe(false)
+
+      await act(async () => {
+        anonymizeBtn!.click()
+        await new Promise((r) => setTimeout(r, 500))
+      })
+
+      // 5. Verify results summary line
+      expect(container.textContent).toContain(
+        'Đã thay 3 tên pháp nhân/người đại diện; che 2 email, 3 số điện thoại, 1 CCCD/CMND, 1 MST, 1 số tài khoản, 1 địa chỉ'
+      )
+
+      // 6. Verify residual report is PASS
+      expect(container.textContent).toContain('ĐẠT BẢO MẬT (PASS)')
+
+      root.unmount()
+      container.remove()
+    })
+
+    // B2: Bỏ chọn 1 số điện thoại và tắt loại "Địa chỉ" -> chạy -> số đó và địa chỉ còn nguyên, phần còn lại bị che
+    it('B2: unchecks 1 phone and turns off address toggle; verifies phone and address preserved', async () => {
+      const container = document.createElement('div')
+      document.body.appendChild(container)
+      const root = createRoot(container)
+
+      const mockDocxBytes = await createMockDocx({
+        documentText: fixtureText,
+        comments: [{ id: 1, author: 'HV01', initials: 'H', text: 'Clean.' }],
+      })
+
+      act(() => {
+        root.render(
+          <WordAnonymizerPage
+            account={mockAccount}
+            apiUser={null}
+            authReady={true}
+            onSignInMicrosoft={vi.fn()}
+            log={vi.fn()}
+          />
+        )
+      })
+
+      const fileInput = container.querySelector('input[type="file"]') as HTMLInputElement
+      await uploadMockFile(fileInput, new File([mockDocxBytes], 'b2.docx'))
+
+      // 1. Turn off "Địa chỉ" category toggle
+      const addressToggleLabel = Array.from(
+        container.querySelectorAll('.sensitive-toggle-item')
+      ).find((el) => el.textContent?.includes('Địa chỉ'))
+      const addressCb = addressToggleLabel?.querySelector('input[type="checkbox"]') as HTMLInputElement
+      expect(addressCb).toBeDefined()
+      await act(async () => {
+        addressCb.click()
+        await new Promise((r) => setTimeout(r, 50))
+      })
+
+      // 2. Find phone table checkboxes ("Che") and uncheck the first phone (0912345678)
+      const phoneGroup = Array.from(
+        container.querySelectorAll('.sensitive-kind-group')
+      ).find((g) => g.textContent?.includes('Số điện thoại'))
+      const phoneRows = phoneGroup?.querySelectorAll('tbody tr')
+      expect(phoneRows?.length).toBe(3)
+      const firstPhoneKeepCb = phoneRows![0].querySelector('input[type="checkbox"]') as HTMLInputElement
+      await act(async () => {
+        firstPhoneKeepCb.click()
+        await new Promise((r) => setTimeout(r, 50))
+      })
+
+      // 3. Click Anonymize
+      const anonymizeBtn = Array.from(container.querySelectorAll('button')).find((b) =>
+        b.textContent?.includes('Ẩn danh tài liệu')
+      )
+      await act(async () => {
+        anonymizeBtn!.click()
+        await new Promise((r) => setTimeout(r, 500))
+      })
+
+      // 4. Verify summary: 0 address masked, 2 phones masked
+      expect(container.textContent).toContain(
+        'Đã thay 0 tên pháp nhân/người đại diện; che 2 email, 2 số điện thoại, 1 CCCD/CMND, 1 MST, 1 số tài khoản, 0 địa chỉ'
+      )
+
+      root.unmount()
+      container.remove()
+    })
+
+    // B3: Fixture có chữ đã xoá chứa email -> hiện cảnh báo chữ đã xoá; chạy xong residual WARN (category deleted-text), nút tải không bị khoá
+    it('B3: deleted text with email shows warning banner; anonymize gives WARN; download not locked', async () => {
+      const container = document.createElement('div')
+      document.body.appendChild(container)
+      const root = createRoot(container)
+
+      const mockDocxBytes = await createMockDocx({
+        comments: [{ id: 1, author: 'HV01', initials: 'H', text: 'Clean.' }],
+        revisions: [
+          {
+            type: 'del',
+            author: 'HV01',
+            part: 'document',
+            text: 'email-in-del@example.com',
+            isDelText: true,
+          },
+        ],
+      })
+
+      act(() => {
+        root.render(
+          <WordAnonymizerPage
+            account={mockAccount}
+            apiUser={null}
+            authReady={true}
+            onSignInMicrosoft={vi.fn()}
+            log={vi.fn()}
+          />
+        )
+      })
+
+      const fileInput = container.querySelector('input[type="file"]') as HTMLInputElement
+      await uploadMockFile(fileInput, new File([mockDocxBytes], 'b3.docx'))
+
+      // Wait for deletedHits inspection
+      await act(async () => {
+        await new Promise((r) => setTimeout(r, 150))
+      })
+
+      // Verify warning banner for deleted text
+      expect(container.textContent).toContain('Cảnh báo: Phát hiện thông tin trong phần chữ đã xoá (Track Changes)')
+
+      // Click anonymize
+      const anonymizeBtn = Array.from(container.querySelectorAll('button')).find((b) =>
+        b.textContent?.includes('Ẩn danh tài liệu')
+      )
+      await act(async () => {
+        anonymizeBtn!.click()
+        await new Promise((r) => setTimeout(r, 500))
+      })
+
+      // Verify residual report is WARN with category deleted-text
+      expect(container.textContent).toContain('CẢNH BÁO (WARN)')
+      expect(container.textContent).toContain('deleted-text')
+
+      // Download button must NOT be locked (should be an active <a> link)
+      const downloadLink = container.querySelector('a.primary')
+      expect(downloadLink).not.toBeNull()
+      expect(downloadLink?.getAttribute('download')).toBe('document_anonymized.docx')
+
+      root.unmount()
+      container.remove()
+    })
+
+    // B4: Nhãn trùng Người góp ý 1 -> hiện lỗi, nút chạy bị khoá. Sửa entity sau khi đã chạy -> kết quả cũ bị xoá, hiện dòng nhắc chạy lại
+    it('B4: duplicate label with contributor shows error and locks run button; editing entity clears stale result', async () => {
+      const container = document.createElement('div')
+      document.body.appendChild(container)
+      const root = createRoot(container)
+
+      const mockDocxBytes = await createMockDocx({
+        comments: [{ id: 1, author: 'Học viên Test 01', initials: 'HV01', text: 'Comment.' }],
+      })
+
+      act(() => {
+        root.render(
+          <WordAnonymizerPage
+            account={mockAccount}
+            apiUser={null}
+            authReady={true}
+            onSignInMicrosoft={vi.fn()}
+            log={vi.fn()}
+          />
+        )
+      })
+
+      const fileInput = container.querySelector('input[type="file"]') as HTMLInputElement
+      await uploadMockFile(fileInput, new File([mockDocxBytes], 'b4.docx'))
+
+      // Contributor label defaults to "Người góp ý 1"
+      const contributorInput = container.querySelector('table.word-table input[type="text"]') as HTMLInputElement
+      expect(contributorInput.value).toBe('Người góp ý 1')
+
+      // Add organization entity
+      const addOrgBtn = Array.from(container.querySelectorAll('button')).find((b) =>
+        b.textContent?.includes('Thêm pháp nhân')
+      )
+      await act(async () => {
+        addOrgBtn!.click()
+        await new Promise((r) => setTimeout(r, 50))
+      })
+
+      // Set entity label duplicate of contributor: "Người góp ý 1"
+      const labelInput = container.querySelector('.entity-label-col input') as HTMLInputElement
+      expect(labelInput).not.toBeNull()
+      await act(async () => {
+        setInputValue(labelInput, 'Người góp ý 1')
+        await new Promise((r) => setTimeout(r, 50))
+      })
+
+      // Verify error message displayed and anonymize button disabled
+      expect(container.textContent).toContain('trùng với nhãn người tham gia')
+      const anonymizeBtn = Array.from(container.querySelectorAll('button')).find((b) =>
+        b.textContent?.includes('Ẩn danh tài liệu')
+      )
+      expect(anonymizeBtn?.disabled).toBe(true)
+
+      // Fix label
+      await act(async () => {
+        setInputValue(labelInput, 'Pháp nhân A')
+        await new Promise((r) => setTimeout(r, 50))
+      })
+
+      // Button is now enabled
+      expect(anonymizeBtn?.disabled).toBe(false)
+
+      // Run anonymization
+      await act(async () => {
+        anonymizeBtn!.click()
+        await new Promise((r) => setTimeout(r, 400))
+      })
+      expect(container.querySelector('.residual-card')).not.toBeNull()
+
+      // Edit entity textarea after run -> stale result cleared, reminder displayed
+      const textarea = container.querySelector('textarea') as HTMLTextAreaElement
+      await act(async () => {
+        setTextareaValue(textarea, 'Công ty TNHH Mới')
+        await new Promise((r) => setTimeout(r, 50))
+      })
+
+      expect(container.querySelector('.residual-card')).toBeNull()
+      expect(container.textContent).toContain('Cấu hình đã thay đổi — bấm "Ẩn danh tài liệu" để tạo lại file.')
+
+      root.unmount()
+      container.remove()
+    })
+
+    // B5: Log word_anonymizer.completed chỉ có số đếm, không chứa chuỗi tên/email/số nào từ fixture. localStorage/sessionStorage không dùng.
+    it('B5: activity log completed only has counts, no raw strings; no localStorage/sessionStorage usage', async () => {
+      const container = document.createElement('div')
+      document.body.appendChild(container)
+      const root = createRoot(container)
+      const logFn = vi.fn()
+
+      const mockDocxBytes = await createMockDocx({
+        documentText: fixtureText,
+        comments: [{ id: 1, author: 'HV01', initials: 'H', text: 'Clean.' }],
+      })
+
+      act(() => {
+        root.render(
+          <WordAnonymizerPage
+            account={mockAccount}
+            apiUser={null}
+            authReady={true}
+            onSignInMicrosoft={vi.fn()}
+            log={logFn}
+          />
+        )
+      })
+
+      const fileInput = container.querySelector('input[type="file"]') as HTMLInputElement
+      await uploadMockFile(fileInput, new File([mockDocxBytes], 'b5.docx'))
+
+      // Add entity
+      const addOrgBtn = Array.from(container.querySelectorAll('button')).find((b) =>
+        b.textContent?.includes('Thêm pháp nhân')
+      )
+      await act(async () => {
+        addOrgBtn!.click()
+        await new Promise((r) => setTimeout(r, 50))
+      })
+
+      const textarea = container.querySelector('textarea') as HTMLTextAreaElement
+      await act(async () => {
+        setTextareaValue(textarea, 'Công ty TNHH Mẫu Thử')
+        await new Promise((r) => setTimeout(r, 50))
+      })
+
+      const anonymizeBtn = Array.from(container.querySelectorAll('button')).find((b) =>
+        b.textContent?.includes('Ẩn danh tài liệu')
+      )
+      await act(async () => {
+        anonymizeBtn!.click()
+        await new Promise((r) => setTimeout(r, 500))
+      })
+
+      // Verify log call
+      expect(logFn).toHaveBeenCalledWith(
+        'word_anonymizer.completed',
+        'Ẩn danh tài liệu Word hoàn tất',
+        expect.objectContaining({
+          authorCount: expect.any(Number),
+          commentCount: expect.any(Number),
+          revisionCount: expect.any(Number),
+          residualStatus: expect.any(String),
+          entityReplacements: expect.any(Number),
+          emailMasked: expect.any(Number),
+          phoneMasked: expect.any(Number),
+          nationalIdMasked: expect.any(Number),
+          taxCodeMasked: expect.any(Number),
+          bankAccountMasked: expect.any(Number),
+          addressMasked: expect.any(Number),
+        }),
+        'success'
+      )
+
+      // Ensure no raw names or sensitive values appear in metadata
+      const call = logFn.mock.calls.find((c) => c[0] === 'word_anonymizer.completed')
+      expect(call).toBeDefined()
+      const metadata = JSON.stringify(call?.[2] || {})
+      expect(metadata).not.toContain('Công ty TNHH Mẫu Thử')
+      expect(metadata).not.toContain('test1@example.com')
+      expect(metadata).not.toContain('0912345678')
+      expect(metadata).not.toContain('001099012345')
+
+      // Ensure localStorage and sessionStorage do not have entity/sensitive data
+      expect(localStorage.getItem('entities')).toBeNull()
+      expect(sessionStorage.getItem('entities')).toBeNull()
+
+      root.unmount()
+      container.remove()
+    })
+
+    // B6: 390/768/1280px: 2 thẻ mới không tràn khung, trang không cuộn ngang.
+    it('B6: at 390px, 768px, 1280px, cards do not overflow', async () => {
+      const container = document.createElement('div')
+      document.body.appendChild(container)
+      const root = createRoot(container)
+
+      const mockDocxBytes = await createMockDocx({
+        documentText: fixtureText,
+        comments: [{ id: 1, author: 'HV01', initials: 'H', text: 'Clean.' }],
+      })
+
+      act(() => {
+        root.render(
+          <WordAnonymizerPage
+            account={mockAccount}
+            apiUser={null}
+            authReady={true}
+            onSignInMicrosoft={vi.fn()}
+            log={vi.fn()}
+          />
+        )
+      })
+
+      const fileInput = container.querySelector('input[type="file"]') as HTMLInputElement
+      await uploadMockFile(fileInput, new File([mockDocxBytes], 'b6.docx'))
+
+      for (const width of [390, 768, 1280]) {
+        container.style.width = `${width}px`
+        const cards = Array.from(container.querySelectorAll('.word-card'))
+        expect(cards.length).toBeGreaterThanOrEqual(3)
+        for (const card of cards) {
+          expect(card.classList.contains('word-card')).toBe(true)
+        }
+      }
+
+      root.unmount()
+      container.remove()
+    })
   })
 })

@@ -1,17 +1,27 @@
 import JSZip from 'jszip'
 import { OOXML_NAMESPACES } from './constants'
 import { foldSearchString } from './normalize'
+import { findSensitive, isMaskedValue, normalizePhone } from './sensitive'
 import {
+  CustomEntity,
   KnownIdentity,
   ResidualCategory,
   ResidualFinding,
   ResidualReport,
+  SensitiveKind,
 } from './types'
 import { parseXml } from './xml'
 
+export interface ScanResidualOptions {
+  maskKinds?: Partial<Record<SensitiveKind, boolean>>
+  keepValues?: string[]
+}
+
 export async function scanResidual(
   output: ArrayBuffer,
-  identities: KnownIdentity[]
+  identities: KnownIdentity[],
+  extraTargets: (string | CustomEntity)[] = [],
+  options: ScanResidualOptions = {}
 ): Promise<ResidualReport> {
   let zip: JSZip
   try {
@@ -30,12 +40,34 @@ export async function scanResidual(
     }
   }
 
-  // Collect target strings to search
+  const maskKinds: Record<SensitiveKind, boolean> = {
+    email: options.maskKinds?.email ?? true,
+    phone: options.maskKinds?.phone ?? true,
+    nationalId: options.maskKinds?.nationalId ?? true,
+    taxCode: options.maskKinds?.taxCode ?? true,
+    bankAccount: options.maskKinds?.bankAccount ?? true,
+    address: options.maskKinds?.address ?? true,
+  }
+  const keepValues = options.keepValues || []
+
+  // 1. Collect target strings from identities and extraTargets
   const rawTargets: string[] = []
   for (const ident of identities) {
     if (ident.author) rawTargets.push(ident.author)
     if (ident.email) rawTargets.push(ident.email)
     if (ident.userId) rawTargets.push(ident.userId)
+  }
+  for (const extra of extraTargets) {
+    if (!extra) continue
+    if (typeof extra === 'string') {
+      rawTargets.push(extra)
+    } else if (typeof extra === 'object' && Array.isArray((extra as CustomEntity).values)) {
+      for (const val of (extra as CustomEntity).values) {
+        if (typeof val === 'string') {
+          rawTargets.push(val)
+        }
+      }
+    }
   }
 
   // Deduplicate and filter out short strings (<= 2 chars)
@@ -55,6 +87,7 @@ export async function scanResidual(
   const findings: ResidualFinding[] = []
   const filePaths = Object.keys(zip.files).sort()
 
+  // 2. Search for explicit targets (identities & custom entities)
   for (const path of filePaths) {
     if (!path.endsWith('.xml') && !path.endsWith('.rels')) continue
     const file = zip.file(path)
@@ -77,15 +110,133 @@ export async function scanResidual(
     }
   }
 
+  // 3. Independent scan: run findSensitive on output text (document, headers, footers, comments, etc.) and .rels Target
+  for (const path of filePaths) {
+    const file = zip.file(path)
+    if (!file) continue
+
+    if (path.endsWith('.rels')) {
+      const xmlText = await file.async('string')
+      try {
+        const doc = parseXml(xmlText)
+        const rels = Array.from(doc.getElementsByTagNameNS(OOXML_NAMESPACES.rels, 'Relationship'))
+        for (const rel of rels) {
+          const target = rel.getAttribute('Target') || ''
+          if (target.toLowerCase().startsWith('mailto:')) {
+            const email = target.slice('mailto:'.length).trim()
+            if (
+              email &&
+              maskKinds.email &&
+              !keepValues.includes(email.toLowerCase()) &&
+              !isMaskedValue('email', email)
+            ) {
+              findings.push({
+                part: path,
+                matchedString: email,
+                count: 1,
+                category: 'metadata',
+              })
+            }
+          } else if (target.toLowerCase().startsWith('tel:')) {
+            const phone = target.slice('tel:'.length).trim()
+            const norm = normalizePhone(phone) || phone
+            if (
+              phone &&
+              maskKinds.phone &&
+              !keepValues.includes(norm) &&
+              !isMaskedValue('phone', phone)
+            ) {
+              findings.push({
+                part: path,
+                matchedString: phone,
+                count: 1,
+                category: 'metadata',
+              })
+            }
+          }
+        }
+      } catch {
+        // Ignore XML parse errors for corrupted rels
+      }
+    } else if (path.startsWith('word/') && path.endsWith('.xml') && path !== 'word/people.xml') {
+      const xmlText = await file.async('string')
+      try {
+        const doc = parseXml(xmlText)
+        // Collect text from w:t and w:instrText, explicitly SKIPPING w:delText
+        const tEls = Array.from(doc.getElementsByTagNameNS(OOXML_NAMESPACES.w, 't'))
+        const instrEls = Array.from(doc.getElementsByTagNameNS(OOXML_NAMESPACES.w, 'instrText'))
+
+        const textChunks: string[] = []
+        for (const el of [...tEls, ...instrEls]) {
+          const content = el.textContent || ''
+          if (content) textChunks.push(content)
+        }
+
+        const combinedText = textChunks.join(' ')
+        if (combinedText.trim()) {
+          const sensitiveMatches = findSensitive(combinedText)
+          for (const sMatch of sensitiveMatches) {
+            if (!maskKinds[sMatch.kind]) continue
+            if (keepValues.includes(sMatch.normalized)) continue
+            if (isMaskedValue(sMatch.kind, sMatch.value)) continue
+
+            findings.push({
+              part: path,
+              matchedString: sMatch.value,
+              count: 1,
+              category: path === 'word/comments.xml' ? 'comment-text' : 'body-text',
+            })
+          }
+        }
+      } catch {
+        // Ignore XML parse errors
+      }
+    } else if (path.startsWith('docProps/') && path.endsWith('.xml')) {
+      const xmlText = await file.async('string')
+      try {
+        const doc = parseXml(xmlText)
+        const allText = doc.documentElement?.textContent || ''
+        if (allText.trim()) {
+          const sensitiveMatches = findSensitive(allText)
+          for (const sMatch of sensitiveMatches) {
+            if (!maskKinds[sMatch.kind]) continue
+            if (keepValues.includes(sMatch.normalized)) continue
+            if (isMaskedValue(sMatch.kind, sMatch.value)) continue
+
+            findings.push({
+              part: path,
+              matchedString: sMatch.value,
+              count: 1,
+              category: 'metadata',
+            })
+          }
+        }
+      } catch {
+        // Ignore parse error
+      }
+    }
+  }
+
+  // Deduplicate findings with identical part, matchedString, and category
+  const uniqueFindings: ResidualFinding[] = []
+  const seen = new Set<string>()
+  for (const f of findings) {
+    const key = `${f.part}|${f.matchedString}|${f.category}`
+    if (!seen.has(key)) {
+      seen.add(key)
+      uniqueFindings.push(f)
+    }
+  }
+
   let status: 'PASS' | 'WARN' | 'FAIL' = 'PASS'
-  if (findings.length > 0) {
-    const hasMetadata = findings.some((f) => f.category === 'metadata')
+  if (uniqueFindings.length > 0) {
+    const hasMetadata = uniqueFindings.some((f) => f.category === 'metadata')
     status = hasMetadata ? 'FAIL' : 'WARN'
   }
 
   return {
     status,
-    findings,
+    findings: uniqueFindings,
   }
 }
 
@@ -115,16 +266,26 @@ function determineCategory(
 
   try {
     const doc = parseXml(rawXml)
-    // Group w:t, w:delText, w:instrText into text content
-    const textEls = [
-      ...Array.from(doc.getElementsByTagNameNS(OOXML_NAMESPACES.w, 't')),
-      ...Array.from(doc.getElementsByTagNameNS(OOXML_NAMESPACES.w, 'delText')),
-      ...Array.from(doc.getElementsByTagNameNS(OOXML_NAMESPACES.w, 'instrText')),
-    ]
+    const tEls = Array.from(doc.getElementsByTagNameNS(OOXML_NAMESPACES.w, 't'))
+    const delTextEls = Array.from(
+      doc.getElementsByTagNameNS(OOXML_NAMESPACES.w, 'delText')
+    )
+    const instrEls = Array.from(
+      doc.getElementsByTagNameNS(OOXML_NAMESPACES.w, 'instrText')
+    )
 
-    let allTextCombined = ''
-    for (const el of textEls) {
-      allTextCombined += ' ' + (el.textContent || '')
+    let tAndInstrText = ''
+    for (const el of [...tEls, ...instrEls]) {
+      tAndInstrText += ' ' + (el.textContent || '')
+    }
+
+    let delTextCombined = ''
+    for (const el of delTextEls) {
+      delTextCombined += ' ' + (el.textContent || '')
+    }
+
+    // Clear all text elements to see if target appears in XML structure/attributes
+    for (const el of [...tEls, ...delTextEls, ...instrEls]) {
       el.textContent = ''
     }
 
@@ -135,9 +296,14 @@ function determineCategory(
       return 'metadata'
     }
 
-    const foldedOnlyText = foldSearchString(allTextCombined)
-    if (foldedOnlyText.includes(foldedTarget)) {
+    const foldedTAndInstr = foldSearchString(tAndInstrText)
+    if (foldedTAndInstr.includes(foldedTarget)) {
       return path === 'word/comments.xml' ? 'comment-text' : 'body-text'
+    }
+
+    const foldedDelText = foldSearchString(delTextCombined)
+    if (foldedDelText.includes(foldedTarget)) {
+      return 'deleted-text'
     }
   } catch {
     return 'metadata'

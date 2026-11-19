@@ -1,18 +1,110 @@
 import type JSZip from 'jszip'
 import { OOXML_NAMESPACES } from './constants'
 import { normalizeString } from './normalize'
-import { IdentityKind, InspectionReport, KnownIdentity } from './types'
+import { findSensitive, normalizePhone } from './sensitive'
+import { findEntityMatches } from './textReplace'
+import {
+  CustomEntity,
+  DeletedTextHit,
+  IdentityKind,
+  InspectionReport,
+  KnownIdentity,
+  SensitiveItem,
+  SensitiveKind,
+} from './types'
 import { parseXml } from './xml'
 import { loadSafeDocx } from './zip'
 
 const EMAIL_REGEX = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/
 
-export async function inspectDocx(input: ArrayBuffer): Promise<InspectionReport> {
+export async function inspectDocx(
+  input: ArrayBuffer,
+  entities: CustomEntity[] = []
+): Promise<InspectionReport> {
   const zip = await loadSafeDocx(input)
-  return inspectLoadedDocx(zip)
+  return inspectLoadedDocx(zip, entities)
 }
 
-export async function inspectLoadedDocx(zip: JSZip): Promise<InspectionReport> {
+export async function inspectDeletedText(
+  input: ArrayBuffer | JSZip,
+  entities: CustomEntity[] = []
+): Promise<DeletedTextHit[]> {
+  const isZip = typeof (input as JSZip).file === 'function'
+  const zip = isZip ? (input as JSZip) : await loadSafeDocx(input as ArrayBuffer)
+  return scanDeletedText(zip, entities)
+}
+
+function getDirectParagraphTNodes(p: Element): Element[] {
+  const allT = Array.from(p.getElementsByTagNameNS(OOXML_NAMESPACES.w, 't'))
+  return allT.filter((tNode) => {
+    let curr = tNode.parentElement
+    while (curr && curr !== p) {
+      if (curr.localName === 'p' && curr.namespaceURI === OOXML_NAMESPACES.w) {
+        return false
+      }
+      curr = curr.parentElement
+    }
+    return true
+  })
+}
+
+async function scanDeletedText(
+  zip: JSZip,
+  entities: CustomEntity[] = []
+): Promise<DeletedTextHit[]> {
+  const hits: DeletedTextHit[] = []
+
+  const entries = Object.keys(zip.files).sort()
+  for (const path of entries) {
+    if (!path.startsWith('word/') || !path.endsWith('.xml')) continue
+    const file = zip.file(path)
+    if (!file) continue
+
+    const xmlText = await file.async('string')
+    if (!xmlText.includes('delText')) continue
+
+    const doc = parseXml(xmlText)
+    const delNodes = Array.from(doc.getElementsByTagNameNS(OOXML_NAMESPACES.w, 'delText'))
+    if (delNodes.length === 0) continue
+
+    const combinedDelText = delNodes.map((n) => n.textContent || '').join(' ')
+    if (!combinedDelText.trim()) continue
+
+    // Sensitive matches
+    const sensitiveMatches = findSensitive(combinedDelText)
+    for (const sm of sensitiveMatches) {
+      hits.push({
+        kind: sm.kind,
+        type: 'sensitive',
+        text: sm.value,
+        count: 1,
+        part: path,
+      })
+    }
+
+    // Entity matches
+    if (entities.length > 0) {
+      const entityMatches = findEntityMatches(combinedDelText, entities)
+      for (const em of entityMatches) {
+        hits.push({
+          kind: 'entity',
+          type: 'entity',
+          label: em.replacementText,
+          text: combinedDelText.slice(em.start, em.end),
+          count: 1,
+          part: path,
+        })
+      }
+    }
+  }
+
+  return hits
+}
+
+export async function inspectLoadedDocx(
+  zip: JSZip,
+  entities: CustomEntity[] = []
+): Promise<InspectionReport> {
   const identitiesMap = new Map<string, KnownIdentity>()
   let commentCount = 0
   let revisionCount = 0
@@ -122,7 +214,10 @@ export async function inspectLoadedDocx(zip: JSZip): Promise<InspectionReport> {
     for (let i = 0; i < hyperlinkEls.length; i++) {
       const hl = hyperlinkEls[i]
       const rId =
-        hl.getAttributeNS('http://schemas.openxmlformats.org/officeDocument/2006/relationships', 'id') ||
+        hl.getAttributeNS(
+          'http://schemas.openxmlformats.org/officeDocument/2006/relationships',
+          'id'
+        ) ||
         hl.getAttribute('r:id') ||
         hl.getAttribute('id')
 
@@ -138,7 +233,6 @@ export async function inspectLoadedDocx(zip: JSZip): Promise<InspectionReport> {
         }
         displayText = displayText.replace(/^@/, '').trim()
 
-        // Match with known identities by email or display text
         let matched = false
         for (const ident of identitiesMap.values()) {
           if (ident.email && ident.email.toLowerCase() === email) {
@@ -153,7 +247,6 @@ export async function inspectLoadedDocx(zip: JSZip): Promise<InspectionReport> {
         }
 
         if (!matched) {
-          // Create new mentioned identity
           const authorName = displayText || email
           addIdentity(authorName, 'word/comments.xml', 'mentioned', { email })
         }
@@ -288,7 +381,79 @@ export async function inspectLoadedDocx(zip: JSZip): Promise<InspectionReport> {
     }
   }
 
-  // 5. Collect warnings
+  // 4c. Scan for sensitive data in text parts and .rels
+  const sensitiveMap = new Map<string, SensitiveItem>()
+
+  const addSensitiveFinding = (kind: SensitiveKind, value: string, normalized: string) => {
+    const key = `${kind}:${normalized}`
+    const existing = sensitiveMap.get(key)
+    if (existing) {
+      existing.count++
+    } else {
+      sensitiveMap.set(key, {
+        kind,
+        value,
+        normalized,
+        count: 1,
+      })
+    }
+  }
+
+  for (const path of entries) {
+    if (path.startsWith('word/') && path.endsWith('.xml') && path !== 'word/people.xml') {
+      const file = zip.file(path)
+      if (!file) continue
+      const xmlText = await file.async('string')
+      const doc = parseXml(xmlText)
+      const paragraphs = Array.from(doc.getElementsByTagNameNS(OOXML_NAMESPACES.w, 'p'))
+
+      for (const p of paragraphs) {
+        const tNodes = getDirectParagraphTNodes(p)
+        if (tNodes.length === 0) continue
+        const paraText = tNodes.map((n) => n.textContent || '').join('')
+        if (!paraText.trim()) continue
+
+        const matches = findSensitive(paraText)
+        for (const m of matches) {
+          addSensitiveFinding(m.kind, m.value, m.normalized)
+        }
+      }
+    }
+
+    if (path.endsWith('.rels')) {
+      const file = zip.file(path)
+      if (!file) continue
+      const xmlText = await file.async('string')
+      const doc = parseXml(xmlText)
+      const relEls = doc.getElementsByTagNameNS(OOXML_NAMESPACES.rels, 'Relationship')
+
+      for (let i = 0; i < relEls.length; i++) {
+        const target = relEls[i].getAttribute('Target') || ''
+        if (target.toLowerCase().startsWith('mailto:')) {
+          const email = target.slice('mailto:'.length).trim()
+          if (email && !email.toLowerCase().endsWith('@anonymized.invalid')) {
+            addSensitiveFinding('email', email, email.toLowerCase())
+          }
+        } else if (target.toLowerCase().startsWith('tel:')) {
+          const phone = target.slice('tel:'.length).trim()
+          const normalized = normalizePhone(phone)
+          if (normalized) {
+            addSensitiveFinding('phone', phone, normalized)
+          }
+        }
+      }
+    }
+  }
+
+  // 4d. Scan deleted text
+  const deletedTextHits = await scanDeletedText(zip, entities)
+  if (deletedTextHits.length > 0) {
+    warnings.push(
+      'Tài liệu có chữ đã xoá trong Track Changes chứa thông tin cần che. Công cụ không xử lý phần này — hãy Accept/Reject All Changes trong Word trước khi upload.'
+    )
+  }
+
+  // 5. Collect other warnings
   let hasEmbeddings = false
   for (const path of entries) {
     if (path.startsWith('word/embeddings/')) {
@@ -356,6 +521,7 @@ export async function inspectLoadedDocx(zip: JSZip): Promise<InspectionReport> {
   }
 
   const identities = Array.from(identitiesMap.values())
+  const sensitive = Array.from(sensitiveMap.values())
 
   return {
     identities,
@@ -367,5 +533,7 @@ export async function inspectLoadedDocx(zip: JSZip): Promise<InspectionReport> {
     warnings,
     hasMacro: false,
     hasEmbeddings,
+    sensitive,
+    deletedTextHits,
   }
 }

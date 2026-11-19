@@ -15,6 +15,9 @@ import {
   Tag,
   AtSign,
   FileCheck2,
+  Building2,
+  Plus,
+  EyeOff,
 } from 'lucide-react'
 import type { ApiUser } from '../api'
 import {
@@ -23,6 +26,9 @@ import {
   scanResidual,
   buildDefaultMapping,
   validateMapping,
+  validateEntities,
+  inspectDeletedText,
+  maskSensitive,
   AnonymizerError,
   type InspectionReport,
   type IdentityMapping,
@@ -30,6 +36,10 @@ import {
   type AnonymizeResult,
   type ResidualReport,
   type CustomPropsPolicy,
+  type CustomEntity,
+  type EntityKind,
+  type SensitiveKind,
+  type DeletedTextHit,
 } from './core'
 
 export interface WordAnonymizerPageProps {
@@ -51,14 +61,33 @@ const DEFAULT_OPTIONS: AnonymizeOptions = {
   replaceNamesInCommentText: false,
   scrubDocProps: true,
   customPropsPolicy: 'keep-sensitivity-labels',
+  customEntities: [],
+  maskKinds: {
+    email: true,
+    phone: true,
+    nationalId: true,
+    taxCode: true,
+    bankAccount: true,
+    address: true,
+  },
+  keepValues: [],
 }
+
+const SENSITIVE_KIND_LABELS: { kind: SensitiveKind; label: string }[] = [
+  { kind: 'email', label: 'Email' },
+  { kind: 'phone', label: 'Số điện thoại' },
+  { kind: 'nationalId', label: 'CCCD/CMND' },
+  { kind: 'taxCode', label: 'Mã số thuế' },
+  { kind: 'bankAccount', label: 'Số tài khoản' },
+  { kind: 'address', label: 'Địa chỉ' },
+]
 
 function FixedReminderCallout() {
   return (
     <div className="fixed-reminder-callout">
       <Info size={18} />
       <span>
-        Kiểm tra lại nội dung tài liệu trước khi upload — công cụ không ẩn danh tên người trong thân văn bản.{' '}
+        Kiểm tra lại nội dung trước khi upload — công cụ chỉ thay các tên bạn khai báo và thông tin nhạy cảm nhận diện được theo mẫu; chữ đã xoá trong Track Changes không được xử lý.{' '}
         <a href="/huong-dan/#word" target="_blank" rel="noopener" className="reminder-help-link">Xem hướng dẫn</a>
       </span>
     </div>
@@ -80,6 +109,17 @@ export default function WordAnonymizerPage({
 
   const [inspection, setInspection] = useState<InspectionReport | null>(null)
   const [mapping, setMapping] = useState<IdentityMapping>({})
+  const [entities, setEntities] = useState<CustomEntity[]>([])
+  const [maskKinds, setMaskKinds] = useState<Record<SensitiveKind, boolean>>({
+    email: true,
+    phone: true,
+    nationalId: true,
+    taxCode: true,
+    bankAccount: true,
+    address: true,
+  })
+  const [keepValues, setKeepValues] = useState<string[]>([])
+  const [deletedHits, setDeletedHits] = useState<DeletedTextHit[]>([])
   const [options, setOptions] = useState<AnonymizeOptions>(DEFAULT_OPTIONS)
 
   const [anonymizeResult, setAnonymizeResult] = useState<AnonymizeResult | null>(null)
@@ -113,10 +153,52 @@ export default function WordAnonymizerPage({
     }
   }, [downloadBlobUrl])
 
+  // Track changes deleted text inspection
+  useEffect(() => {
+    if (!fileBuffer) {
+      return
+    }
+    let cancelled = false
+    inspectDeletedText(fileBuffer, entities)
+      .then((hits) => {
+        if (!cancelled) setDeletedHits(hits)
+      })
+      .catch(() => {
+        if (!cancelled) setDeletedHits([])
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [fileBuffer, entities])
+
   const validation = useMemo(() => {
     if (!inspection) return { valid: true, errors: [] }
     return validateMapping(mapping, inspection.identities)
   }, [mapping, inspection])
+
+  const entityValidation = useMemo(() => {
+    return validateEntities(entities, mapping, inspection?.identities || [])
+  }, [entities, mapping, inspection])
+
+  const getEntityError = (entity: CustomEntity): string | null => {
+    if (!entity.label.trim()) return 'Nhãn thực thể không được để trống.'
+    const lower = entity.label.trim().toLowerCase()
+    if (entities.filter((e) => e.label.trim().toLowerCase() === lower).length > 1) {
+      return `Nhãn '${entity.label}' bị trùng lặp.`
+    }
+    const isParticipant = Object.values(mapping).some(
+      (m) => m.label && m.label.trim().toLowerCase() === lower
+    )
+    if (isParticipant) {
+      return `Nhãn '${entity.label}' trùng với nhãn người tham gia.`
+    }
+    for (const val of entity.values) {
+      if (val.trim().length < 2) {
+        return `Giá trị '${val}' phải có ít nhất 2 ký tự.`
+      }
+    }
+    return null
+  }
 
   const resetAll = () => {
     if (downloadBlobUrl) {
@@ -127,6 +209,17 @@ export default function WordAnonymizerPage({
     setFileBaseTitle('')
     setInspection(null)
     setMapping({})
+    setEntities([])
+    setMaskKinds({
+      email: true,
+      phone: true,
+      nationalId: true,
+      taxCode: true,
+      bankAccount: true,
+      address: true,
+    })
+    setKeepValues([])
+    setDeletedHits([])
     setOptions(DEFAULT_OPTIONS)
     setAnonymizeResult(null)
     setResidualReport(null)
@@ -156,6 +249,7 @@ export default function WordAnonymizerPage({
       setFileBuffer(buffer)
       setInspection(report)
       setMapping(initialMapping)
+      setDeletedHits(report.deletedTextHits || [])
     } catch (err: unknown) {
       let msg = 'Không thể kiểm tra file DOCX này.'
       let errCode = 'UNKNOWN'
@@ -223,17 +317,110 @@ export default function WordAnonymizerPage({
     })
   }
 
+  const handleAddEntity = (kind: EntityKind) => {
+    resetStaleResults()
+    const isOrg = kind === 'organization'
+    const count = entities.filter((e) => e.kind === kind).length
+    const defaultLabel = isOrg
+      ? `Pháp nhân ${String.fromCharCode(65 + count)}`
+      : `Người đại diện ${count + 1}`
+    const newEntity: CustomEntity = {
+      id: `${kind}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      kind,
+      label: defaultLabel,
+      values: [],
+    }
+    setEntities((prev) => [...prev, newEntity])
+  }
+
+  const handleUpdateEntityLabel = (id: string, label: string) => {
+    resetStaleResults()
+    setEntities((prev) =>
+      prev.map((e) => (e.id === id ? { ...e, label } : e))
+    )
+  }
+
+  const handleUpdateEntityValues = (id: string, text: string) => {
+    resetStaleResults()
+    const lines = text
+      .split('\n')
+      .map((l) => l.trim())
+      .filter(Boolean)
+    setEntities((prev) =>
+      prev.map((e) => (e.id === id ? { ...e, values: lines } : e))
+    )
+  }
+
+  const handleRemoveEntity = (id: string) => {
+    resetStaleResults()
+    setEntities((prev) => prev.filter((e) => e.id !== id))
+  }
+
+  const handleToggleMaskKind = (kind: SensitiveKind) => {
+    resetStaleResults()
+    setMaskKinds((prev) => ({ ...prev, [kind]: !prev[kind] }))
+  }
+
+  const handleToggleKeepValue = (normalized: string) => {
+    resetStaleResults()
+    setKeepValues((prev) =>
+      prev.includes(normalized) ? prev.filter((v) => v !== normalized) : [...prev, normalized]
+    )
+  }
+
+  interface AggregatedSensitiveItem {
+    kind: SensitiveKind
+    normalized: string
+    sampleValue: string
+    maskedPreview: string
+    count: number
+  }
+
+  const detectedSensitiveGrouped = useMemo(() => {
+    if (!inspection?.sensitive) return []
+    const map = new Map<string, AggregatedSensitiveItem>()
+    for (const item of inspection.sensitive) {
+      const key = `${item.kind}:${item.normalized}`
+      const existing = map.get(key)
+      if (existing) {
+        existing.count++
+      } else {
+        map.set(key, {
+          kind: item.kind,
+          normalized: item.normalized,
+          sampleValue: item.value,
+          maskedPreview: maskSensitive(item.kind, item.value, item.normalized),
+          count: 1,
+        })
+      }
+    }
+    return Array.from(map.values())
+  }, [inspection])
+
   const handleAnonymize = async () => {
-    if (!fileBuffer || !inspection || !validation.valid) return
+    if (!fileBuffer || !inspection || !validation.valid || !entityValidation.valid) return
 
     setBusy(true)
     setErrorMessage(null)
     setConfigChangedAfterRun(false)
 
     try {
-      const result = await anonymizeDocx(fileBuffer, mapping, options)
+      const anonymizeOpts: AnonymizeOptions = {
+        ...options,
+        customEntities: entities,
+        maskKinds,
+        keepValues,
+      }
+      const result = await anonymizeDocx(fileBuffer, mapping, anonymizeOpts)
       const outArrayBuffer = await result.blob.arrayBuffer()
-      const residuals = await scanResidual(outArrayBuffer, inspection.identities)
+      const sensitiveTargets = [
+        ...detectedSensitiveGrouped
+          .filter((s) => maskKinds[s.kind] && !keepValues.includes(s.normalized))
+          .map((s) => s.sampleValue),
+        ...deletedHits.map((h) => h.text).filter(Boolean) as string[],
+      ]
+      const extraTargets = [...entities, ...sensitiveTargets]
+      const residuals = await scanResidual(outArrayBuffer, inspection.identities, extraTargets)
 
       setAnonymizeResult(result)
       setResidualReport(residuals)
@@ -252,6 +439,13 @@ export default function WordAnonymizerPage({
           commentCount: inspection.stats.commentCount,
           revisionCount: inspection.stats.revisionCount,
           residualStatus: residuals.status,
+          entityReplacements: result.report.replacements.entities,
+          emailMasked: result.report.replacements.byKind.email || 0,
+          phoneMasked: result.report.replacements.byKind.phone || 0,
+          nationalIdMasked: result.report.replacements.byKind.nationalId || 0,
+          taxCodeMasked: result.report.replacements.byKind.taxCode || 0,
+          bankAccountMasked: result.report.replacements.byKind.bankAccount || 0,
+          addressMasked: result.report.replacements.byKind.address || 0,
         },
         'success'
       )
@@ -282,7 +476,20 @@ export default function WordAnonymizerPage({
   }
 
   const handleDownloadMappingJson = () => {
-    const jsonText = JSON.stringify(mapping, null, 2)
+    const mappingExport = {
+      identities: mapping,
+      entities: entities.reduce<Record<string, string[]>>((acc, e) => {
+        acc[e.label] = e.values
+        return acc
+      }, {}),
+      masked: detectedSensitiveGrouped
+        .filter((s) => maskKinds[s.kind] && !keepValues.includes(s.normalized))
+        .reduce<Record<string, string>>((acc, s) => {
+          acc[s.maskedPreview] = s.sampleValue
+          return acc
+        }, {}),
+    }
+    const jsonText = JSON.stringify(mappingExport, null, 2)
     const jsonBlob = new Blob([jsonText], { type: 'application/json' })
     const jsonUrl = URL.createObjectURL(jsonBlob)
     const downloadLink = document.createElement('a')
@@ -455,6 +662,21 @@ export default function WordAnonymizerPage({
               </div>
             )}
 
+            {/* Entity validation errors banner */}
+            {!entityValidation.valid && (
+              <div className="word-alert error">
+                <AlertCircle size={18} />
+                <div>
+                  <b>Lỗi cấu hình pháp nhân & người đại diện:</b>
+                  <ul style={{ margin: '4px 0 0 18px', padding: 0 }}>
+                    {entityValidation.errors.map((errText, idx) => (
+                      <li key={idx}>{errText}</li>
+                    ))}
+                  </ul>
+                </div>
+              </div>
+            )}
+
             {/* Preview Tables */}
             {/* Group 1: Người góp ý (contributor) */}
             {contributorIdentities.length > 0 && (
@@ -576,6 +798,205 @@ export default function WordAnonymizerPage({
               </div>
             )}
 
+            {/* Card 1: Pháp nhân & người đại diện */}
+            <div className="word-card">
+              <div className="word-card-header">
+                <div className="word-card-title">
+                  <Building2 size={18} />
+                  <span>Pháp nhân & người đại diện</span>
+                </div>
+              </div>
+
+              <p className="word-card-note">
+                Công cụ chỉ thay đúng các tên bạn nhập (không phân biệt hoa/thường, giữ dấu). Hãy nhập đủ các cách viết: tên viết tắt, tên tiếng Anh…
+              </p>
+
+              {/* Group: Pháp nhân */}
+              <div className="entity-group">
+                <div className="entity-group-header">
+                  <h4>Pháp nhân ({entities.filter((e) => e.kind === 'organization').length})</h4>
+                  <button
+                    type="button"
+                    className="secondary small"
+                    onClick={() => handleAddEntity('organization')}
+                  >
+                    <Plus size={14} /> Thêm pháp nhân
+                  </button>
+                </div>
+
+                {entities.filter((e) => e.kind === 'organization').map((entity) => {
+                  const err = getEntityError(entity)
+                  return (
+                    <div key={entity.id} className="entity-row">
+                      <div className="entity-inputs">
+                        <div className="entity-input-col">
+                          <label>Tên gốc (mỗi dòng một cách viết):</label>
+                          <textarea
+                            rows={2}
+                            value={entity.values.join('\n')}
+                            onChange={(e) => handleUpdateEntityValues(entity.id, e.target.value)}
+                            placeholder="VD: Công ty TNHH Mẫu Thử&#10;Mau Thu Co., Ltd"
+                          />
+                        </div>
+                        <div className="entity-input-col entity-label-col">
+                          <label>Nhãn thay thế:</label>
+                          <input
+                            type="text"
+                            value={entity.label}
+                            onChange={(e) => handleUpdateEntityLabel(entity.id, e.target.value)}
+                            placeholder="Nhãn thay thế"
+                          />
+                        </div>
+                        <button
+                          type="button"
+                          className="danger-icon-btn"
+                          title="Xoá dòng"
+                          onClick={() => handleRemoveEntity(entity.id)}
+                        >
+                          <Trash2 size={16} />
+                        </button>
+                      </div>
+                      {err && <div className="entity-error-msg">{err}</div>}
+                    </div>
+                  )
+                })}
+              </div>
+
+              {/* Group: Người đại diện */}
+              <div className="entity-group" style={{ marginTop: '16px' }}>
+                <div className="entity-group-header">
+                  <h4>Người đại diện ({entities.filter((e) => e.kind === 'representative').length})</h4>
+                  <button
+                    type="button"
+                    className="secondary small"
+                    onClick={() => handleAddEntity('representative')}
+                  >
+                    <Plus size={14} /> Thêm người đại diện
+                  </button>
+                </div>
+
+                {entities.filter((e) => e.kind === 'representative').map((entity) => {
+                  const err = getEntityError(entity)
+                  return (
+                    <div key={entity.id} className="entity-row">
+                      <div className="entity-inputs">
+                        <div className="entity-input-col">
+                          <label>Tên gốc (mỗi dòng một cách viết):</label>
+                          <textarea
+                            rows={2}
+                            value={entity.values.join('\n')}
+                            onChange={(e) => handleUpdateEntityValues(entity.id, e.target.value)}
+                            placeholder="VD: Nguyễn Văn A&#10;Nguyen Van A"
+                          />
+                        </div>
+                        <div className="entity-input-col entity-label-col">
+                          <label>Nhãn thay thế:</label>
+                          <input
+                            type="text"
+                            value={entity.label}
+                            onChange={(e) => handleUpdateEntityLabel(entity.id, e.target.value)}
+                            placeholder="Nhãn thay thế"
+                          />
+                        </div>
+                        <button
+                          type="button"
+                          className="danger-icon-btn"
+                          title="Xoá dòng"
+                          onClick={() => handleRemoveEntity(entity.id)}
+                        >
+                          <Trash2 size={16} />
+                        </button>
+                      </div>
+                      {err && <div className="entity-error-msg">{err}</div>}
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+
+            {/* Card 2: Thông tin nhạy cảm phát hiện được */}
+            <div className="word-card">
+              <div className="word-card-header">
+                <div className="word-card-title">
+                  <EyeOff size={18} />
+                  <span>Thông tin nhạy cảm phát hiện được</span>
+                </div>
+              </div>
+
+              <p className="word-card-note">
+                Danh sách được nhận diện theo mẫu, có thể sót hoặc nhận nhầm. Hãy xem lại trước khi chạy.
+              </p>
+
+              {/* 6 toggles */}
+              <div className="sensitive-toggles-grid">
+                {SENSITIVE_KIND_LABELS.map(({ kind, label }) => (
+                  <label key={kind} className="sensitive-toggle-item">
+                    <input
+                      type="checkbox"
+                      checked={maskKinds[kind]}
+                      onChange={() => handleToggleMaskKind(kind)}
+                    />
+                    <span>{label}</span>
+                  </label>
+                ))}
+              </div>
+
+              {detectedSensitiveGrouped.length === 0 ? (
+                <div className="sensitive-empty-msg">
+                  Không tìm thấy thông tin nhạy cảm theo mẫu
+                </div>
+              ) : (
+                <div className="sensitive-items-container">
+                  {SENSITIVE_KIND_LABELS.map(({ kind, label }) => {
+                    const items = detectedSensitiveGrouped.filter((s) => s.kind === kind)
+                    if (items.length === 0) return null
+                    return (
+                      <div key={kind} className="sensitive-kind-group">
+                        <div className="sensitive-kind-title">
+                          <b>{label}</b> ({items.length})
+                        </div>
+                        <div className="word-table-wrapper">
+                          <table className="word-table">
+                            <thead>
+                              <tr>
+                                <th>Giá trị gốc</th>
+                                <th>Sau khi che (xem trước)</th>
+                                <th>Số lần</th>
+                                <th style={{ width: '80px', textAlign: 'center' }}>Che</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {items.map((item) => (
+                                <tr key={item.normalized}>
+                                  <td>
+                                    <code>{item.sampleValue}</code>
+                                  </td>
+                                  <td>
+                                    <code>{item.maskedPreview}</code>
+                                  </td>
+                                  <td>
+                                    <b>{item.count}</b>
+                                  </td>
+                                  <td style={{ textAlign: 'center' }}>
+                                    <input
+                                      type="checkbox"
+                                      checked={!keepValues.includes(item.normalized)}
+                                      onChange={() => handleToggleKeepValue(item.normalized)}
+                                      title="Che giá trị này"
+                                    />
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+            </div>
+
             {/* Options */}
             <div className="word-card">
               <div className="word-card-header">
@@ -687,17 +1108,60 @@ export default function WordAnonymizerPage({
                 </div>
               )}
 
+              {/* Deleted text warning */}
+              {deletedHits.length > 0 && (
+                <div className="word-alert warning" style={{ marginTop: '12px' }}>
+                  <AlertTriangle size={18} />
+                  <div>
+                    <b>Cảnh báo: Phát hiện thông tin trong phần chữ đã xoá (Track Changes)</b>
+                    <p style={{ margin: '4px 0 0', fontSize: '13px' }}>
+                      Các nội dung sau nằm trong phần chữ đã xoá và sẽ <strong>KHÔNG</strong> được che hay thay thế:
+                    </p>
+                    <ul style={{ margin: '6px 0 0 18px', padding: 0 }}>
+                      {deletedHits.map((h, idx) => (
+                        <li key={idx}>
+                          {h.type === 'entity'
+                            ? `Pháp nhân/người đại diện "${h.label}": "${h.text}" (${h.part})`
+                            : `Thông tin nhạy cảm (${h.kind}): "${h.text}" (${h.part})`}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                </div>
+              )}
+
               {/* Anonymize Action */}
               <div className="word-actions-row" style={{ marginTop: '12px' }}>
                 <button
                   className="primary large"
                   onClick={handleAnonymize}
-                  disabled={busy || !validation.valid}
+                  disabled={busy || !validation.valid || !entityValidation.valid}
                 >
                   <ShieldCheck size={18} /> {busy ? 'Đang xử lý...' : 'Ẩn danh tài liệu'}
                 </button>
               </div>
             </div>
+
+            {/* Replacements Summary */}
+            {anonymizeResult && (
+              <div className="word-card">
+                <div className="word-card-header">
+                  <div className="word-card-title">
+                    <FileCheck2 size={18} />
+                    <span>Kết quả thay thế & che dữ liệu</span>
+                  </div>
+                </div>
+                <div className="word-replacements-summary">
+                  Đã thay {anonymizeResult.report.replacements.entities} tên pháp nhân/người đại diện; che{' '}
+                  {anonymizeResult.report.replacements.byKind.email || 0} email,{' '}
+                  {anonymizeResult.report.replacements.byKind.phone || 0} số điện thoại,{' '}
+                  {anonymizeResult.report.replacements.byKind.nationalId || 0} CCCD/CMND,{' '}
+                  {anonymizeResult.report.replacements.byKind.taxCode || 0} MST,{' '}
+                  {anonymizeResult.report.replacements.byKind.bankAccount || 0} số tài khoản,{' '}
+                  {anonymizeResult.report.replacements.byKind.address || 0} địa chỉ
+                </div>
+              </div>
+            )}
 
             {/* Residual Report */}
             {residualReport && (
