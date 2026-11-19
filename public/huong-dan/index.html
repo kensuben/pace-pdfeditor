@@ -1,0 +1,305 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#0047af">
+<title>Hướng dẫn sử dụng PDF Workspace</title>
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<style>
+  :root {
+    --bg: #f5f7fb; --surface: #ffffff; --ink: #0c2340; --muted: #5b6b82; --line: #dde3ec;
+    --brand: #0047af; --brand-soft: #e8f0fc; --mark: #f57c00;
+    --ok: #1e7d4f; --ok-soft: #e7f5ee; --warn: #9a6200; --warn-soft: #fff4dc; --bad: #b42318; --bad-soft: #fdecea;
+    --radius: 12px;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0e1522; --surface: #162033; --ink: #e8eef8; --muted: #a3b1c6; --line: #2a3850;
+      --brand: #7fb0ff; --brand-soft: #1b2c4a; --ok: #6fd3a0; --ok-soft: #12301f; --warn: #f2c35b; --warn-soft: #33290f; --bad: #ff8a80; --bad-soft: #3a1714;
+    }
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 16px/1.65 "Be Vietnam Pro", "Segoe UI", system-ui, -apple-system, Roboto, Arial, sans-serif; }
+  a { color: var(--brand); }
+  img { max-width: 100%; height: auto; display: block; }
+  .wrap { max-width: 1040px; margin: 0 auto; padding: 0 16px; }
+  header.hero { background: linear-gradient(135deg, #0c2340, #0047af); color: #fff; padding: 40px 0 32px; }
+  header.hero h1 { margin: 0 0 8px; font-size: clamp(26px, 4vw, 38px); line-height: 1.2; }
+  header.hero p { margin: 0; max-width: 720px; opacity: .92; }
+  .hero .back { display: inline-block; margin-top: 18px; color: #fff; font-weight: 600; text-decoration: none; border: 1px solid rgba(255,255,255,.5); border-radius: 999px; padding: 6px 16px; }
+  nav.toc { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 16px 20px; margin: -20px 0 24px; position: relative; box-shadow: 0 6px 20px rgba(12,35,64,.08); }
+  nav.toc b { display: block; margin-bottom: 6px; }
+  nav.toc ol { margin: 0; padding-left: 20px; columns: 2; column-gap: 32px; }
+  @media (max-width: 640px) { nav.toc ol { columns: 1; } }
+  section { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 24px; margin-bottom: 24px; }
+  section h2 { margin: 0 0 12px; font-size: 24px; line-height: 1.3; }
+  section h3 { margin: 24px 0 8px; font-size: 18px; }
+  .lead { color: var(--muted); margin-top: 0; }
+  figure { margin: 16px 0; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; background: var(--bg); }
+  figcaption { padding: 10px 14px; font-size: 14px; color: var(--muted); border-top: 1px solid var(--line); background: var(--surface); }
+  .legend { list-style: none; padding: 0; margin: 8px 0 0; display: grid; gap: 8px; }
+  .legend li { display: grid; grid-template-columns: 28px 1fr; gap: 10px; align-items: start; }
+  .n { width: 26px; height: 26px; border-radius: 50%; background: var(--mark); color: #fff; font-weight: 700; font-size: 14px; display: inline-flex; align-items: center; justify-content: center; }
+  .steps { counter-reset: s; list-style: none; padding: 0; margin: 12px 0; }
+  .steps > li { counter-increment: s; position: relative; padding-left: 44px; margin-bottom: 14px; }
+  .steps > li::before { content: counter(s); position: absolute; left: 0; top: 0; width: 30px; height: 30px; border-radius: 8px; background: var(--brand); color: #fff; font-weight: 700; display: flex; align-items: center; justify-content: center; }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  @media (max-width: 760px) { .grid2 { grid-template-columns: 1fr; } }
+  .note { border-radius: 10px; padding: 12px 16px; margin: 14px 0; border-left: 4px solid; }
+  .note.info { background: var(--brand-soft); border-color: var(--brand); }
+  .note.ok { background: var(--ok-soft); border-color: var(--ok); }
+  .note.warn { background: var(--warn-soft); border-color: var(--warn); }
+  .note.bad { background: var(--bad-soft); border-color: var(--bad); }
+  .note b:first-child { display: block; margin-bottom: 2px; }
+  table { width: 100%; border-collapse: collapse; font-size: 15px; }
+  th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { background: var(--bg); }
+  .table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 10px; }
+  .pill { display: inline-block; font-weight: 700; font-size: 13px; padding: 2px 10px; border-radius: 999px; }
+  .pill.ok { background: var(--ok-soft); color: var(--ok); }
+  .pill.warn { background: var(--warn-soft); color: var(--warn); }
+  .pill.bad { background: var(--bad-soft); color: var(--bad); }
+  kbd, code { font-family: ui-monospace, "Cascadia Code", Consolas, monospace; font-size: .92em; background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 1px 6px; }
+  details { border: 1px solid var(--line); border-radius: 10px; padding: 10px 14px; margin: 10px 0; background: var(--surface); }
+  details summary { cursor: pointer; font-weight: 600; }
+  details p { margin: 8px 0 0; }
+  .checklist { list-style: none; padding: 0; }
+  .checklist li { padding-left: 30px; position: relative; margin: 8px 0; }
+  .checklist li::before { content: "☐"; position: absolute; left: 4px; color: var(--brand); font-size: 18px; line-height: 1.4; }
+  a.zoomable { display: block; cursor: zoom-in; }
+  .tap-hint { display: none; }
+  @media (max-width: 640px) {
+    section { padding: 16px; }
+    .steps > li { padding-left: 38px; }
+    table { font-size: 14px; }
+    th, td { padding: 8px; }
+    .tap-hint { display: block; font-size: 14px; color: var(--muted); margin: 0 0 16px; }
+  }
+  footer { color: var(--muted); font-size: 14px; text-align: center; padding: 8px 0 40px; }
+</style>
+</head>
+<body>
+
+<header class="hero">
+  <div class="wrap">
+    <h1>Hướng dẫn sử dụng PDF Workspace</h1>
+    <p>Chỉnh sửa PDF và ẩn danh người bình luận trong file Word trước khi đưa tài liệu vào công cụ AI. Tài liệu được xử lý <b>ngay trên trình duyệt của bạn</b>, không tải lên máy chủ.</p>
+    <a class="back" href="/">← Mở PDF Workspace</a>
+  </div>
+</header>
+
+<main class="wrap">
+  <nav class="toc" aria-label="Mục lục">
+    <b>Nội dung</b>
+    <ol>
+      <li><a href="#dang-nhap">Đăng nhập</a></li>
+      <li><a href="#pdf">Chỉnh sửa PDF</a></li>
+      <li><a href="#word">Ẩn danh bình luận Word</a></li>
+      <li><a href="#ket-qua">Đọc kết quả PASS / WARN / FAIL</a></li>
+      <li><a href="#truoc-khi-upload">Checklist trước khi đưa lên AI</a></li>
+      <li><a href="#nhat-ky">Nhật ký hoạt động</a></li>
+      <li><a href="#hoi-dap">Câu hỏi thường gặp</a></li>
+    </ol>
+  </nav>
+  <p class="tap-hint">Mẹo: bấm vào hình minh hoạ để mở ảnh kích thước đầy đủ.</p>
+
+  <!-- 1. Đăng nhập -->
+  <section id="dang-nhap">
+    <h2>1. Đăng nhập</h2>
+    <p class="lead">Dùng tài khoản Microsoft của PACE. Chỉ những tài khoản đã được quản trị viên cấp quyền mới đăng nhập được.</p>
+    <figure>
+      <a class="zoomable" href="img/01-dang-nhap.jpg" target="_blank" rel="noopener" title="Bấm để xem ảnh kích thước đầy đủ"><img src="img/01-dang-nhap.jpg" alt="Trang chủ PDF Workspace với nút Sign in with Microsoft được đánh dấu số 1" loading="lazy" width="1280" height="800"></a>
+      <figcaption><span class="n">1</span> Bấm <b>Sign in with Microsoft</b>, chọn tài khoản PACE trong cửa sổ đăng nhập của Microsoft.</figcaption>
+    </figure>
+    <figure>
+      <a class="zoomable" href="img/02-trang-chu.jpg" target="_blank" rel="noopener" title="Bấm để xem ảnh kích thước đầy đủ"><img src="img/02-trang-chu.jpg" alt="Trang chủ sau khi đăng nhập, các vùng được đánh số 1 đến 3" loading="lazy" width="1280" height="800"></a>
+      <figcaption>Màn hình sau khi đăng nhập.</figcaption>
+    </figure>
+    <ul class="legend">
+      <li><span class="n">1</span><span><b>Chọn công cụ:</b> <i>PDF Editor</i> để chỉnh sửa PDF, <i>Ẩn danh Word</i> để xử lý bình luận trong file Word.</span></li>
+      <li><span class="n">2</span><span><b>Chọn tài liệu PDF</b> từ máy, hoặc kéo-thả file vào trang.</span></li>
+      <li><span class="n">3</span><span><b>Nhật ký hoạt động</b> của tài khoản bạn (xem <a href="#nhat-ky">mục 6</a>).</span></li>
+    </ul>
+    <div class="note warn"><b>Cửa sổ đăng nhập không hiện?</b> Trình duyệt có thể đang chặn popup. Cho phép popup cho trang này rồi bấm đăng nhập lại.</div>
+  </section>
+
+  <!-- 2. PDF -->
+  <section id="pdf">
+    <h2>2. Chỉnh sửa PDF</h2>
+    <p class="lead">Mở file PDF, thêm chữ, đánh dấu, vẽ, chèn ảnh/trang, rồi xuất ra file PDF mới. File gốc trên máy bạn không bị thay đổi.</p>
+    <figure>
+      <a class="zoomable" href="img/03-pdf-workspace.jpg" target="_blank" rel="noopener" title="Bấm để xem ảnh kích thước đầy đủ"><img src="img/03-pdf-workspace.jpg" alt="Màn hình chỉnh sửa PDF với thanh công cụ được đánh số 1 đến 8" loading="lazy" width="1280" height="800"></a>
+      <figcaption>Màn hình chỉnh sửa sau khi mở file (tài liệu mẫu, dữ liệu giả).</figcaption>
+    </figure>
+    <ul class="legend">
+      <li><span class="n">1</span><span><b>Công cụ:</b> <i>Chọn</i> (chọn, kéo di chuyển đối tượng; chọn vùng chữ có sẵn để sửa) · <i>Thêm chữ</i> · <i>Đánh dấu</i> (highlight) · <i>Vẽ</i> (nét tay) · <i>Chữ ký</i> (ký bằng nét vẽ).</span></li>
+      <li><span class="n">2</span><span><b>Màu</b> cho đánh dấu, nét vẽ và chữ.</span></li>
+      <li><span class="n">3</span><span><b>Chèn ảnh</b> (PNG/JPEG) vào trang hiện tại. Kế bên: <i>Chèn trang</i> từ một file PDF khác (chèn sau trang đang xem), mũi tên lên/xuống để đổi vị trí trang, thùng rác để xoá trang hiện tại.</span></li>
+      <li><span class="n">4</span><span><b>Ký số</b> bằng USB Token hoặc Remote Token. Chỉ dùng được khi bộ phận IT đã cấu hình dịch vụ ký số.</span></li>
+      <li><span class="n">5</span><span><b>Scan OCR</b> nhận dạng chữ (tiếng Việt và tiếng Anh) trên trang hiện tại, dùng cho PDF dạng ảnh scan. Lần đầu có thể mất một lúc để tải dữ liệu ngôn ngữ.</span></li>
+      <li><span class="n">6</span><span><b>Xuất PDF:</b> tải về file mới có đuôi <code>-edited.pdf</code>.</span></li>
+      <li><span class="n">7</span><span><b>Danh sách trang:</b> bấm để chuyển trang.</span></li>
+      <li><span class="n">8</span><span><b>Thu phóng</b> 50–250%.</span></li>
+    </ul>
+
+    <h3>Thêm và định dạng chữ</h3>
+    <figure>
+      <a class="zoomable" href="img/04-pdf-dinh-dang-chu.jpg" target="_blank" rel="noopener" title="Bấm để xem ảnh kích thước đầy đủ"><img src="img/04-pdf-dinh-dang-chu.jpg" alt="Thanh định dạng chữ xuất hiện khi chọn công cụ Thêm chữ" loading="lazy" width="1280" height="800"></a>
+      <figcaption><span class="n">1</span> Khi chọn <b>Thêm chữ</b> (hoặc chọn một ô chữ đã có), thanh định dạng hiện ra: font, cỡ chữ, đậm/nghiêng/gạch chân, căn lề, màu chữ.</figcaption>
+    </figure>
+    <ol class="steps">
+      <li>Chọn công cụ <b>Thêm chữ</b>, bấm vào vị trí trên trang và gõ nội dung.</li>
+      <li>Chỉnh định dạng trên thanh định dạng. Nên dùng font <i>Be Vietnam Pro</i>, <i>Arimo</i> hoặc <i>Noto Sans</i> cho tiếng Việt có dấu.</li>
+      <li><b>Nhấp đúp</b> vào ô chữ đã thêm để sửa lại nội dung.</li>
+      <li>Muốn xoá: dùng công cụ <b>Chọn</b>, chọn đối tượng rồi bấm biểu tượng thùng rác cạnh Scan OCR. Dùng <b>Undo/Redo</b> (mũi tên cong) để hoàn tác.</li>
+    </ol>
+    <div class="note bad"><b>Nhớ Xuất PDF trước khi đóng tab hoặc tải lại trang.</b> Thay đổi chỉ nằm trong trình duyệt cho tới khi bạn xuất file.</div>
+    <div class="note info"><b>Chữ ký nét vẽ ≠ chữ ký số.</b> Công cụ <i>Chữ ký</i> chỉ tạo hình chữ ký hiển thị, không có giá trị như chữ ký số có chứng thư. Văn bản cần ký số hợp lệ phải dùng nút <i>Ký số</i>.</div>
+  </section>
+
+  <!-- 3. Word -->
+  <section id="word">
+    <h2>3. Ẩn danh bình luận Word</h2>
+    <p class="lead">Trước khi đưa file Word có <b>bình luận (comment)</b> hoặc <b>theo dõi thay đổi (Track Changes)</b> vào công cụ AI, dùng chức năng này để thay tên người góp ý bằng nhãn như <i>Người góp ý 1</i>. Nội dung tài liệu và nội dung bình luận được giữ nguyên.</p>
+
+    <div class="grid2">
+      <div class="note ok"><b>Được ẩn danh</b>
+        Tên và tên viết tắt người bình luận · tên người sửa trong Track Changes · người được @nhắc tên (kể cả email) · thông tin tác giả trong thuộc tính file (người tạo, người sửa cuối, công ty) · email/ID tài khoản Microsoft ẩn trong file.</div>
+      <div class="note warn"><b>KHÔNG được ẩn danh</b>
+        Tên người viết <b>trong thân văn bản</b> (ví dụ chữ ký cuối thư, danh sách học viên) · nội dung bên trong ảnh · file nhúng (Excel/Word lồng trong tài liệu). Bạn cần tự kiểm tra các phần này.</div>
+    </div>
+
+    <ol class="steps">
+      <li>
+        <b>Mở công cụ và chọn file.</b>
+        <figure>
+          <a class="zoomable" href="img/06-word-chon-file.jpg" target="_blank" rel="noopener" title="Bấm để xem ảnh kích thước đầy đủ"><img src="img/06-word-chon-file.jpg" alt="Màn hình Ẩn danh Word với vùng kéo thả file" loading="lazy" width="1280" height="800"></a>
+          <figcaption><span class="n">1</span> Chọn tab <b>Ẩn danh Word</b>. <span class="n">2</span> Kéo-thả hoặc bấm để chọn file <code>.docx</code> (tối đa 50 MB). <span class="n">3</span> Dòng nhắc luôn hiển thị: công cụ không ẩn danh tên trong thân văn bản.</figcaption>
+        </figure>
+      </li>
+      <li>
+        <b>Xem thông tin công cụ tìm được.</b> Số bình luận, số chỗ sửa (revision), số người tham gia và các cảnh báo (nếu có).
+        <figure>
+          <a class="zoomable" href="img/07-word-thong-tin.jpg" target="_blank" rel="noopener" title="Bấm để xem ảnh kích thước đầy đủ"><img src="img/07-word-thong-tin.jpg" alt="Thẻ thông tin tài liệu đã phân tích" loading="lazy" width="1040" height="143"></a>
+        </figure>
+      </li>
+      <li>
+        <b>Kiểm tra và đặt nhãn cho từng người.</b> Mặc định là <i>Người góp ý 1, 2…</i> (viết tắt <i>NG1, NG2…</i>). Bạn có thể đổi thành vai trò để AI hiểu ngữ cảnh, ví dụ <i>Giảng viên A</i>, <i>Khách hàng</i>. Không đặt nhãn trùng nhau và không dùng tên thật — công cụ sẽ báo lỗi và khoá nút chạy.
+        <figure>
+          <a class="zoomable" href="img/08-word-nguoi-gop-y.jpg" target="_blank" rel="noopener" title="Bấm để xem ảnh kích thước đầy đủ"><img src="img/08-word-nguoi-gop-y.jpg" alt="Bảng Người góp ý với ô nhãn hiển thị được đánh dấu" loading="lazy" width="1040" height="230"></a>
+          <figcaption><span class="n">1</span> Ô <b>Nhãn hiển thị</b> sửa được. Cột "Nguồn xuất hiện" cho biết tên người đó nằm ở đâu trong file.</figcaption>
+        </figure>
+        Người chỉ được <b>@nhắc tên</b> trong bình luận (không tự bình luận) nằm ở nhóm riêng <i>Người được nhắc</i>:
+        <figure>
+          <a class="zoomable" href="img/09-word-nguoi-duoc-nhac.jpg" target="_blank" rel="noopener" title="Bấm để xem ảnh kích thước đầy đủ"><img src="img/09-word-nguoi-duoc-nhac.jpg" alt="Bảng Người được nhắc" loading="lazy" width="1040" height="179"></a>
+        </figure>
+      </li>
+      <li>
+        <b>Chọn tuỳ chọn và bấm "Ẩn danh tài liệu".</b>
+        <figure>
+          <a class="zoomable" href="img/10-word-tuy-chon.jpg" target="_blank" rel="noopener" title="Bấm để xem ảnh kích thước đầy đủ"><img src="img/10-word-tuy-chon.jpg" alt="Thẻ Tùy chọn ẩn danh với nút Ẩn danh tài liệu" loading="lazy" width="1040" height="387"></a>
+          <figcaption><span class="n">1</span> Nút chạy ẩn danh. Đổi nhãn hoặc tuỳ chọn sau khi đã chạy thì phải bấm chạy lại.</figcaption>
+        </figure>
+        <div class="table-wrap"><table>
+          <thead><tr><th>Tuỳ chọn</th><th>Mặc định</th><th>Khi nào nên đổi</th></tr></thead>
+          <tbody>
+            <tr><td>Xoá ngày giờ bình luận và sửa đổi</td><td>Tắt</td><td>Bật nếu thời điểm góp ý có thể giúp đoán ra người viết.</td></tr>
+            <tr><td>Thay thế tên người được @mention</td><td>Bật</td><td>Nên giữ bật. Tắt thì tên và email người được nhắc còn trong file.</td></tr>
+            <tr><td>Thay thế tên trong nội dung bình luận</td><td>Tắt</td><td>Bật nếu bình luận có câu kiểu "anh Nam xem lại". Lưu ý: chỉ thay đúng tên đầy đủ của người góp ý.</td></tr>
+            <tr><td>Làm sạch thuộc tính tài liệu</td><td>Bật</td><td>Nên giữ bật (xoá người tạo, người sửa cuối, công ty…).</td></tr>
+            <tr><td>Thuộc tính tuỳ chỉnh (custom.xml)</td><td>Giữ nhãn bảo mật MSIP</td><td>Giữ mặc định để không mất nhãn phân loại bảo mật (Sensitivity label) của tài liệu.</td></tr>
+          </tbody>
+        </table></div>
+      </li>
+      <li>
+        <b>Đọc kết quả kiểm tra rò rỉ</b> (xem <a href="#ket-qua">mục 4</a>), rồi <b>tải file</b>.
+        <figure>
+          <a class="zoomable" href="img/12-word-tai-ve.jpg" target="_blank" rel="noopener" title="Bấm để xem ảnh kích thước đầy đủ"><img src="img/12-word-tai-ve.jpg" alt="Thẻ tải về tài liệu đã xử lý" loading="lazy" width="1040" height="249"></a>
+          <figcaption><span class="n">1</span> Tải file đã ẩn danh. Tên file mặc định <code>document_anonymized.docx</code> (vì tên file gốc thường chứa tên người); có thể chọn giữ tên gốc.</figcaption>
+        </figure>
+      </li>
+      <li><b>Bấm "Xoá khỏi bộ nhớ"</b> khi xong việc, nhất là trên máy dùng chung.</li>
+    </ol>
+
+    <div class="note bad"><b>File mapping (JSON) chứa tên thật.</b> Tuỳ chọn "Tải file mapping" cho biết <i>Người góp ý 1</i> là ai. Chỉ lưu nội bộ khi thật sự cần, <b>tuyệt đối không</b> tải file này lên công cụ AI hay gửi ra ngoài.</div>
+  </section>
+
+  <!-- 4. Kết quả -->
+  <section id="ket-qua">
+    <h2>4. Đọc kết quả PASS / WARN / FAIL</h2>
+    <p class="lead">Sau khi ẩn danh, công cụ mở lại chính file kết quả và tìm xem tên, email thật còn sót ở đâu không.</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>Kết quả</th><th>Ý nghĩa</th><th>Bạn cần làm</th></tr></thead>
+      <tbody>
+        <tr><td><span class="pill ok">PASS</span></td><td>Không còn tên/email thật nào được tìm thấy.</td><td>Tải file. Vẫn làm <a href="#truoc-khi-upload">checklist</a> trước khi đưa lên AI.</td></tr>
+        <tr><td><span class="pill warn">WARN</span></td><td>Tên thật còn trong <b>nội dung chữ</b> (thân văn bản hoặc nội dung bình luận). Bảng kết quả chỉ rõ vị trí.</td><td>Mở file, tự sửa những chỗ đó; hoặc bật "Thay thế tên trong nội dung bình luận" rồi chạy lại.</td></tr>
+        <tr><td><span class="pill bad">FAIL</span></td><td>Tên/email thật còn trong <b>dữ liệu ẩn</b> của file (thuộc tính, dữ liệu SharePoint…). Nút tải bị khoá.</td><td>Không nên dùng file này với AI. Liên hệ bộ phận IT. Chỉ tick "Tôi đã hiểu rủi ro" nếu đã tự kiểm tra kỹ.</td></tr>
+      </tbody>
+    </table></div>
+    <div class="grid2">
+      <figure>
+        <a class="zoomable" href="img/11-word-ket-qua-pass.jpg" target="_blank" rel="noopener" title="Bấm để xem ảnh kích thước đầy đủ"><img src="img/11-word-ket-qua-pass.jpg" alt="Kết quả PASS" loading="lazy" width="1040" height="185"></a>
+        <figcaption>Ví dụ kết quả <span class="pill ok">PASS</span>.</figcaption>
+      </figure>
+      <figure>
+        <a class="zoomable" href="img/13-word-ket-qua-fail.jpg" target="_blank" rel="noopener" title="Bấm để xem ảnh kích thước đầy đủ"><img src="img/13-word-ket-qua-fail.jpg" alt="Kết quả FAIL kèm vị trí còn sót" loading="lazy" width="1040" height="284"></a>
+        <figcaption>Ví dụ <span class="pill bad">FAIL</span>: còn sót trong <code>customXml</code> (dữ liệu SharePoint).</figcaption>
+      </figure>
+    </div>
+    <figure>
+      <a class="zoomable" href="img/14-word-fail-khoa-tai.jpg" target="_blank" rel="noopener" title="Bấm để xem ảnh kích thước đầy đủ"><img src="img/14-word-fail-khoa-tai.jpg" alt="Nút tải bị khoá và ô xác nhận Tôi đã hiểu rủi ro" loading="lazy" width="1040" height="325"></a>
+      <figcaption><span class="n">1</span> Khi FAIL, nút tải bị khoá cho tới khi bạn tick xác nhận.</figcaption>
+    </figure>
+  </section>
+
+  <!-- 5. Checklist -->
+  <section id="truoc-khi-upload">
+    <h2>5. Checklist trước khi đưa tài liệu lên AI</h2>
+    <ul class="checklist">
+      <li>Kết quả kiểm tra là <span class="pill ok">PASS</span>, hoặc mọi vị trí <span class="pill warn">WARN</span> đã được xử lý.</li>
+      <li>Đã đọc lướt <b>thân văn bản</b>: không còn họ tên, số điện thoại, email, CCCD, lương… của học viên, khách hàng, đồng nghiệp.</li>
+      <li>Tên file tải lên không chứa tên người hoặc tên khách hàng.</li>
+      <li>Chỉ dùng <b>công cụ AI đã được PACE phê duyệt</b>.</li>
+      <li>Tài liệu không thuộc nhóm nội dung cốt lõi (học liệu, nội dung tư vấn, tài liệu chiến lược) chưa được phép xử lý bằng AI.</li>
+      <li>Không tải kèm file mapping (JSON).</li>
+    </ul>
+  </section>
+
+  <!-- 6. Nhật ký -->
+  <section id="nhat-ky">
+    <h2>6. Nhật ký hoạt động</h2>
+    <p class="lead">Ghi lại các thao tác của tài khoản bạn (mở file, xuất file, ẩn danh…) để phục vụ kiểm tra an toàn thông tin.</p>
+    <figure>
+      <a class="zoomable" href="img/05-activity-log.jpg" target="_blank" rel="noopener" title="Bấm để xem ảnh kích thước đầy đủ"><img src="img/05-activity-log.jpg" alt="Bảng Activity log" loading="lazy" width="1280" height="800"></a>
+      <figcaption>Bấm biểu tượng nhịp tim trên thanh trên cùng để mở. Có thể lọc theo loại và xuất JSON.</figcaption>
+    </figure>
+    <div class="note info"><b>Nhật ký không chứa nội dung tài liệu.</b> Chỉ ghi loại thao tác và số liệu (số trang, số bình luận…), không ghi tên file, nội dung hay tên người trong tài liệu. Người dùng không xoá được nhật ký; chỉ quản trị viên mới xoá được.</div>
+  </section>
+
+  <!-- 7. Hỏi đáp -->
+  <section id="hoi-dap">
+    <h2>7. Câu hỏi thường gặp</h2>
+    <details><summary>File .doc (Word cũ) hoặc .docm có dùng được không?</summary>
+      <p>Không. Mở file trong Word, chọn <b>File → Save As</b>, lưu dạng <b>Word Document (*.docx)</b> rồi thử lại. File có macro (.docm) bị từ chối vì lý do an toàn.</p></details>
+    <details><summary>Báo "File có thể đã bị mã hóa hoặc ở định dạng Word cũ"?</summary>
+      <p>File đang đặt mật khẩu hoặc là định dạng .doc. Gỡ mật khẩu (File → Info → Protect Document) hoặc lưu lại dạng .docx.</p></details>
+    <details><summary>Tài liệu có được tải lên máy chủ không?</summary>
+      <p>Không. File PDF và Word được xử lý ngay trên trình duyệt của bạn. Máy chủ chỉ nhận thông tin đăng nhập và nhật ký thao tác (không có nội dung tài liệu).</p></details>
+    <details><summary>Đóng tab rồi mở lại thì mất hết chỉnh sửa PDF?</summary>
+      <p>Đúng. Hãy bấm <b>Xuất PDF</b> để lưu file trước khi đóng tab hoặc tải lại trang.</p></details>
+    <details><summary>Kết quả FAIL ở "customXml" là gì?</summary>
+      <p>Đó là dữ liệu ẩn do SharePoint/OneDrive gắn vào file (ví dụ trường "Người phụ trách"). Công cụ chỉ cảnh báo, không tự sửa phần này. Cách đơn giản: copy toàn bộ nội dung sang một file Word mới tạo trên máy rồi chạy lại, hoặc liên hệ bộ phận IT.</p></details>
+    <details><summary>Đổi nhãn sau khi đã chạy thì sao?</summary>
+      <p>Kết quả cũ sẽ bị xoá và có dòng nhắc "Cấu hình đã thay đổi". Bấm <b>Ẩn danh tài liệu</b> lần nữa để tạo file mới.</p></details>
+    <details><summary>Đăng nhập xong báo "Account is not authorized" hoặc "Tài khoản không được phép sử dụng hệ thống"?</summary>
+      <p>Tài khoản của bạn chưa được cấp quyền. Liên hệ quản trị viên hệ thống (bộ phận DIGITECH) để được thêm vào danh sách người dùng.</p></details>
+  </section>
+</main>
+
+<footer>
+  PDF Workspace · Hình minh hoạ dùng tài liệu và tài khoản giả lập (Học viên Test 01, @example.com).
+</footer>
+</body>
+</html>
