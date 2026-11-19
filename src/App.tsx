@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
-  Activity, Check, ChevronDown, ChevronLeft, ChevronRight, Download, FileText,
+  Activity, BookOpen, Check, ChevronDown, ChevronLeft, ChevronRight, Download, FileText,
   Highlighter, Image as ImageIcon, Minus, MousePointer2, PenLine,
   Plus, Redo2, RotateCw, Sparkles, Type, Undo2, Upload, LogIn, LogOut, ScanText,
   Bold, Italic, Underline, AlignLeft, AlignCenter, AlignRight,
@@ -647,6 +647,7 @@ function App() {
       {viewMode === 'pdf' && info && <div className="file-title"><FileText size={17}/><span>{info.name}</span><small>{formatBytes(info.size)}</small></div>}
       <div className="top-actions">
         {viewMode === 'pdf' && info && <><button className="secondary" onClick={() => fileInput.current?.click()}><Upload size={16}/> Mở file</button><button className="primary" onClick={exportPdf} disabled={busy}><Download size={16}/> Xuất PDF</button></>}
+        <a href="/huong-dan/" target="_blank" rel="noopener" className="topbar-help-link" aria-label="Hướng dẫn sử dụng" title="Hướng dẫn sử dụng"><BookOpen size={16}/><span>Hướng dẫn</span></a>
         {account ? <div className="account-menu"><button className="activity-button" onClick={() => setShowActivities(true)} title="Activity log"><Activity/></button>{apiUser?.role==='admin'&&<button className="activity-button" onClick={()=>setShowAdmin(true)} title="Administration"><Settings/></button>}<button className="user-chip" title={account.username}><span>{(account.name || account.username).split(' ').map((x) => x[0]).slice(0,2).join('').toUpperCase()}</span><b>{account.name || account.username}</b></button><button className="logout-button" onClick={logout} title="Đăng xuất"><LogOut/></button></div> : <button className="microsoft-login" onClick={login} disabled={!authReady}><span className="ms-logo"><i/><i/><i/><i/></span><LogIn/> Sign in with Microsoft</button>}
       </div>
     </header>
