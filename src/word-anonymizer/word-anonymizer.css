@@ -713,3 +713,9 @@
   font-size: 13px;
   line-height: 1.5;
 }
+
+.sensitive-value {
+  font-family: "Be Vietnam Pro", "Arimo", system-ui, sans-serif;
+  font-variant-numeric: tabular-nums;
+  word-break: break-word;
+}
