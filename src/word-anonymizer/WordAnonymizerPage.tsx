@@ -53,6 +53,18 @@ const DEFAULT_OPTIONS: AnonymizeOptions = {
   customPropsPolicy: 'keep-sensitivity-labels',
 }
 
+function FixedReminderCallout() {
+  return (
+    <div className="fixed-reminder-callout">
+      <Info size={18} />
+      <span>
+        Kiểm tra lại nội dung tài liệu trước khi upload — công cụ không ẩn danh tên người trong thân văn bản.{' '}
+        <a href="/huong-dan/#word" target="_blank" rel="noopener" className="reminder-help-link">Xem hướng dẫn</a>
+      </span>
+    </div>
+  )
+}
+
 export default function WordAnonymizerPage({
   account,
   authReady,
@@ -285,12 +297,7 @@ export default function WordAnonymizerPage({
     return (
       <div className="word-anonymizer-container">
         <div className="word-anonymizer-content">
-          <div className="fixed-reminder-callout">
-            <Info size={18} />
-            <span>
-              Kiểm tra lại nội dung tài liệu trước khi upload — công cụ không ẩn danh tên người trong thân văn bản.
-            </span>
-          </div>
+          <FixedReminderCallout />
 
           <div className="auth-required-card">
             <div className="auth-required-icon">
@@ -336,12 +343,7 @@ export default function WordAnonymizerPage({
           </div>
 
           {/* Fixed Reminder Callout */}
-          <div className="fixed-reminder-callout">
-            <Info size={18} />
-            <span>
-              Kiểm tra lại nội dung tài liệu trước khi upload — công cụ không ẩn danh tên người trong thân văn bản.
-            </span>
-          </div>
+          <FixedReminderCallout />
         </div>
 
         {/* Error message */}
@@ -704,6 +706,7 @@ export default function WordAnonymizerPage({
                   <div className="word-card-title">
                     <span>Kết quả quét rò rỉ dữ liệu (Residual Scan)</span>
                   </div>
+                  <a href="/huong-dan/#ket-qua" target="_blank" rel="noopener" className="residual-help-link">Ý nghĩa kết quả</a>
                 </div>
 
                 {residualReport.status === 'PASS' && (

@@ -57,6 +57,11 @@ describe('WordAnonymizerPage Component Tests (W-2)', () => {
 
     expect(container.textContent).toContain('Yêu cầu đăng nhập Microsoft')
     expect(container.textContent).toContain('Kiểm tra lại nội dung tài liệu trước khi upload')
+    const reminderLink = container.querySelector('.fixed-reminder-callout a[href="/huong-dan/#word"]')
+    expect(reminderLink).not.toBeNull()
+    expect(reminderLink?.getAttribute('target')).toBe('_blank')
+    expect(reminderLink?.getAttribute('rel')).toBe('noopener')
+    expect(reminderLink?.textContent).toBe('Xem hướng dẫn')
     // No file input or dropzone rendered when not logged in
     expect(container.querySelector('input[type="file"]')).toBeNull()
     expect(container.querySelector('.word-dropzone')).toBeNull()
@@ -195,6 +200,11 @@ describe('WordAnonymizerPage Component Tests (W-2)', () => {
 
     // Verify PASS card is displayed
     expect(container.textContent).toContain('ĐẠT BẢO MẬT (PASS)')
+    const residualLink = container.querySelector('.word-card-header a[href="/huong-dan/#ket-qua"]')
+    expect(residualLink).not.toBeNull()
+    expect(residualLink?.getAttribute('target')).toBe('_blank')
+    expect(residualLink?.getAttribute('rel')).toBe('noopener')
+    expect(residualLink?.textContent).toBe('Ý nghĩa kết quả')
 
     // Verify log was called with word_anonymizer.completed and ONLY 4 fields!
     expect(logFn).toHaveBeenCalledWith(
@@ -403,8 +413,8 @@ describe('WordAnonymizerPage Component Tests (W-2)', () => {
 
     expect(container2.textContent).toContain('KHÔNG ĐẠT (FAIL)')
 
-    // Download button is a disabled button, no a[href] in DOM
-    expect(container2.querySelector('a[href]')).toBeNull()
+    // Download button is a disabled button, no download link in actions row
+    expect(container2.querySelector('.word-actions-row a[href]')).toBeNull()
     const downloadBtn = container2.querySelector('button.disabled') as HTMLButtonElement
     expect(downloadBtn).not.toBeNull()
     expect(downloadBtn.disabled).toBe(true)
@@ -483,9 +493,9 @@ describe('WordAnonymizerPage Component Tests (W-2)', () => {
 
     expect(container.textContent).toContain('KHÔNG ĐẠT (FAIL)')
 
-    // Must NOT have any <a> with download or href
+    // Must NOT have any <a> with download or href in action row
     expect(container.querySelector('a[download]')).toBeNull()
-    expect(container.querySelector('a[href]')).toBeNull()
+    expect(container.querySelector('.word-actions-row a[href]')).toBeNull()
 
     // Must have disabled button
     const downloadBtn = container.querySelector('button.disabled') as HTMLButtonElement
