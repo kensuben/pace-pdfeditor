@@ -9,48 +9,84 @@ export function parseBodyLimit(val = process.env.API_BODY_LIMIT_BYTES) {
   return DEFAULT_BODY_LIMIT_BYTES
 }
 
-export async function readJsonBody(req, { limitBytes = parseBodyLimit() } = {}) {
-  let size = 0
-  const chunks = []
+export function readJsonBody(req, { limitBytes = parseBodyLimit() } = {}) {
+  return new Promise((resolve, reject) => {
+    let size = 0
+    const chunks = []
+    let exceeded = false
 
-  for await (const chunk of req) {
-    size += chunk.length
-    if (size > limitBytes) {
-      if (typeof req.destroy === 'function') {
-        req.destroy()
+    function onData(chunk) {
+      if (exceeded) return
+      size += chunk.length
+      if (size > limitBytes) {
+        exceeded = true
+        cleanup()
+        if (typeof req.on === 'function') {
+          req.on('data', () => {})
+        }
+        if (typeof req.resume === 'function') {
+          req.resume()
+        }
+        const err = new Error('Request body too large')
+        err.status = 413
+        reject(err)
+        return
       }
-      const err = new Error('Request body too large')
-      err.status = 413
-      throw err
+      chunks.push(chunk)
     }
-    chunks.push(chunk)
-  }
 
-  if (chunks.length === 0 || size === 0) {
-    return {}
-  }
+    function onEnd() {
+      if (exceeded) return
+      cleanup()
+      if (chunks.length === 0 || size === 0) {
+        return resolve({})
+      }
 
-  const raw = Buffer.concat(chunks).toString('utf8').trim()
-  if (!raw) {
-    return {}
-  }
+      const raw = Buffer.concat(chunks).toString('utf8').trim()
+      if (!raw) {
+        return resolve({})
+      }
 
-  let parsed
-  try {
-    parsed = JSON.parse(raw)
-  } catch {
-    const err = new Error('Invalid JSON body')
-    err.status = 400
-    throw err
-  }
+      let parsed
+      try {
+        parsed = JSON.parse(raw)
+      } catch {
+        const err = new Error('Invalid JSON body')
+        err.status = 400
+        return reject(err)
+      }
 
-  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
-    const err = new Error('Invalid JSON body')
-    err.status = 400
-    throw err
-  }
+      if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+        const err = new Error('Invalid JSON body')
+        err.status = 400
+        return reject(err)
+      }
 
-  return parsed
+      resolve(parsed)
+    }
+
+    function onError(err) {
+      if (exceeded) return
+      cleanup()
+      reject(err)
+    }
+
+    function cleanup() {
+      if (typeof req.removeListener === 'function') {
+        req.removeListener('data', onData)
+        req.removeListener('end', onEnd)
+        req.removeListener('error', onError)
+      }
+    }
+
+    if (typeof req.on === 'function') {
+      req.on('data', onData)
+      req.on('end', onEnd)
+      req.on('error', onError)
+    } else {
+      resolve({})
+    }
+  })
 }
 
 export function validateActivityInput(input) {

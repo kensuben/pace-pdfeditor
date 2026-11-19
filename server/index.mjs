@@ -11,6 +11,7 @@ import {
   cleanStaleSessions,
   CoalescedStore,
 } from './store.mjs'
+import { createShutdownHandler } from './lifecycle.mjs'
 
 const port = Number(process.env.PORT || 3001)
 const file = process.env.DATA_FILE || '/data/store.json'
@@ -50,14 +51,15 @@ const storeManager = new CoalescedStore({
 
 const save = () => storeManager.scheduleSave()
 
-const shutdown = async (signal) => {
-  try {
-    await storeManager.flush()
-  } catch (err) {
-    console.error(`[SERVER] Flush on ${signal} failed:`, err)
-  }
-  process.exit(0)
-}
+let server = null
+
+const shutdown = createShutdownHandler({
+  get server() {
+    return server
+  },
+  storeManager,
+})
+
 process.on('SIGTERM', () => shutdown('SIGTERM'))
 process.on('SIGINT', () => shutdown('SIGINT'))
 
@@ -86,7 +88,7 @@ const admin = user => {
 
 const route = (req, path) => new URL(req.url, `http://${req.headers.host}`).pathname === path
 
-const server = http.createServer(async (req, res) => {
+server = http.createServer(async (req, res) => {
   try {
     if (route(req, '/healthz')) return json(res, 200, { ok: true })
     const user = await identity(req)
@@ -266,6 +268,21 @@ const server = http.createServer(async (req, res) => {
     console.error(error)
     const status = error.status || 500
     const message = error.status ? (error.message || 'Error') : 'Server error'
+    if (status === 413) {
+      res.writeHead(413, {
+        'content-type': 'application/json; charset=utf-8',
+        'cache-control': 'no-store',
+        connection: 'close',
+      })
+      res.on('finish', () => {
+        setImmediate(() => {
+          if (req.socket && !req.socket.destroyed) {
+            req.socket.destroy()
+          }
+        })
+      })
+      return res.end(JSON.stringify({ error: message }))
+    }
     return json(res, status, { error: message })
   }
 })
