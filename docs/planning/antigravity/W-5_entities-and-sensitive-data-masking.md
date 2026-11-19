@@ -1,12 +1,13 @@
-# [W-5] Ẩn danh Word: thay tên pháp nhân / người đại diện do người dùng nhập, che một phần email, số điện thoại, CCCD, MST, số tài khoản, địa chỉ
+# [W-5] Ẩn danh Word: thay tên pháp nhân / người đại diện, che một phần dữ liệu nhạy cảm; sửa thanh trên cùng trên điện thoại
 
 Đọc `docs/planning/antigravity/00_RULES.md` trước khi làm.
-Tiền điều kiện: **W-4 đã merge** vào `main` (cùng sửa `WordAnonymizerPage.tsx`). Không phụ thuộc F-9 (F-9 chỉ sửa `server/`).
-Nhánh: `feat/w5-entities-sensitive-masking` (tạo từ `main`) · **2 commit theo thứ tự** (quyết định của chủ dự án: gộp core + UI vào một task, mỗi phần một commit):
+Tiền điều kiện: W-4 đã merge vào `main` (PR #30). Không phụ thuộc F-9/F-9b (chỉ sửa `server/`).
+Nhánh: `feat/w5-entities-sensitive-masking` (tạo từ `main`) · **3 commit theo thứ tự** (quyết định của chủ dự án: gộp vào một task, mỗi phần một commit):
 1. `feat(W-5a): core text replacement for custom entities and partial masking of sensitive data`
 2. `feat(W-5b): UI for entity fields and detected sensitive data`
+3. `fix(W-5c): compact topbar actions menu on mobile`
 
-Được tự commit + push nhánh này. KHÔNG push `main`, KHÔNG force-push, KHÔNG gộp 2 phần vào 1 commit.
+Được tự commit + push nhánh này. KHÔNG push `main`, KHÔNG force-push, KHÔNG gộp các phần vào 1 commit.
 **Chỉ báo "done" khi đã chạy `git push` và Bước Z (cuối file) đạt – dán output ở ĐẦU báo cáo.**
 
 ## Bước 0 (PowerShell)
@@ -154,30 +155,79 @@ npm ci
 
 ---
 
+## Phần C — Thanh trên cùng trên điện thoại · commit `W-5c`
+
+### Vấn đề
+- `src/App.tsx:648-651` (`.top-actions`) đặt chung một hàng các nút:
+  - "Mở file" và "Xuất PDF" (khi đang mở PDF);
+  - link "Hướng dẫn" (W-4);
+  - khi đã đăng nhập: `.account-menu` gồm Activity log, Administration (admin), user chip, Đăng xuất;
+  - khi chưa đăng nhập: nút `.microsoft-login`.
+- QA đo ở **390px, đã đăng nhập, đang mở PDF**, trên `main` **trước W-4**: mép phải `.top-actions` ở x=511 trong khi màn hình rộng 390. **Menu tài khoản và nút Đăng xuất nằm ngoài màn hình**, người dùng điện thoại không đăng xuất được. Trang không cuộn ngang nên không kéo ra xem được. Sau W-4 thêm nút "Hướng dẫn" thì nút này cũng bị che.
+- Style liên quan: `src/pace-theme.css:3-4`, `src/styles.css:5`, `src/auth-styles.css:1,3` (breakpoint 800px).
+
+### Logic cần đạt
+1. **Màn hình ≤ 640px:**
+   - Thanh trên cùng chỉ còn: logo, bộ chuyển PDF/Word, nút "Xuất PDF" dạng **chỉ icon** (khi đang mở PDF; có `aria-label="Xuất PDF"`), và một nút **"⋯"**.
+   - Nút "⋯" có `aria-label="Thêm thao tác"`, `aria-haspopup="menu"`, `aria-expanded`.
+2. **Nội dung menu "⋯"**, theo thứ tự (mục nào không áp dụng thì ẩn):
+   - Mở file (khi đang mở PDF)
+   - Hướng dẫn (link `/huong-dan/`, mở tab mới)
+   - Activity log
+   - Administration (chỉ admin)
+   - Tên người dùng (dòng chữ, không bấm được)
+   - Đăng xuất
+
+   Khi chưa đăng nhập, menu có "Hướng dẫn" và "Đăng nhập Microsoft".
+3. **Hành vi menu:**
+   - Mở ngay dưới nút, nằm trong màn hình.
+   - Đóng khi nhấn `Esc`, bấm ra ngoài, hoặc chọn một mục.
+   - Khi mở, focus vào mục đầu; khi đóng, focus trả về nút "⋯".
+   - Dùng `role="menu"` / `role="menuitem"`; mũi tên lên/xuống chuyển mục.
+   - Mỗi mục gọi **đúng hàm hiện có** (`fileInput.current?.click()`, `setShowActivities(true)`, `setShowAdmin(true)`, `logout`, `login`), không viết lại logic.
+4. **Màn hình > 640px giữ nguyên** bố cục hiện tại (desktop/tablet không đổi).
+5. Không thêm thư viện menu/dropdown; dùng React state + CSS.
+
+### Tiêu chí phần C
+- C1: 360px và 390px, đã đăng nhập (đăng nhập giả lập DEV), đang mở PDF:
+  - Mọi phần tử trong `.topbar` có `getBoundingClientRect()` nằm trong `[0, innerWidth]`; trang không cuộn ngang.
+  - Mở "⋯" → thấy và bấm được "Đăng xuất"; menu nằm trong màn hình.
+- C2: Bàn phím: Tab tới "⋯", Enter mở menu, focus ở mục đầu; mũi tên xuống chuyển mục; Esc đóng và focus về "⋯".
+- C3: Từ menu: "Activity log" mở panel; "Hướng dẫn" có `href="/huong-dan/"` + `target="_blank"`; "Đăng xuất" gọi đúng `logout`. Nút "Xuất PDF" icon vẫn tải file `-edited.pdf`.
+- C4: 390px chưa đăng nhập: "Đăng nhập Microsoft" truy cập được (trên thanh hoặc trong menu).
+- C5: 768px và 1280px: thanh trên cùng giống trước W-5c (đủ các nút như hiện tại, không có nút "⋯").
+- C6: Có test tự động (dùng `react-dom/client` + `act` của React như `src/__tests__/topbar-help.test.tsx`, không thêm Testing Library) cho mở/đóng menu và các mục theo trạng thái đăng nhập/admin. Đính kèm ảnh chụp 390px (menu đóng và menu mở), 768px, 1280px.
+
+---
+
 ## Ràng buộc
 - Phần A chỉ sửa/tạo trong `src/word-anonymizer/core/` và `src/word-anonymizer/__tests__/`.
 - Phần B chỉ sửa: `src/word-anonymizer/WordAnonymizerPage.tsx`, `src/word-anonymizer/word-anonymizer.css`, `src/word-anonymizer/__tests__/WordAnonymizerPage.test.tsx`.
-- Không sửa `server/`, `public/huong-dan/`, `src/App.tsx`. Không thêm dependency.
+- Phần C chỉ sửa:
+  - `src/App.tsx` (chỉ phần topbar và state của menu)
+  - CSS: `src/auth-styles.css` hoặc file CSS mới `src/topbar-mobile.css` (import trong `src/main.tsx`; được sửa `src/main.tsx` đúng 1 dòng import)
+  - test mới `src/__tests__/topbar-mobile.test.tsx`; được cập nhật `src/__tests__/topbar-help.test.tsx` nếu cần
+- Không sửa `server/`, `public/huong-dan/`. Phần A và B không sửa `src/App.tsx`. Không thêm dependency.
 - Fixture dựng bằng JSZip trong test, dữ liệu rõ ràng là giả: `Công ty TNHH Mẫu Thử`, `Người Đại Diện Test 01`, `@example.com`, CCCD/MST/STK/số điện thoại như ví dụ ở trên, địa chỉ `Số 1 Đường Test…`. Không commit file Word thật.
 - Lint/test/build xanh **sau từng commit**.
 
 ## Chứng minh + commit + push (PowerShell)
-Sau phần A, rồi sau phần B:
+Sau phần A, phần B, rồi phần C:
 ```powershell
 npm run lint; npm test; npm run build
-git add src/word-anonymizer
+git add src
 git commit -m "<message của phần tương ứng>"
 ```
-Sau khi xong cả 2 phần:
+Sau khi xong cả 3 phần:
 ```powershell
-git log --oneline -3
+git log --oneline -4
 git diff --stat main...HEAD
 Select-String -Path src/word-anonymizer/WordAnonymizerPage.tsx -Pattern "localStorage|sessionStorage"
 Select-String -Path src/word-anonymizer/core/*.ts -Pattern "delText"
 git push -u origin feat/w5-entities-sensitive-masking
 ```
 Kỳ vọng:
-- `git log` có đúng 2 commit `W-5a`, `W-5b` trên `main`.
+- `git log` có đúng 3 commit `W-5a`, `W-5b`, `W-5c` trên `main`.
 - `git diff --stat` chỉ có file trong Ràng buộc.
 - Select-String `localStorage|sessionStorage` không có kết quả.
 - Select-String `delText` chỉ xuất hiện ở phần **đọc/cảnh báo/residual**, không có chỗ ghi đè nội dung; giải thích từng dòng trong báo cáo.
@@ -193,6 +243,6 @@ git log --oneline -1 origin/feat/w5-entities-sensitive-masking
 
 ## Báo cáo
 Output Bước A, output `git push`, output Bước Z ở đầu, rồi theo `00_RULES.md`, thêm:
-- Bảng `Phần | K | tên test | pass` (A1–A15, B1–B7).
+- Bảng `Phần | K | tên test | pass` (A1–A15, B1–B7, C1–C6).
 - Danh sách mẫu và từ khoá đã cài cho từng loại, kèm các `TODO(verify)`.
-- 3 ảnh chụp ở 390/768/1280px.
+- 3 ảnh chụp trang Ẩn danh Word ở 390/768/1280px (Phần B), và ảnh chụp thanh trên cùng theo C6.
