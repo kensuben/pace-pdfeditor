@@ -33,12 +33,43 @@ export interface InspectionStats {
   authorCount: number
 }
 
+export type EntityKind = 'organization' | 'representative'
+
+export interface CustomEntity {
+  id: string
+  kind: EntityKind
+  label: string
+  values: string[]
+}
+
+export type SensitiveKind =
+  | 'email'
+  | 'phone'
+  | 'nationalId'
+  | 'taxCode'
+  | 'bankAccount'
+  | 'address'
+
+export interface SensitiveItem {
+  kind: SensitiveKind
+  value: string
+  normalized: string
+  count: number
+}
+
+export interface DeletedTextHit {
+  kind: SensitiveKind | 'entity'
+  count: number
+}
+
 export interface InspectionReport {
   identities: KnownIdentity[]
   stats: InspectionStats
   warnings: string[]
   hasMacro: boolean
   hasEmbeddings: boolean
+  sensitive: SensitiveItem[]
+  deletedTextHits: DeletedTextHit[]
 }
 
 export interface MappedIdentity {
@@ -57,6 +88,14 @@ export interface AnonymizeOptions {
   replaceNamesInCommentText: boolean
   scrubDocProps: boolean
   customPropsPolicy: CustomPropsPolicy
+  customEntities?: CustomEntity[]
+  maskKinds?: Partial<Record<SensitiveKind, boolean>>
+  keepValues?: string[]
+}
+
+export interface AnonymizeReplacements {
+  entities: number
+  byKind: Record<SensitiveKind, number>
 }
 
 export interface AnonymizeReport {
@@ -64,6 +103,7 @@ export interface AnonymizeReport {
   mapping: IdentityMapping
   modifiedParts: string[]
   warnings: string[]
+  replacements: AnonymizeReplacements
 }
 
 export interface AnonymizeResult {
@@ -71,7 +111,11 @@ export interface AnonymizeResult {
   report: AnonymizeReport
 }
 
-export type ResidualCategory = 'metadata' | 'comment-text' | 'body-text'
+export type ResidualCategory =
+  | 'metadata'
+  | 'comment-text'
+  | 'body-text'
+  | 'deleted-text'
 
 export interface ResidualFinding {
   part: string

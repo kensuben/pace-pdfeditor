@@ -660,7 +660,16 @@ describe('QA Fixes (F-2)', () => {
     expect(ident!.userId).toBe('S::hocvien.test03@example.com::00000000-0000-0000-0000-000000000000')
 
     const mapping = buildDefaultMapping(report)
-    const result = await anonymizeDocx(input, mapping)
+    const result = await anonymizeDocx(input, mapping, {
+      maskKinds: {
+        email: false,
+        phone: false,
+        nationalId: false,
+        taxCode: false,
+        bankAccount: false,
+        address: false,
+      },
+    })
 
     const resReport = await scanResidual(await result.blob.arrayBuffer(), report.identities)
     expect(resReport.status).toBe('WARN')
@@ -690,7 +699,7 @@ describe('QA Fixes (F-2)', () => {
 
     const resReport = await scanResidual(await result.blob.arrayBuffer(), report.identities)
     expect(resReport.status).toBe('WARN')
-    const bodyFinding = resReport.findings.find((f) => f.category === 'body-text')
+    const bodyFinding = resReport.findings.find((f) => f.category === 'body-text' || f.category === 'deleted-text')
     expect(bodyFinding).toBeDefined()
   })
 

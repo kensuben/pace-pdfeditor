@@ -11,7 +11,8 @@ import { parseXml } from './xml'
 
 export async function scanResidual(
   output: ArrayBuffer,
-  identities: KnownIdentity[]
+  identities: KnownIdentity[],
+  extraTargets: string[] = []
 ): Promise<ResidualReport> {
   let zip: JSZip
   try {
@@ -36,6 +37,9 @@ export async function scanResidual(
     if (ident.author) rawTargets.push(ident.author)
     if (ident.email) rawTargets.push(ident.email)
     if (ident.userId) rawTargets.push(ident.userId)
+  }
+  for (const extra of extraTargets) {
+    if (extra) rawTargets.push(extra)
   }
 
   // Deduplicate and filter out short strings (<= 2 chars)
@@ -115,16 +119,26 @@ function determineCategory(
 
   try {
     const doc = parseXml(rawXml)
-    // Group w:t, w:delText, w:instrText into text content
-    const textEls = [
-      ...Array.from(doc.getElementsByTagNameNS(OOXML_NAMESPACES.w, 't')),
-      ...Array.from(doc.getElementsByTagNameNS(OOXML_NAMESPACES.w, 'delText')),
-      ...Array.from(doc.getElementsByTagNameNS(OOXML_NAMESPACES.w, 'instrText')),
-    ]
+    const tEls = Array.from(doc.getElementsByTagNameNS(OOXML_NAMESPACES.w, 't'))
+    const delTextEls = Array.from(
+      doc.getElementsByTagNameNS(OOXML_NAMESPACES.w, 'delText')
+    )
+    const instrEls = Array.from(
+      doc.getElementsByTagNameNS(OOXML_NAMESPACES.w, 'instrText')
+    )
 
-    let allTextCombined = ''
-    for (const el of textEls) {
-      allTextCombined += ' ' + (el.textContent || '')
+    let tAndInstrText = ''
+    for (const el of [...tEls, ...instrEls]) {
+      tAndInstrText += ' ' + (el.textContent || '')
+    }
+
+    let delTextCombined = ''
+    for (const el of delTextEls) {
+      delTextCombined += ' ' + (el.textContent || '')
+    }
+
+    // Clear all text elements to see if target appears in XML structure/attributes
+    for (const el of [...tEls, ...delTextEls, ...instrEls]) {
       el.textContent = ''
     }
 
@@ -135,9 +149,14 @@ function determineCategory(
       return 'metadata'
     }
 
-    const foldedOnlyText = foldSearchString(allTextCombined)
-    if (foldedOnlyText.includes(foldedTarget)) {
+    const foldedTAndInstr = foldSearchString(tAndInstrText)
+    if (foldedTAndInstr.includes(foldedTarget)) {
       return path === 'word/comments.xml' ? 'comment-text' : 'body-text'
+    }
+
+    const foldedDelText = foldSearchString(delTextCombined)
+    if (foldedDelText.includes(foldedTarget)) {
+      return 'deleted-text'
     }
   } catch {
     return 'metadata'
