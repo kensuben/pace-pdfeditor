@@ -176,7 +176,12 @@ ADMIN_EMAILS=admin.test@example.com,security.test@example.com
 
 Sau khi admin đăng nhập Microsoft, nút Administration xuất hiện cạnh Activity Log. Admin có thể tạo group, thêm email được phép đăng nhập, bật/tắt tài khoản, cấp quyền admin, gán group, xem user online, tìm kiếm/lọc log và xóa log trong một khoảng thời gian xác định. User online được xác định bằng heartbeat 30 giây và thời hạn hiện diện 90 giây.
 
-Dữ liệu backend nằm ở `/data/store.json` trong volume. Cần backup volume này định kỳ. Với tải lớn hoặc yêu cầu audit tuân thủ cao, nên thay JSON store bằng PostgreSQL/SQL Server và append-only/WORM retention.
+Dữ liệu backend nằm ở `/data/store.json` trong volume. Cần backup volume này định kỳ. Việc backup volume dữ liệu đã bao gồm cả file `store.json` lẫn toàn bộ các file lưu trữ `logs-archive-*.jsonl`. Với tải lớn hoặc yêu cầu audit tuân thủ cao, nên thay JSON store bằng PostgreSQL/SQL Server và append-only/WORM retention.
+
+Hệ thống API backend được gia cố với các cơ chế:
+- **Giới hạn request body (`API_BODY_LIMIT_BYTES`)**: Giới hạn dung lượng nhận request (mặc định 256 KB = 262.144 bytes). Request vượt giới hạn bị ngắt sớm và trả về lỗi 413. JSON sai định dạng hoặc gốc không phải object bị trả lỗi 400.
+- **Phiên trong bộ nhớ & gộp lần ghi (Coalescing Writes)**: Phiên người dùng và heartbeat được lưu trữ trong `Map` trên bộ nhớ (không ghi đĩa), tự động dọn các phiên sau 10 phút không có heartbeat. Các thao tác cập nhật dữ liệu được gộp trong 500 ms và ghi atomic qua file tạm (`.tmp` -> `rename`), hỗ trợ flush an toàn khi nhận tín hiệu dừng `SIGTERM`/`SIGINT`.
+- **Xoay vòng log (`LOG_MAX_IN_STORE`)**: Giới hạn số lượng log trong `store.json` (mặc định 20.000 log, cấu hình số nguyên ≥ 1.000). Phần log vượt ngưỡng được tự động xoay vòng sang các file lưu trữ theo tháng `logs-archive-YYYY-MM.jsonl` (JSON Lines) trong cùng volume `/data`. Thao tác xóa log của admin (`DELETE /api/admin/logs`) chỉ tác động lên log trong `store.json` mà không ảnh hưởng tới các file archive.
 
 ## Deploy production (VPS)
 
@@ -202,7 +207,7 @@ Dữ liệu backend nằm ở `/data/store.json` trong volume. Cần backup volu
    > - Đường dẫn là **tương đối** từ thư mục repo (`deploy/.env.production`), không có `/` ở đầu. `nano /deploy/.env.production` sẽ mở nhầm thư mục `/deploy` ở gốc ổ đĩa.
    > - Không để nguyên GUID toàn số 0 của file mẫu: API vẫn khởi động (vì là GUID hợp lệ) nhưng **không ai đăng nhập được**.
 
-   *(Điền `MICROSOFT_CLIENT_ID` và `MICROSOFT_TENANT_ID` dạng GUID của PACE, và `ADMIN_EMAILS`. Lưu ý: ứng dụng là single-tenant, `MICROSOFT_TENANT_ID` bắt buộc là GUID, API sẽ fail-closed và dừng nếu để `common`/`organizations` hoặc rỗng. Ở lần đăng nhập đầu tiên sau cập nhật, tài khoản cũ được tự động gắn `oid`)*
+   *(Điền `MICROSOFT_CLIENT_ID` và `MICROSOFT_TENANT_ID` dạng GUID của PACE, `ADMIN_EMAILS`, và tùy chọn `LOG_MAX_IN_STORE` [mặc định 20.000 log, xoay vòng sang `logs-archive-*.jsonl`] hoặc `API_BODY_LIMIT_BYTES` [mặc định 256 KB]. Lưu ý: ứng dụng là single-tenant, `MICROSOFT_TENANT_ID` bắt buộc là GUID, API sẽ fail-closed và dừng nếu để `common`/`organizations` hoặc rỗng. Ở lần đăng nhập đầu tiên sau cập nhật, tài khoản cũ được tự động gắn `oid`)*
 4. **Chọn cổng và địa chỉ lắng nghe** theo vị trí reverse proxy HTTPS (sửa `APP_BIND`, `APP_PORT` trong `deploy/.env.production`):
 
    | Reverse proxy | `APP_BIND` | `APP_PORT` |
