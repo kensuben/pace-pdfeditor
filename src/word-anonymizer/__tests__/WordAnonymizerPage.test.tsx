@@ -1134,5 +1134,117 @@ Trụ sở chính: Địa chỉ: Số 1 Đường Test, P. Bến Nghé, Quận 1
       root.unmount()
       container.remove()
     })
+
+    // F-10 K1: Residual respects user keep/disable options
+    it('K1-a: unchecking individual phone keeps phone, masks email, residual PASS', async () => {
+      const container = document.createElement('div')
+      document.body.appendChild(container)
+      const root = createRoot(container)
+
+      const fixtureText = 'Điện thoại: 0912 345 678; Email: lienhe.test@example.com'
+      const mockDocxBytes = await createMockDocx({
+        documentText: fixtureText,
+      })
+
+      act(() => {
+        root.render(
+          <WordAnonymizerPage
+            account={mockAccount}
+            apiUser={null}
+            authReady={true}
+            onSignInMicrosoft={vi.fn()}
+            log={vi.fn()}
+          />
+        )
+      })
+
+      const fileInput = container.querySelector('input[type="file"]') as HTMLInputElement
+      await uploadMockFile(fileInput, new File([mockDocxBytes], 'k1-a.docx'))
+
+      // Uncheck "Che" for phone 0912 345 678
+      const phoneGroup = Array.from(
+        container.querySelectorAll('.sensitive-kind-group')
+      ).find((g) => g.textContent?.includes('Số điện thoại'))
+      const phoneRows = phoneGroup?.querySelectorAll('tbody tr')
+      expect(phoneRows?.length).toBe(1)
+      const phoneKeepCb = phoneRows![0].querySelector('input[type="checkbox"]') as HTMLInputElement
+      await act(async () => {
+        phoneKeepCb.click()
+        await new Promise((r) => setTimeout(r, 50))
+      })
+
+      // Click Anonymize
+      const anonymizeBtn = Array.from(container.querySelectorAll('button')).find((b) =>
+        b.textContent?.includes('Ẩn danh tài liệu')
+      )
+      await act(async () => {
+        anonymizeBtn!.click()
+        await new Promise((r) => setTimeout(r, 500))
+      })
+
+      // Verify residual report is PASS (not WARN)
+      expect(container.textContent).toContain('ĐẠT BẢO MẬT (PASS)')
+      expect(container.textContent).not.toContain('CẢNH BÁO (WARN)')
+
+      // Verify download link is ready
+      const downloadLink = container.querySelector('a.primary') as HTMLAnchorElement
+      expect(downloadLink).not.toBeNull()
+
+      root.unmount()
+      container.remove()
+    })
+
+    it('K1-b: disabling phone kind toggle keeps phone, masks email, residual PASS', async () => {
+      const container = document.createElement('div')
+      document.body.appendChild(container)
+      const root = createRoot(container)
+
+      const fixtureText = 'Điện thoại: 0912 345 678; Email: lienhe.test@example.com'
+      const mockDocxBytes = await createMockDocx({
+        documentText: fixtureText,
+      })
+
+      act(() => {
+        root.render(
+          <WordAnonymizerPage
+            account={mockAccount}
+            apiUser={null}
+            authReady={true}
+            onSignInMicrosoft={vi.fn()}
+            log={vi.fn()}
+          />
+        )
+      })
+
+      const fileInput = container.querySelector('input[type="file"]') as HTMLInputElement
+      await uploadMockFile(fileInput, new File([mockDocxBytes], 'k1-b.docx'))
+
+      // Turn off "Số điện thoại" toggle
+      const phoneToggleLabel = Array.from(
+        container.querySelectorAll('.sensitive-toggle-item')
+      ).find((el) => el.textContent?.includes('Số điện thoại'))
+      const phoneCb = phoneToggleLabel?.querySelector('input[type="checkbox"]') as HTMLInputElement
+      expect(phoneCb).toBeDefined()
+      await act(async () => {
+        phoneCb.click()
+        await new Promise((r) => setTimeout(r, 50))
+      })
+
+      // Click Anonymize
+      const anonymizeBtn = Array.from(container.querySelectorAll('button')).find((b) =>
+        b.textContent?.includes('Ẩn danh tài liệu')
+      )
+      await act(async () => {
+        anonymizeBtn!.click()
+        await new Promise((r) => setTimeout(r, 500))
+      })
+
+      // Verify residual report is PASS (not WARN)
+      expect(container.textContent).toContain('ĐẠT BẢO MẬT (PASS)')
+      expect(container.textContent).not.toContain('CẢNH BÁO (WARN)')
+
+      root.unmount()
+      container.remove()
+    })
   })
 })

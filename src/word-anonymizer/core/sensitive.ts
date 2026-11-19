@@ -39,13 +39,25 @@ const BANK_ACCOUNT_KEYWORDS = [
   'account number',
 ]
 
-// TODO(verify): Nhãn mở đầu địa chỉ: bao gồm Trụ sở chính, Địa chỉ liên hệ, Địa chỉ giao dịch, v.v.
+// TODO(verify): Pre-check nhanh cho địa chỉ: có chữ "địa chỉ"/"trụ sở"/"trú tại" hoặc nhãn cũ, có và không dấu
+const ADDRESS_PRECHECK_REGEX =
+  /(?:địa\s*chỉ|dia\s*chi|trụ\s*sở|tru\s*so|trú\s*tại|tru\s*tai|văn\s*phòng|van\s*phong|address)/iu
+
+// TODO(verify): Nhãn mở đầu địa chỉ viết liền và có dấu hai chấm
 const ADDRESS_LABEL_REGEX =
-  /(?<![\p{L}\p{N}])(?:Địa\s*chỉ\s*trụ\s*sở|Dia\s*chi\s*tru\s*so|Địa\s*chỉ\s*liên\s*hệ|Dia\s*chi\s*lien\s*he|Địa\s*chỉ\s*giao\s*dịch|Dia\s*chi\s*giao\s*dich|Địa\s*chỉ\s*thường\s*trú|Dia\s*chi\s*thuong\s*tru|Địa\s*chỉ|Dia\s*chi|Trụ\s*sở\s*chính|Tru\s*so\s*chinh|Trụ\s*sở|Tru\s*so|Văn\s*phòng|Van\s*phong|Nơi\s*cư\s*trú|Noi\s*cu\s*tru|Address)\s*:\s*/giu
+  /(?<![\p{L}\p{N}])(?:(?:có\s+địa\s+chỉ\s+tại|co\s+dia\s+chi\s+tai|địa\s+chỉ\s+trụ\s+sở\s+tại|dia\s+chi\s+tru\s+so\s+tai|địa\s+chỉ\s+tại|dia\s+chi\s+tai|có\s+trụ\s+sở\s+tại|co\s+tru\s+so\s+tai|trụ\s+sở\s+chính\s+tại|tru\s+so\s+chinh\s+tai|trụ\s+sở\s+tại|tru\s+so\s+tai|thường\s+trú\s+tại|thuong\s+tru\s+tai|cư\s+trú\s+tại|cu\s+tru\s+tai|địa\s+chỉ\s+là|dia\s+chi\s+la)(?::\s*|\s+)|(?:Địa\s*chỉ\s*trụ\s*sở|Dia\s*chi\s*tru\s*so|Địa\s*chỉ\s*liên\s*hệ|Dia\s*chi\s*lien\s*he|Địa\s*chỉ\s*giao\s*dịch|Dia\s*chi\s*giao\s*dich|Địa\s*chỉ\s*thường\s*trú|Dia\s*chi\s*thuong\s*tru|Địa\s*chỉ|Dia\s*chi|Trụ\s*sở\s*chính|Tru\s*so\s*chinh|Trụ\s*sở|Tru\s*so|Văn\s*phòng|Van\s*phong|Nơi\s*cư\s*trú|Noi\s*cu\s*tru|Address)\s*:\s*)/giu
 
 // TODO(verify): Nhãn dừng địa chỉ: các nhãn trường thông tin tiếp theo trong hợp đồng/văn bản.
 const ADDRESS_STOP_LABEL_REGEX =
   /(?<![\p{L}\p{N}])(?:Điện\s*thoại|Dien\s*thoai|ĐT|DT|Tel|Fax|Email|E-mail|Website|Người\s*đại\s*diện|Nguoi\s*dai\s*dien|Đại\s*diện|Dai\s*dien|Chức\s*vụ|Chuc\s*vu|Mã\s*số\s*thuế|Ma\s*so\s*thue|MST|Số\s*tài\s*khoản|So\s*tai\s*khoan|STK|CCCD|CMND)(?![\p{L}\p{N}])/iu
+
+// TODO(verify): Điểm dừng bổ sung cho dạng viết liền: các cụm phẩy + nhãn trường tiếp theo
+const INLINE_COMMA_STOP_REGEX =
+  /,\s*(?:do\s+|(?:người\s*đại\s*diện|nguoi\s*dai\s*dien|đại\s*diện|dai\s*dien|mã\s*số\s*thuế|ma\s*so\s*thue|mst|điện\s*thoại|dien\s*thoai|đt|dt|e-?mail)(?![\p{L}\p{N}]))/iu
+
+// TODO(verify): Điểm dừng bổ sung cho dạng viết liền: dấu chấm theo sau là khoảng trắng và chữ in hoa (loại trừ từ viết tắt hành chính phổ biến)
+const INLINE_DOT_STOP_REGEX =
+  /(?<!\b(?:TP|Q|P|TX|TT|H|X|T|KDC|KCN|BT|No|Str|St|Rd|Ave|Bldg|Apt|Fl))\.\s+[\p{Lu}]/iu
 
 function isWordChar(text: string, pos: number): boolean {
   const code = text.charCodeAt(pos)
@@ -316,7 +328,7 @@ export function findEmails(text: string): SensitiveMatch[] {
 
 export function findAddresses(text: string): SensitiveMatch[] {
   const matches: SensitiveMatch[] = []
-  if (!text.includes(':')) return matches
+  if (!ADDRESS_PRECHECK_REGEX.test(text)) return matches
 
   const addressRegex = new RegExp(ADDRESS_LABEL_REGEX.source, ADDRESS_LABEL_REGEX.flags)
   let match: RegExpExecArray | null
@@ -343,6 +355,18 @@ export function findAddresses(text: string): SensitiveMatch[] {
     const stopMatch = ADDRESS_STOP_LABEL_REGEX.exec(maxSlice)
     if (stopMatch && stopMatch.index < stopIndex) {
       stopIndex = stopMatch.index
+    }
+
+    // Check inline comma stops (, do , , đại diện, , MST...)
+    const commaMatch = INLINE_COMMA_STOP_REGEX.exec(maxSlice)
+    if (commaMatch && commaMatch.index < stopIndex) {
+      stopIndex = commaMatch.index
+    }
+
+    // Check inline dot stops (. followed by space and uppercase letter)
+    const dotMatch = INLINE_DOT_STOP_REGEX.exec(maxSlice)
+    if (dotMatch && dotMatch.index < stopIndex) {
+      stopIndex = dotMatch.index
     }
 
     const rawAddress = maxSlice.slice(0, stopIndex)

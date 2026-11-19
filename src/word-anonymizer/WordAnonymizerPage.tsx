@@ -420,7 +420,10 @@ export default function WordAnonymizerPage({
         ...deletedHits.map((h) => h.text).filter(Boolean) as string[],
       ]
       const extraTargets = [...entities, ...sensitiveTargets]
-      const residuals = await scanResidual(outArrayBuffer, inspection.identities, extraTargets)
+      const residuals = await scanResidual(outArrayBuffer, inspection.identities, extraTargets, {
+        maskKinds,
+        keepValues,
+      })
 
       setAnonymizeResult(result)
       setResidualReport(residuals)
@@ -969,10 +972,10 @@ export default function WordAnonymizerPage({
                               {items.map((item) => (
                                 <tr key={item.normalized}>
                                   <td>
-                                    <code>{item.sampleValue}</code>
+                                    <span className="sensitive-value">{item.sampleValue}</span>
                                   </td>
                                   <td>
-                                    <code>{item.maskedPreview}</code>
+                                    <span className="sensitive-value">{item.maskedPreview}</span>
                                   </td>
                                   <td>
                                     <b>{item.count}</b>
