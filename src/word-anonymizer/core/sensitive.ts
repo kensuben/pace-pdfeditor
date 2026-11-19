@@ -55,9 +55,9 @@ const ADDRESS_STOP_LABEL_REGEX =
 const INLINE_COMMA_STOP_REGEX =
   /,\s*(?:do\s+|(?:người\s*đại\s*diện|nguoi\s*dai\s*dien|đại\s*diện|dai\s*dien|mã\s*số\s*thuế|ma\s*so\s*thue|mst|điện\s*thoại|dien\s*thoai|đt|dt|e-?mail)(?![\p{L}\p{N}]))/iu
 
-// TODO(verify): Điểm dừng bổ sung cho dạng viết liền: dấu chấm theo sau là khoảng trắng và chữ in hoa thật (chỉ dùng cờ u, không dùng cờ i để tránh khớp nhầm chữ thường)
+// TODO(verify): Điểm dừng bổ sung cho dạng viết liền: dấu chấm theo sau là khoảng trắng và chữ in hoa thật (chỉ dùng cờ u; ranh giới từ dùng (?<![\p{L}\p{N}]) để hiểu đúng Unicode tiếng Việt)
 const INLINE_DOT_STOP_REGEX =
-  /(?<!\b(?:TP|Tp|tp|Q|q|P|p|TX|Tx|tx|TT|Tt|tt|H|h|X|x|T|t|KDC|Kdc|kdc|KCN|Kcn|kcn|BT|Bt|bt|No|no|Str|str|St|st|Rd|rd|Ave|ave|Bldg|bldg|Apt|apt|Fl|fl))\.\s+[\p{Lu}]/u
+  /(?<!(?<![\p{L}\p{N}])(?:TP|Tp|tp|Q|q|P|p|TX|Tx|tx|TT|Tt|tt|H|h|X|x|T|t|KDC|Kdc|kdc|KCN|Kcn|kcn|BT|Bt|bt|No|no|Str|str|St|st|Rd|rd|Ave|ave|Bldg|bldg|Apt|apt|Fl|fl))\.\s+[\p{Lu}]/u
 
 function isWordChar(text: string, pos: number): boolean {
   const code = text.charCodeAt(pos)
