@@ -48,25 +48,11 @@ function getDirectParagraphTNodes(p: Element): Element[] {
   })
 }
 
-function getDirectParagraphDelTextNodes(p: Element): Element[] {
-  const allDel = Array.from(p.getElementsByTagNameNS(OOXML_NAMESPACES.w, 'delText'))
-  return allDel.filter((node) => {
-    let curr = node.parentElement
-    while (curr && curr !== p) {
-      if (curr.localName === 'p' && curr.namespaceURI === OOXML_NAMESPACES.w) {
-        return false
-      }
-      curr = curr.parentElement
-    }
-    return true
-  })
-}
-
 async function scanDeletedText(
   zip: JSZip,
   entities: CustomEntity[] = []
 ): Promise<DeletedTextHit[]> {
-  const hitCounts = new Map<SensitiveKind | 'entity', number>()
+  const hits: DeletedTextHit[] = []
 
   const entries = Object.keys(zip.files).sort()
   for (const path of entries) {
@@ -78,38 +64,41 @@ async function scanDeletedText(
     if (!xmlText.includes('delText')) continue
 
     const doc = parseXml(xmlText)
-    const paragraphs = Array.from(doc.getElementsByTagNameNS(OOXML_NAMESPACES.w, 'p'))
+    const delNodes = Array.from(doc.getElementsByTagNameNS(OOXML_NAMESPACES.w, 'delText'))
+    if (delNodes.length === 0) continue
 
-    for (const p of paragraphs) {
-      const delNodes = getDirectParagraphDelTextNodes(p)
-      if (delNodes.length === 0) continue
+    const combinedDelText = delNodes.map((n) => n.textContent || '').join(' ')
+    if (!combinedDelText.trim()) continue
 
-      const combinedDelText = delNodes.map((n) => n.textContent || '').join('')
-      if (!combinedDelText.trim()) continue
+    // Sensitive matches
+    const sensitiveMatches = findSensitive(combinedDelText)
+    for (const sm of sensitiveMatches) {
+      hits.push({
+        kind: sm.kind,
+        type: 'sensitive',
+        text: sm.value,
+        count: 1,
+        part: path,
+      })
+    }
 
-      // Sensitive matches
-      const sensitiveMatches = findSensitive(combinedDelText)
-      for (const sm of sensitiveMatches) {
-        hitCounts.set(sm.kind, (hitCounts.get(sm.kind) || 0) + 1)
-      }
-
-      // Entity matches
-      if (entities.length > 0) {
-        const entityMatches = findEntityMatches(combinedDelText, entities)
-        if (entityMatches.length > 0) {
-          hitCounts.set('entity', (hitCounts.get('entity') || 0) + entityMatches.length)
-        }
+    // Entity matches
+    if (entities.length > 0) {
+      const entityMatches = findEntityMatches(combinedDelText, entities)
+      for (const em of entityMatches) {
+        hits.push({
+          kind: 'entity',
+          type: 'entity',
+          label: em.replacementText,
+          text: combinedDelText.slice(em.start, em.end),
+          count: 1,
+          part: path,
+        })
       }
     }
   }
 
-  const result: DeletedTextHit[] = []
-  for (const [kind, count] of hitCounts.entries()) {
-    if (count > 0) {
-      result.push({ kind, count })
-    }
-  }
-  return result
+  return hits
 }
 
 export async function inspectLoadedDocx(

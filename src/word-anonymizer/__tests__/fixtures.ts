@@ -110,9 +110,9 @@ export async function createMockDocx(options: FixtureOptions = {}): Promise<Arra
         if (rev.part === 'document') {
           const dateAttr = rev.date ? ` ${wPrefix}:date="${rev.date}"` : ''
           if (rev.isDelText) {
-            documentBody += `<${wPrefix}:${rev.type} ${wPrefix}:author="${rev.author}"${dateAttr}><${wPrefix}:r><${wPrefix}:delText>${rev.text || 'rev'}</${wPrefix}:delText></${wPrefix}:r></${wPrefix}:${rev.type}>`
+            documentBody += `<${wPrefix}:p><${wPrefix}:${rev.type} ${wPrefix}:author="${rev.author}"${dateAttr}><${wPrefix}:r><${wPrefix}:delText>${rev.text || 'rev'}</${wPrefix}:delText></${wPrefix}:r></${wPrefix}:${rev.type}></${wPrefix}:p>`
           } else {
-            documentBody += `<${wPrefix}:${rev.type} ${wPrefix}:author="${rev.author}"${dateAttr}><${wPrefix}:r><${wPrefix}:t>${rev.text || 'rev'}</${wPrefix}:t></${wPrefix}:r></${wPrefix}:${rev.type}>`
+            documentBody += `<${wPrefix}:p><${wPrefix}:${rev.type} ${wPrefix}:author="${rev.author}"${dateAttr}><${wPrefix}:r><${wPrefix}:t>${rev.text || 'rev'}</${wPrefix}:t></${wPrefix}:r></${wPrefix}:${rev.type}></${wPrefix}:p>`
           }
         }
       }

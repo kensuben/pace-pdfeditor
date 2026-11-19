@@ -2,6 +2,7 @@ import JSZip from 'jszip'
 import { OOXML_NAMESPACES } from './constants'
 import { foldSearchString } from './normalize'
 import {
+  CustomEntity,
   KnownIdentity,
   ResidualCategory,
   ResidualFinding,
@@ -12,7 +13,7 @@ import { parseXml } from './xml'
 export async function scanResidual(
   output: ArrayBuffer,
   identities: KnownIdentity[],
-  extraTargets: string[] = []
+  extraTargets: (string | CustomEntity)[] = []
 ): Promise<ResidualReport> {
   let zip: JSZip
   try {
@@ -39,7 +40,16 @@ export async function scanResidual(
     if (ident.userId) rawTargets.push(ident.userId)
   }
   for (const extra of extraTargets) {
-    if (extra) rawTargets.push(extra)
+    if (!extra) continue
+    if (typeof extra === 'string') {
+      rawTargets.push(extra)
+    } else if (typeof extra === 'object' && Array.isArray((extra as CustomEntity).values)) {
+      for (const val of (extra as CustomEntity).values) {
+        if (typeof val === 'string') {
+          rawTargets.push(val)
+        }
+      }
+    }
   }
 
   // Deduplicate and filter out short strings (<= 2 chars)

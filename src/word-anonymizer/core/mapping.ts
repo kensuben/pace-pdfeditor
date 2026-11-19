@@ -75,7 +75,8 @@ export function validateMapping(
 
 export function validateEntities(
   entities: CustomEntity[],
-  mapping?: IdentityMapping
+  mapping?: IdentityMapping,
+  identities?: KnownIdentity[]
 ): { valid: boolean; errors: string[] } {
   const errors: string[] = []
   const usedLabels = new Set<string>()
@@ -85,6 +86,13 @@ export function validateEntities(
     for (const m of Object.values(mapping)) {
       if (m.label) {
         participantLabels.add(normalizeString(m.label).toLowerCase())
+      }
+    }
+  }
+  if (identities) {
+    for (const ident of identities) {
+      if (ident.author) {
+        participantLabels.add(normalizeString(ident.author).toLowerCase())
       }
     }
   }

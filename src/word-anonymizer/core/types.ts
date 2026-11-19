@@ -60,6 +60,10 @@ export interface SensitiveItem {
 export interface DeletedTextHit {
   kind: SensitiveKind | 'entity'
   count: number
+  type?: 'entity' | 'sensitive'
+  label?: string
+  text?: string
+  part?: string
 }
 
 export interface InspectionReport {
