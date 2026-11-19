@@ -11,6 +11,7 @@ import {
   cleanStaleSessions,
   CoalescedStore,
 } from './store.mjs'
+import { createShutdownHandler } from './lifecycle.mjs'
 
 const port = Number(process.env.PORT || 3001)
 const file = process.env.DATA_FILE || '/data/store.json'
@@ -51,57 +52,16 @@ const storeManager = new CoalescedStore({
 const save = () => storeManager.scheduleSave()
 
 let server = null
-let isShuttingDown = false
-let shutdownPromise = null
 
-const shutdown = async (signal) => {
-  if (isShuttingDown) {
-    return shutdownPromise
-  }
-  isShuttingDown = true
-
-  const safetyTimer = setTimeout(() => {
-    console.error(`[SERVER] Shutdown timed out after 10s on ${signal}`)
-    process.exit(1)
-  }, 10000)
-  safetyTimer.unref()
-
-  shutdownPromise = (async () => {
-    try {
-      if (server && server.listening) {
-        if (typeof server.closeIdleConnections === 'function') {
-          server.closeIdleConnections()
-        }
-        await new Promise((resolve) => server.close(() => resolve()))
-      }
-    } catch (err) {
-      console.error(`[SERVER] Failed closing server on ${signal}:`, err)
-    }
-
-    try {
-      await storeManager.flush()
-    } catch (err) {
-      console.error(`[SERVER] Flush on ${signal} failed:`, err)
-    } finally {
-      clearTimeout(safetyTimer)
-      process.exit(0)
-    }
-  })()
-
-  return shutdownPromise
-}
+const shutdown = createShutdownHandler({
+  get server() {
+    return server
+  },
+  storeManager,
+})
 
 process.on('SIGTERM', () => shutdown('SIGTERM'))
 process.on('SIGINT', () => shutdown('SIGINT'))
-process.on('message', (msg) => {
-  if (msg && msg.type === 'test-change') {
-    store.users.push(msg.data)
-    save()
-  }
-  if (msg === 'SIGTERM' || msg === 'SIGINT' || msg === 'shutdown') {
-    shutdown('SIGTERM')
-  }
-})
 
 const json = (res, status, data) => {
   res.writeHead(status, {

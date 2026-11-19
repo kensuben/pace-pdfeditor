@@ -121,7 +121,9 @@ export async function rotateLogs(store, { dataDir, maxInStore = parseLogMaxInSto
               return true
             }
           })
-          await writeFile(archivePath, filteredLines.length > 0 ? filteredLines.join('\n') + '\n' : '', 'utf8')
+          const tempPath = `${archivePath}.tmp`
+          await writeFile(tempPath, filteredLines.length > 0 ? filteredLines.join('\n') + '\n' : '', 'utf8')
+          await rename(tempPath, archivePath)
         } catch {}
       }
     }

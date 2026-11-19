@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { describe, it, expect, vi } from 'vitest'
-import { mkdtempSync, rmSync, readFileSync, writeFileSync, statSync } from 'node:fs'
+import { mkdtempSync, rmSync, readFileSync, writeFileSync, statSync, existsSync } from 'node:fs'
 import { appendFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -16,6 +16,7 @@ import {
   parseLogMaxInStore,
   DEFAULT_LOG_MAX_IN_STORE,
 } from '../store.mjs'
+import { createShutdownHandler } from '../lifecycle.mjs'
 
 const execFileAsync = promisify(execFile)
 
@@ -203,6 +204,7 @@ describe('Part C: Coalesced Store & Log Rotation (F-8c)', () => {
   // C5: Gửi SIGTERM khi đang có lần ghi chờ → file có dữ liệu mới nhất trước khi tiến trình thoát (child_process).
   it('C5: flushes pending write on SIGTERM before process terminates', async () => {
     const tempDir = mkdtempSync(join(tmpdir(), 'pace-store-c5-'))
+    let proc = null
     try {
       const dataFile = join(tempDir, 'store.json')
       const workerScript = join(tempDir, 'worker.mjs')
@@ -243,14 +245,22 @@ describe('Part C: Coalesced Store & Log Rotation (F-8c)', () => {
       )
 
       const isWin = process.platform === 'win32'
-      const proc = spawn('node', [workerScript], {
+      proc = spawn('node', [workerScript], {
         cwd: process.cwd(),
         stdio: ['ignore', 'pipe', 'inherit', isWin ? 'ipc' : 'pipe'],
       })
 
-      await new Promise(resolve => {
+      await new Promise((resolve, reject) => {
+        const timeout = setTimeout(() => reject(new Error('C5 worker startup timeout')), 5000)
         proc.stdout.on('data', chunk => {
-          if (chunk.toString().includes('READY')) resolve()
+          if (chunk.toString().includes('READY')) {
+            clearTimeout(timeout)
+            resolve()
+          }
+        })
+        proc.on('error', err => {
+          clearTimeout(timeout)
+          reject(err)
         })
       })
 
@@ -261,7 +271,16 @@ describe('Part C: Coalesced Store & Log Rotation (F-8c)', () => {
         proc.kill('SIGTERM')
       }
 
-      const exitCode = await new Promise(resolve => proc.on('exit', code => resolve(code)))
+      const exitCode = await new Promise((resolve, reject) => {
+        const timeout = setTimeout(() => {
+          if (proc) proc.kill('SIGKILL')
+          reject(new Error('C5 worker exit timeout'))
+        }, 5000)
+        proc.on('exit', code => {
+          clearTimeout(timeout)
+          resolve(code)
+        })
+      })
       expect(exitCode).toBe(0)
 
       // Data file must have the latest change
@@ -269,9 +288,14 @@ describe('Part C: Coalesced Store & Log Rotation (F-8c)', () => {
       expect(saved.users.length).toBe(1)
       expect(saved.users[0].id).toBe('sigterm-saved-user')
     } finally {
+      if (proc && !proc.killed) {
+        try {
+          proc.kill('SIGKILL')
+        } catch {}
+      }
       rmSync(tempDir, { recursive: true, force: true })
     }
-  })
+  }, 10000)
 
   // C6: store.json cũ có sessions → khởi động bình thường; sau lần ghi kế tiếp, file không còn sessions.
   it('C6: ignores legacy sessions on startup and strips sessions from store.json after next write', async () => {
@@ -407,74 +431,132 @@ describe('Part C: Coalesced Store & Log Rotation (F-8c)', () => {
     }
   }, 30000)
 
-  // K2: Test bằng child_process: server thật (DATA_FILE tạm, GUID giả), tạo thay đổi rồi gửi SIGTERM ngay → sau khi tiến trình thoát mã 0, file chứa thay đổi. Gửi SIGTERM 2 lần liên tiếp → không lỗi, không file .tmp sót lại.
-  it('K2: real server child process flushes changes on immediate SIGTERM; handles 2 consecutive SIGTERMs without error or leftover .tmp', async () => {
-    const tempDir = mkdtempSync(join(tmpdir(), 'pace-store-k2-'))
+  // K2 (a): Unit test createShutdownHandler với server giả + CoalescedStore thật đang ghi dở: shutdown chỉ gọi exit(0) sau khi file đã có thay đổi.
+  it('K2a: createShutdownHandler unit test waits for in-flight CoalescedStore write before calling exit(0)', async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), 'pace-store-k2a-'))
     try {
       const dataFile = join(tempDir, 'store.json')
-      const isWin = process.platform === 'win32'
+      const store = { users: [], groups: [], logs: [] }
+      const storeManager = new CoalescedStore({
+        file: dataFile,
+        getStore: () => store,
+        delayMs: 100,
+      })
 
-      const serverProc = spawn('node', ['server/index.mjs'], {
-        cwd: process.cwd(),
-        env: {
-          ...process.env,
-          PORT: '0',
-          DATA_FILE: dataFile,
-          MICROSOFT_CLIENT_ID: '00000000-0000-0000-0000-000000000001',
-          MICROSOFT_TENANT_ID: '00000000-0000-0000-0000-000000000002',
-          ADMIN_EMAILS: 'admin@example.com',
+      // Fake server with close method
+      let serverClosed = false
+      const fakeServer = {
+        listening: true,
+        close(cb) {
+          serverClosed = true
+          if (typeof cb === 'function') cb()
         },
-        stdio: ['ignore', 'pipe', 'inherit', isWin ? 'ipc' : 'pipe'],
-      })
-
-      // Wait until server starts listening
-      await new Promise((resolve, reject) => {
-        serverProc.stdout.on('data', chunk => {
-          if (chunk.toString().includes('API listening on')) {
-            resolve()
-          }
-        })
-        serverProc.on('error', reject)
-      })
-
-      // Stage a change and send SIGTERM immediately
-      if (isWin) {
-        serverProc.send({
-          type: 'test-change',
-          data: { id: 'k2-sigterm-user', name: 'K2 User Saved on Shutdown' },
-        })
-        serverProc.send('SIGTERM')
-        serverProc.send('SIGTERM')
-      } else {
-        serverProc.send({
-          type: 'test-change',
-          data: { id: 'k2-sigterm-user', name: 'K2 User Saved on Shutdown' },
-        })
-        serverProc.kill('SIGTERM')
-        serverProc.kill('SIGTERM')
       }
 
-      const exitCode = await new Promise(resolve => serverProc.on('exit', code => resolve(code)))
-      expect(exitCode).toBe(0)
+      let exitCalledWith = null
+      const mockExit = vi.fn(code => {
+        exitCalledWith = code
+      })
 
-      // Data file must exist and contain the change
+      const shutdown = createShutdownHandler({
+        server: fakeServer,
+        storeManager,
+        exit: mockExit,
+        timeoutMs: 5000,
+      })
+
+      // Stage change and start write
+      store.users.push({ id: 'k2a-saved-user', name: 'Saved on shutdown unit test' })
+      storeManager.scheduleSave()
+
+      // Call shutdown twice concurrently -> only 1 run
+      const p1 = shutdown('SIGTERM')
+      const p2 = shutdown('SIGTERM')
+      expect(p1).toBe(p2)
+
+      await p1
+
+      // Exit(0) must have been called after file is saved
+      expect(mockExit).toHaveBeenCalledTimes(1)
+      expect(exitCalledWith).toBe(0)
+      expect(serverClosed).toBe(true)
+
       const saved = JSON.parse(readFileSync(dataFile, 'utf8'))
-      expect(saved.users.some(u => u.id === 'k2-sigterm-user')).toBe(true)
-
-      // No leftover .tmp file
-      const tmpFile = `${dataFile}.tmp`
-      let tmpExists = false
-      try {
-        statSync(tmpFile)
-        tmpExists = true
-      } catch {
-        tmpExists = false
-      }
-      expect(tmpExists).toBe(false)
+      expect(saved.users.some(u => u.id === 'k2a-saved-user')).toBe(true)
+      expect(existsSync(`${dataFile}.tmp`)).toBe(false)
     } finally {
       rmSync(tempDir, { recursive: true, force: true })
     }
-  }, 15000)
+  })
+
+  // K2 (b): Test child_process dùng TÍN HIỆU THẬT: tạo file server/__tests__/fixtures/shutdown-harness.mjs dựng CoalescedStore + createShutdownHandler, ghi thay đổi rồi in "READY". Test cha gửi kill('SIGTERM') 2 lần → exit code 0, file có thay đổi, không có .tmp.
+  it.skipIf(process.platform === 'win32')(
+    'K2b: real SIGTERM on POSIX terminates harness with exit code 0 and flushes in-flight change',
+    async () => {
+      const tempDir = mkdtempSync(join(tmpdir(), 'pace-store-k2b-'))
+      const dataFile = join(tempDir, 'store.json')
+      const harnessPath = join(process.cwd(), 'server/__tests__/fixtures/shutdown-harness.mjs')
+
+      let child = null
+      try {
+        child = spawn(process.execPath, [harnessPath], {
+          cwd: process.cwd(),
+          env: {
+            ...process.env,
+            DATA_FILE: dataFile,
+          },
+          stdio: ['ignore', 'pipe', 'inherit'],
+        })
+
+        // Wait for child to output "READY"
+        await new Promise((resolve, reject) => {
+          const timeout = setTimeout(() => reject(new Error('Harness startup timed out')), 5000)
+          child.stdout.on('data', chunk => {
+            if (chunk.toString().includes('READY')) {
+              clearTimeout(timeout)
+              resolve()
+            }
+          })
+          child.on('error', err => {
+            clearTimeout(timeout)
+            reject(err)
+          })
+        })
+
+        // Send SIGTERM 2 times consecutively
+        child.kill('SIGTERM')
+        child.kill('SIGTERM')
+
+        const exitCode = await new Promise((resolve, reject) => {
+          const timeout = setTimeout(() => {
+            if (child) child.kill('SIGKILL')
+            reject(new Error('Child exit timed out'))
+          }, 8000)
+          child.on('exit', code => {
+            clearTimeout(timeout)
+            resolve(code)
+          })
+        })
+
+        expect(exitCode).toBe(0)
+
+        // File must have change
+        const saved = JSON.parse(readFileSync(dataFile, 'utf8'))
+        expect(saved.users.some(u => u.id === 'k2-sigterm-user')).toBe(true)
+
+        // No leftover .tmp file
+        expect(existsSync(`${dataFile}.tmp`)).toBe(false)
+      } finally {
+        if (child && !child.killed) {
+          try {
+            child.kill('SIGKILL')
+          } catch {}
+        }
+        rmSync(tempDir, { recursive: true, force: true })
+      }
+    },
+    15000
+  )
 
   // K4: 1.500 log, maxInStore=1000, appendFn bị chặn tới khi test cho phép. Trong lúc chặn, xoá log L0 và L700 bằng cách gán store.logs = store.logs.filter(...) → sau khi xong: archive không có L0; L500 có trong archive; tổng log ở store + archive = 1.498, mỗi id xuất hiện đúng 1 lần.
   it('K4: log rotation by id without losing or duplicating logs during concurrent admin deletion', async () => {
