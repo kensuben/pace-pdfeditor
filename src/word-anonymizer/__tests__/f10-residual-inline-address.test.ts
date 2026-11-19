@@ -213,4 +213,87 @@ describe('F-10: Residual Options, Inline Address Detection, and Vietnamese Diacr
     expect(time2_20).toBeLessThan(200)
     expect(time2_40 / time2_20).toBeLessThanOrEqual(2.5)
   })
+
+  // F-10b: Tests T1 - T4
+  describe('F-10b: Dot stop only at real uppercase and narrowed dia chi la', () => {
+    // T1: 2 câu ở mục 1 -> toàn bộ địa chỉ trước dấu phẩy cuối bị che; không còn "tầng 5", "phường Mẫu", "quận Thử"
+    it('T1: dot followed by lowercase letter does not stop address; no leak of lower-case segments', async () => {
+      // Sentence 1
+      const text1 = 'Địa chỉ: Số 3 Đường Test. tầng 5, Hà Nội'
+      const docx1 = await createMockDocx({ documentText: text1 })
+      const res1 = await anonymizeDocx(docx1, {}, { maskKinds: { address: true } })
+      const outBytes1 = await res1.blob.arrayBuffer()
+      const residual1 = await scanResidual(outBytes1, [], [], { maskKinds: { address: true } })
+      expect(residual1.status).toBe('PASS')
+
+      const zip1 = await JSZip.loadAsync(outBytes1)
+      const docXml1 = await zip1.file('word/document.xml')!.async('string')
+      expect(docXml1).toContain('Địa chỉ: ****, Hà Nội')
+      expect(docXml1).not.toContain('tầng 5')
+
+      // Sentence 2
+      const text2 = 'Có trụ sở tại số 10 ngõ 5 phố Test. phường Mẫu, quận Thử, Hà Nội.'
+      const docx2 = await createMockDocx({ documentText: text2 })
+      const res2 = await anonymizeDocx(docx2, {}, { maskKinds: { address: true } })
+      const outBytes2 = await res2.blob.arrayBuffer()
+      const residual2 = await scanResidual(outBytes2, [], [], { maskKinds: { address: true } })
+      expect(residual2.status).toBe('PASS')
+
+      const zip2 = await JSZip.loadAsync(outBytes2)
+      const docXml2 = await zip2.file('word/document.xml')!.async('string')
+      expect(docXml2).toContain('Có trụ sở tại ****, ****, Hà Nội.')
+      expect(docXml2).not.toContain('phường Mẫu')
+      expect(docXml2).not.toContain('quận Thử')
+    })
+
+    // T2: K3 cũ vẫn đúng (dừng trước ". Ngành")
+    it('T2: stops before dot followed by real uppercase (K3 preserved)', async () => {
+      const text = 'Công ty có trụ sở tại Tòa nhà Test, 123 Đường Mẫu, TP. Hồ Chí Minh. Ngành nghề: đào tạo'
+      const docxBytes = await createMockDocx({ documentText: text })
+      const res = await anonymizeDocx(docxBytes, {}, { maskKinds: { address: true } })
+      const outBytes = await res.blob.arrayBuffer()
+      const residual = await scanResidual(outBytes, [], [], { maskKinds: { address: true } })
+      expect(residual.status).toBe('PASS')
+
+      const zip = await JSZip.loadAsync(outBytes)
+      const outDoc = await zip.file('word/document.xml')!.async('string')
+      expect(outDoc).toContain('Công ty có trụ sở tại ****, ****, TP. Hồ Chí Minh. Ngành nghề: đào tạo')
+    })
+
+    // T3: "Địa chỉ là nơi quan trọng trong hồ sơ" -> không có vùng địa chỉ
+    it('T3: "Địa chỉ là" not followed by number/location identifier is not recognized as address', async () => {
+      const text = 'Địa chỉ là nơi quan trọng trong hồ sơ'
+      const addrMatches = findAddresses(text)
+      expect(addrMatches).toEqual([])
+
+      const sensMatches = findSensitive(text)
+      const addrSens = sensMatches.filter((m) => m.kind === 'address')
+      expect(addrSens).toEqual([])
+
+      const docxBytes = await createMockDocx({ documentText: text })
+      const res = await anonymizeDocx(docxBytes, {}, { maskKinds: { address: true } })
+      const outBytes = await res.blob.arrayBuffer()
+      const zip = await JSZip.loadAsync(outBytes)
+      const outDoc = await zip.file('word/document.xml')!.async('string')
+      expect(outDoc).toContain('Địa chỉ là nơi quan trọng trong hồ sơ')
+    })
+
+    // T4: "Địa chỉ là Số 1 Đường Test, Hà Nội" -> "Địa chỉ là ****, Hà Nội"
+    it('T4: "Địa chỉ là" followed by "Số" is recognized and masked properly', async () => {
+      const text = 'Địa chỉ là Số 1 Đường Test, Hà Nội'
+      const addrMatches = findAddresses(text)
+      expect(addrMatches.length).toBe(1)
+      expect(addrMatches[0].value).toBe('Số 1 Đường Test, Hà Nội')
+
+      const docxBytes = await createMockDocx({ documentText: text })
+      const res = await anonymizeDocx(docxBytes, {}, { maskKinds: { address: true } })
+      const outBytes = await res.blob.arrayBuffer()
+      const residual = await scanResidual(outBytes, [], [], { maskKinds: { address: true } })
+      expect(residual.status).toBe('PASS')
+
+      const zip = await JSZip.loadAsync(outBytes)
+      const outDoc = await zip.file('word/document.xml')!.async('string')
+      expect(outDoc).toContain('Địa chỉ là ****, Hà Nội')
+    })
+  })
 })
