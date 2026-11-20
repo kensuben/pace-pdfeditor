@@ -6,6 +6,7 @@ import { groupTextItemsIntoLines } from './textExtraction'
 import { SelectionFrame } from './selection/SelectionFrame'
 import { moveBy, nudgeDelta } from './selection/geometry'
 import { useDesktopEditor } from './useDesktopEditor'
+import { annotationFill, draftRect } from './annotationStyle'
 
 export interface PdfCanvasProps {
   pdf: pdfjs.PDFDocumentProxy
@@ -460,6 +461,7 @@ export function PdfCanvas({
                   top: `${display.y * 100}%`,
                   width: `${display.width * 100}%`,
                   height: `${display.height * 100}%`,
+                  backgroundColor: annotationFill(display),
                   '--replacement-background': a.backgroundColor || '#fff',
                   '--mask-pad-x': `${(a.maskPadX ?? 0.0015) * size.width}px`,
                   '--mask-pad-top': `${(a.maskPadTop ?? 0.001) * size.height}px`,
@@ -530,11 +532,48 @@ export function PdfCanvas({
             onPointerDown={(e) => e.stopPropagation()}
           />
         )}
-        {draft.length > 1 && (
+        {draft.length > 1 && (tool === 'draw' || tool === 'signature') && (
           <svg className="ink draft" viewBox={`0 0 ${size.width} ${size.height}`}>
             <path d={path(draft)} stroke={color} strokeWidth="2.5" fill="none" strokeLinecap="round" />
           </svg>
         )}
+        {draft.length > 1 && tool === 'highlight' && (() => {
+          const r = draftRect(draft[0], draft[draft.length - 1])
+          return (
+            <div
+              className="annotation highlight draft"
+              style={{
+                position: 'absolute',
+                left: `${r.x * 100}%`,
+                top: `${r.y * 100}%`,
+                width: `${r.width * 100}%`,
+                height: `${r.height * 100}%`,
+                backgroundColor: color,
+                opacity: 0.38,
+                mixBlendMode: 'multiply',
+                pointerEvents: 'none',
+              }}
+            />
+          )
+        })()}
+        {draft.length > 1 && tool === 'text' && (() => {
+          const r = draftRect(draft[0], draft[draft.length - 1])
+          return (
+            <div
+              className="annotation text draft"
+              style={{
+                position: 'absolute',
+                left: `${r.x * 100}%`,
+                top: `${r.y * 100}%`,
+                width: `${r.width * 100}%`,
+                height: `${r.height * 100}%`,
+                border: '1px dashed var(--accent, #0047af)',
+                backgroundColor: 'transparent',
+                pointerEvents: 'none',
+              }}
+            />
+          )
+        })()}
       </div>
     </div>
   )
