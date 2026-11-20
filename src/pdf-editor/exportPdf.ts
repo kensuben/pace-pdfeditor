@@ -1,4 +1,4 @@
-import { PDFDocument, rgb, StandardFonts, type PDFFont } from 'pdf-lib'
+import { PDFDocument, rgb, StandardFonts, degrees, type PDFFont } from 'pdf-lib'
 import fontkit from '@pdf-lib/fontkit'
 import beRegular from './fonts/BeVietnamPro-Regular.ttf?url'
 import beItalic from './fonts/BeVietnamPro-Italic.ttf?url'
@@ -11,6 +11,7 @@ import arimoBoldItalic from './fonts/Arimo-BoldItalic.ttf?url'
 import type { Annotation } from '../types'
 import { hexToRgb01 } from './geometry'
 import { resolveExportFontFamily } from './fonts'
+import { getPageView, viewSizePt, viewToPdf } from './pageGeometry'
 
 export interface BuildPdfOptions {
   loadFontBytes?: (family: string, variant: string) => Promise<ArrayBuffer>
@@ -99,9 +100,11 @@ export async function buildEditedPdf(
 
   for (const a of annotations) {
     const p = doc.getPage(a.page - 1)
-    const { width, height } = p.getSize()
+    const view = getPageView(p)
+    const { width, height } = viewSizePt(view)
     const textRgb = hexToRgb01(a.color)
     const c = rgb(textRgb.r, textRgb.g, textRgb.b)
+    const rotDegrees = view.rotation !== 0 ? degrees(view.rotation) : undefined
 
     if (a.type === 'text') {
       const { font, family } = await getFont(a)
@@ -131,29 +134,66 @@ export async function buildEditedPdf(
       const naturalWidth = font.widthOfTextAtSize(value, fontSize)
       if (a.replaceOriginal && naturalWidth > boxWidth) fontSize = Math.max(6, fontSize * (boxWidth / naturalWidth))
       const textWidth = font.widthOfTextAtSize(value, fontSize)
-      const textX = a.x * width + (a.align === 'center' ? Math.max(0, (boxWidth - textWidth) / 2) : a.align === 'right' ? Math.max(0, boxWidth - textWidth) : 0)
-      const textY = height - (a.y * height) - fontSize
+      const alignOffset = a.align === 'center' ? Math.max(0, (boxWidth - textWidth) / 2) : a.align === 'right' ? Math.max(0, boxWidth - textWidth) : 0
+
       if (a.replaceOriginal) {
         const backgroundRgb01 = hexToRgb01(a.backgroundColor || '#ffffff')
         const backgroundRgb = rgb(backgroundRgb01.r, backgroundRgb01.g, backgroundRgb01.b)
         const padX = a.maskPadX !== undefined ? a.maskPadX * width : Math.max(0.5, fontSize * 0.08)
         const padTop = a.maskPadTop !== undefined ? a.maskPadTop * height : Math.max(0.5, fontSize * 0.08)
         const padBottom = a.maskPadBottom !== undefined ? a.maskPadBottom * height : Math.max(0.7, fontSize * 0.12)
+
+        const u0 = (a.x * width - padX) / width
+        const u1 = ((a.x + a.width) * width + padX) / width
+        const v0 = (a.y * height - padTop) / height
+        const v1 = ((a.y + a.height) * height + padBottom) / height
+
+        const c1 = viewToPdf(view, u0, v0)
+        const c2 = viewToPdf(view, u1, v0)
+        const c3 = viewToPdf(view, u1, v1)
+        const c4 = viewToPdf(view, u0, v1)
+
+        const rectX = Math.min(c1.x, c2.x, c3.x, c4.x)
+        const rectY = Math.min(c1.y, c2.y, c3.y, c4.y)
+        const rectW = Math.max(c1.x, c2.x, c3.x, c4.x) - rectX
+        const rectH = Math.max(c1.y, c2.y, c3.y, c4.y) - rectY
+
         p.drawRectangle({
-          x: a.x * width - padX,
-          y: height - (a.y + a.height) * height - padBottom,
-          width: a.width * width + padX * 2,
-          height: a.height * height + padTop + padBottom,
+          x: rectX,
+          y: rectY,
+          width: rectW,
+          height: rectH,
           color: backgroundRgb,
           opacity: 1,
         })
       }
       if (value) {
-        p.drawText(value, { x: textX, y: textY, size: fontSize, font, color: c, opacity: a.opacity, maxWidth: boxWidth })
+        const uText = (a.x * width + alignOffset) / width
+        const vText = (a.y * height + fontSize) / height
+        const textPos = viewToPdf(view, uText, vText)
+
+        p.drawText(value, {
+          x: textPos.x,
+          y: textPos.y,
+          size: fontSize,
+          font,
+          color: c,
+          opacity: a.opacity,
+          maxWidth: boxWidth,
+          rotate: rotDegrees,
+        })
+
         if (a.underline) {
+          const uLineStart = (a.x * width + alignOffset) / width
+          const uLineEnd = Math.min(a.x * width + alignOffset + textWidth, a.x * width + boxWidth) / width
+          const vLine = (a.y * height + fontSize + 1.5) / height
+
+          const lineStart = viewToPdf(view, uLineStart, vLine)
+          const lineEnd = viewToPdf(view, uLineEnd, vLine)
+
           p.drawLine({
-            start: { x: textX, y: textY - 1.5 },
-            end: { x: Math.min(textX + textWidth, a.x * width + boxWidth), y: textY - 1.5 },
+            start: lineStart,
+            end: lineEnd,
             color: c,
             thickness: Math.max(0.6, fontSize / 18),
             opacity: a.opacity,
@@ -163,27 +203,41 @@ export async function buildEditedPdf(
     } else if (a.type === 'image' && a.imageDataUrl) {
       const data = await loadImageBytes(a.imageDataUrl)
       const embedded = a.imageDataUrl.startsWith('data:image/png') ? await doc.embedPng(data) : await doc.embedJpg(data)
+      const origin = viewToPdf(view, a.x, a.y + a.height)
       p.drawImage(embedded, {
-        x: a.x * width,
-        y: height - (a.y + a.height) * height,
+        x: origin.x,
+        y: origin.y,
         width: a.width * width,
         height: a.height * height,
         opacity: a.opacity,
+        rotate: rotDegrees,
       })
     } else if (a.type === 'highlight') {
+      const c1 = viewToPdf(view, a.x, a.y)
+      const c2 = viewToPdf(view, a.x + a.width, a.y)
+      const c3 = viewToPdf(view, a.x + a.width, a.y + a.height)
+      const c4 = viewToPdf(view, a.x, a.y + a.height)
+
+      const rectX = Math.min(c1.x, c2.x, c3.x, c4.x)
+      const rectY = Math.min(c1.y, c2.y, c3.y, c4.y)
+      const rectW = Math.max(c1.x, c2.x, c3.x, c4.x) - rectX
+      const rectH = Math.max(c1.y, c2.y, c3.y, c4.y) - rectY
+
       p.drawRectangle({
-        x: a.x * width,
-        y: height - (a.y + a.height) * height,
-        width: a.width * width,
-        height: a.height * height,
+        x: rectX,
+        y: rectY,
+        width: rectW,
+        height: rectH,
         color: c,
         opacity: a.opacity,
       })
     } else if (a.points && a.points.length > 1) {
       for (let i = 1; i < a.points.length; i++) {
+        const start = viewToPdf(view, a.points[i - 1].x, a.points[i - 1].y)
+        const end = viewToPdf(view, a.points[i].x, a.points[i].y)
         p.drawLine({
-          start: { x: a.points[i - 1].x * width, y: height - a.points[i - 1].y * height },
-          end: { x: a.points[i].x * width, y: height - a.points[i].y * height },
+          start,
+          end,
           color: c,
           thickness: a.type === 'signature' ? 2.2 : 1.8,
           opacity: a.opacity,
