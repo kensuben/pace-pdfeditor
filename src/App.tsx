@@ -3,7 +3,7 @@ import {
   Activity, BookOpen, Check, ChevronDown, ChevronLeft, ChevronRight, Download, FileText,
   Highlighter, Image as ImageIcon, Minus, MousePointer2, PenLine,
   Plus, Redo2, RotateCw, Sparkles, Type, Undo2, Upload, LogIn, LogOut, ScanText,
-  ImagePlus, FilePlus2, BadgeCheck, Trash2, ZoomIn, ZoomOut, ArrowUp, ArrowDown,
+  ImagePlus, FilePlus2, BadgeCheck, Trash2, ArrowUp, ArrowDown,
   Settings,
 } from 'lucide-react'
 import * as pdfjs from 'pdfjs-dist'
@@ -21,6 +21,7 @@ import {
   buildEditedPdf, insertPdfPages, movePage, deletePage,
   remapAnnotationsOnInsert, remapAnnotationsOnMove, remapAnnotationsOnDelete,
   buildReplacementAnnotation, parseOcrTsv, groupOcrWordsIntoLines,
+  imageInsertSize,
 } from './pdf-editor'
 
 // Query version bypasses any previously cached worker response that may have
@@ -153,7 +154,6 @@ function App() {
   }
 
   const annotations = history[historyIndex]
-  const selectedImage = useMemo(()=>annotations.find((annotation)=>annotation.id===selectedId&&annotation.type==='image'),[annotations,selectedId])
 
   const identity = useMemo(() => ({
     userId: account?.homeAccountId || 'local-user',
@@ -186,17 +186,6 @@ function App() {
     commit(next,{action:'annotation.deleted',description:'Xóa textbox/annotation đã chọn',metadata:{type:removed.type,page:removed.page}})
     setSelectedId(null)
   },[annotations,commit,selectedId])
-
-  const scaleSelectedImage = useCallback((factor:number) => {
-    if(!selectedImage)return
-    const maxFactor=Math.min(.95/selectedImage.width,.95/selectedImage.height)
-    const applied=factor>1?Math.min(factor,maxFactor):factor
-    const width=clamp(selectedImage.width*applied,.04,.95),height=clamp(selectedImage.height*applied,.04,.95)
-    const centerX=selectedImage.x+selectedImage.width/2,centerY=selectedImage.y+selectedImage.height/2
-    const updated={...selectedImage,width,height,x:clamp(centerX-width/2,0,1-width),y:clamp(centerY-height/2,0,1-height)}
-    commit(annotations.map((annotation)=>annotation.id===updated.id?updated:annotation),{action:'image.scaled',description:factor>1?'Phóng to hình ảnh':'Thu nhỏ hình ảnh',metadata:{page:updated.page,width:Math.round(width*1000)/10,height:Math.round(height*1000)/10}})
-    setSelectedId(updated.id)
-  },[annotations,commit,selectedImage])
 
   const changeTextStyle = useCallback((patch: Partial<TextStyle>) => {
     setTextStyle((current)=>({...current,...patch}))
@@ -275,9 +264,15 @@ function App() {
 
   const insertImage = async (file: File) => {
     if(!file.type.match(/^image\/(png|jpeg)$/)){alert('Chỉ hỗ trợ ảnh PNG hoặc JPEG.');return}
+    if (!pdf) return
     const dataUrl=await new Promise<string>((resolve,reject)=>{const reader=new FileReader();reader.onload=()=>resolve(String(reader.result));reader.onerror=reject;reader.readAsDataURL(file)})
     const image=new Image();image.src=dataUrl;await image.decode()
-    const width=.28,height=Math.min(.35,width*(image.height/image.width)*.77)
+    const pageObj = await pdf.getPage(page)
+    const viewport = pageObj.getViewport({ scale: 1 })
+    const { width, height } = imageInsertSize(
+      { w: image.width, h: image.height },
+      { width: viewport.width, height: viewport.height },
+    )
     const annotation:Annotation={id:uid(),page,type:'image',x:(1-width)/2,y:(1-height)/2,width,height,color:'#000000',opacity:1,imageDataUrl:dataUrl}
     commit([...annotations,annotation],{action:'image.inserted',description:'Chèn hình ảnh',metadata:{page,fileExt:file.type.includes('png')?'png':'jpeg',fileSize:file.size}})
     setSelectedId(annotation.id)
@@ -592,7 +587,6 @@ function App() {
           <div className="colors">{COLORS.map((c) => <button key={c} aria-label={`Color ${c}`} className={color===c?'active':''} style={{background:c}} onClick={() => {setColor(c);if(tool==='text'||selectedText)changeTextStyle({color:c})}}/>)}</div>
           <div className="toolbar-spacer"/>
           <button className="action-tool" onClick={()=>imageInput.current?.click()}><ImagePlus/>Chèn ảnh</button>
-          {selectedImage&&<><IconButton label="Thu nhỏ ảnh" onClick={()=>scaleSelectedImage(.9)}><ZoomOut/></IconButton><IconButton label="Phóng to ảnh" onClick={()=>scaleSelectedImage(1.1)}><ZoomIn/></IconButton></>}
           <button className="action-tool" onClick={()=>insertPdfInput.current?.click()}><FilePlus2/>Chèn trang</button>
           <IconButton label="Di chuyển trang lên" onClick={()=>moveCurrentPage(-1)} disabled={page===1}><ArrowUp/></IconButton>
           <IconButton label="Di chuyển trang xuống" onClick={()=>moveCurrentPage(1)} disabled={page===info.pages}><ArrowDown/></IconButton>
@@ -606,7 +600,56 @@ function App() {
         </div>
         {(tool==='text'||selectedText) && <TextFormatBar style={textStyle} onChange={changeTextStyle}/>}
         <div className="document-area" onDragOver={(e)=>e.preventDefault()} onDrop={(e)=>{e.preventDefault(); const f=e.dataTransfer.files[0]; if(f)openFile(f)}}>
-          <PdfCanvas pdf={pdf} pageNumber={page} zoom={zoom} annotations={pageAnnotations} tool={tool} color={color} onAdd={(a)=>{const next=a.type==='text'?{...a,...textStyle}:a;commit([...annotations,next], { action: 'annotation.added', description: 'Thêm annotation', metadata: { type: a.type, page: a.page, color: next.color } });setSelectedId(next.id)}} onUpdate={(updated)=>{commit(annotations.map((annotation)=>annotation.id===updated.id?updated:annotation),{action:'annotation.moved',description:'Di chuyển đối tượng',metadata:{type:updated.type,page:updated.page}});setSelectedId(updated.id)}} selectedId={selectedId} onSelect={selectAnnotation} textRegions={textRegions[page]||[]} onTextRegions={handleTextRegions} onEditRegion={editTextRegion} onEditAnnotation={editTextAnnotation}/>
+          <PdfCanvas
+            pdf={pdf}
+            pageNumber={page}
+            zoom={zoom}
+            annotations={pageAnnotations}
+            tool={tool}
+            color={color}
+            textStyle={textStyle}
+            onAdd={(a) => {
+              const next = a.type === 'text' ? { ...a, ...textStyle } : a
+              commit([...annotations, next], {
+                action: 'annotation.added',
+                description: 'Thêm annotation',
+                metadata: { type: a.type, page: a.page, color: next.color },
+              })
+              setSelectedId(next.id)
+            }}
+            onUpdate={(updated) => {
+              commit(
+                annotations.map((annotation) => (annotation.id === updated.id ? updated : annotation)),
+                {
+                  action: 'annotation.moved',
+                  description: 'Di chuyển đối tượng',
+                  metadata: { type: updated.type, page: updated.page },
+                },
+              )
+              setSelectedId(updated.id)
+            }}
+            onResize={(updated) => {
+              commit(
+                annotations.map((annotation) => (annotation.id === updated.id ? updated : annotation)),
+                {
+                  action: 'annotation.resized',
+                  description: 'Thay đổi kích thước đối tượng',
+                  metadata: { type: updated.type, page: updated.page },
+                },
+              )
+              setSelectedId(updated.id)
+            }}
+            onNudge={(updated) => {
+              commit(annotations.map((annotation) => (annotation.id === updated.id ? updated : annotation)))
+              setSelectedId(updated.id)
+            }}
+            selectedId={selectedId}
+            onSelect={selectAnnotation}
+            textRegions={textRegions[page] || []}
+            onTextRegions={handleTextRegions}
+            onEditRegion={editTextRegion}
+            onEditAnnotation={editTextAnnotation}
+          />
         </div>
         <div className="statusbar">
           <div className="page-nav"><IconButton label="Previous page" disabled={page===1} onClick={()=>{setPage(p=>p-1);log('navigation.page_changed','Chuyển trang',{from:page,to:page-1})}}><ChevronLeft/></IconButton><span><input value={page} onChange={(e)=>{const next=clamp(Number(e.target.value)||1,1,info.pages);setPage(next);log('navigation.page_changed','Chuyển trang',{from:page,to:next})}}/> / {info.pages}</span><IconButton label="Next page" disabled={page===info.pages} onClick={()=>{setPage(p=>p+1);log('navigation.page_changed','Chuyển trang',{from:page,to:page+1})}}><ChevronRight/></IconButton></div>
