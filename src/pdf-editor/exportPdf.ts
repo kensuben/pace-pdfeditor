@@ -1,35 +1,44 @@
 import { PDFDocument, rgb, StandardFonts, type PDFFont } from 'pdf-lib'
 import fontkit from '@pdf-lib/fontkit'
-import beRegular from '@fontsource/be-vietnam-pro/files/be-vietnam-pro-vietnamese-400-normal.woff?url'
-import beItalic from '@fontsource/be-vietnam-pro/files/be-vietnam-pro-vietnamese-400-italic.woff?url'
-import beBold from '@fontsource/be-vietnam-pro/files/be-vietnam-pro-vietnamese-700-normal.woff?url'
-import beBoldItalic from '@fontsource/be-vietnam-pro/files/be-vietnam-pro-vietnamese-700-italic.woff?url'
-import arimoRegular from '@fontsource/arimo/files/arimo-vietnamese-400-normal.woff?url'
-import arimoItalic from '@fontsource/arimo/files/arimo-vietnamese-400-italic.woff?url'
-import arimoBold from '@fontsource/arimo/files/arimo-vietnamese-700-normal.woff?url'
-import arimoBoldItalic from '@fontsource/arimo/files/arimo-vietnamese-700-italic.woff?url'
-import notoRegular from '@fontsource/noto-sans/files/noto-sans-vietnamese-400-normal.woff?url'
-import notoItalic from '@fontsource/noto-sans/files/noto-sans-vietnamese-400-italic.woff?url'
-import notoBold from '@fontsource/noto-sans/files/noto-sans-vietnamese-700-normal.woff?url'
-import notoBoldItalic from '@fontsource/noto-sans/files/noto-sans-vietnamese-700-italic.woff?url'
+import beRegular from './fonts/BeVietnamPro-Regular.ttf?url'
+import beItalic from './fonts/BeVietnamPro-Italic.ttf?url'
+import beBold from './fonts/BeVietnamPro-Bold.ttf?url'
+import beBoldItalic from './fonts/BeVietnamPro-BoldItalic.ttf?url'
+import arimoRegular from './fonts/Arimo-Regular.ttf?url'
+import arimoItalic from './fonts/Arimo-Italic.ttf?url'
+import arimoBold from './fonts/Arimo-Bold.ttf?url'
+import arimoBoldItalic from './fonts/Arimo-BoldItalic.ttf?url'
 import type { Annotation } from '../types'
 import { hexToRgb01 } from './geometry'
+import { resolveExportFontFamily } from './fonts'
 
 export interface BuildPdfOptions {
   loadFontBytes?: (family: string, variant: string) => Promise<ArrayBuffer>
   loadImageBytes?: (dataUrl: string) => Promise<ArrayBuffer>
 }
 
-const customFonts: Record<string, Record<string, string>> = {
-  'Be Vietnam Pro': { regular: beRegular, italic: beItalic, bold: beBold, bolditalic: beBoldItalic },
-  Arimo: { regular: arimoRegular, italic: arimoItalic, bold: arimoBold, bolditalic: arimoBoldItalic },
-  'Noto Sans': { regular: notoRegular, italic: notoItalic, bold: notoBold, bolditalic: notoBoldItalic },
+const exportFontUrls: Record<'Be Vietnam Pro' | 'Arimo', Record<'regular' | 'italic' | 'bold' | 'bolditalic', string>> = {
+  'Be Vietnam Pro': {
+    regular: beRegular,
+    italic: beItalic,
+    bold: beBold,
+    bolditalic: beBoldItalic,
+  },
+  Arimo: {
+    regular: arimoRegular,
+    italic: arimoItalic,
+    bold: arimoBold,
+    bolditalic: arimoBoldItalic,
+  },
 }
 
 const defaultLoadFontBytes = async (family: string, variant: string): Promise<ArrayBuffer> => {
-  const fontUrl = customFonts[family]?.[variant]
-  if (!fontUrl) throw new Error(`Font url not found for ${family} ${variant}`)
+  const fontUrl = exportFontUrls[family as keyof typeof exportFontUrls]?.[variant as 'regular' | 'italic' | 'bold' | 'bolditalic']
+  if (!fontUrl) throw new Error(`FONT_LOAD_FAILED: Font url not found for ${family} ${variant}`)
   const response = await fetch(fontUrl)
+  if (!response.ok) {
+    throw new Error(`FONT_LOAD_FAILED: HTTP ${response.status} loading font for ${family} ${variant}`)
+  }
   return response.arrayBuffer()
 }
 
@@ -51,22 +60,27 @@ export async function buildEditedPdf(
   const fontCache = new Map<string, PDFFont>()
 
   const getFont = async (a: Annotation) => {
-    const requestedFamily = a.fontFamily || 'Helvetica'
-    const hasUnicode = Array.from(a.text || '').some((character) => (character.codePointAt(0) || 0) > 127)
-    const family = hasUnicode && ['Helvetica', 'Times Roman', 'Courier'].includes(requestedFamily) ? 'Noto Sans' : requestedFamily
+    const family = resolveExportFontFamily(a.fontFamily, a.text)
     const variant = `${a.bold ? 'bold' : ''}${a.italic ? 'italic' : ''}` || 'regular'
     const key = `${family}-${variant}`
     const cached = fontCache.get(key)
-    if (cached) return cached
+    if (cached) return { font: cached, family }
 
-    if (customFonts[family] || options?.loadFontBytes) {
+    if (family === 'Be Vietnam Pro' || family === 'Arimo') {
+      let data: ArrayBuffer
       try {
-        const data = await loadFontBytes(family, variant)
+        data = await loadFontBytes(family, variant)
+      } catch (err) {
+        const reason = err instanceof Error ? err.message : String(err)
+        throw new Error(`FONT_LOAD_FAILED: ${family} ${variant} - ${reason}`, { cause: err })
+      }
+      try {
         const embedded = await doc.embedFont(data, { subset: true })
         fontCache.set(key, embedded)
-        return embedded
+        return { font: embedded, family }
       } catch (err) {
-        if (!customFonts[family]) throw err
+        const reason = err instanceof Error ? err.message : String(err)
+        throw new Error(`FONT_LOAD_FAILED: Failed to embed ${family} ${variant} - ${reason}`, { cause: err })
       }
     }
 
@@ -80,7 +94,7 @@ export async function buildEditedPdf(
     }
     const embedded = await doc.embedFont(name)
     fontCache.set(key, embedded)
-    return embedded
+    return { font: embedded, family }
   }
 
   for (const a of annotations) {
@@ -90,10 +104,30 @@ export async function buildEditedPdf(
     const c = rgb(textRgb.r, textRgb.g, textRgb.b)
 
     if (a.type === 'text') {
-      const font = await getFont(a)
+      const { font, family } = await getFont(a)
       const boxWidth = a.width * width
       let fontSize = a.fontSize || 16
       const value = a.text || ''
+
+      // TODO(verify): getCharacterSet() returns code points array for embedded fonts; standard fonts behavior is WinAnsi
+      if (family === 'Be Vietnam Pro' || family === 'Arimo') {
+        const charSet = new Set(font.getCharacterSet())
+        const missingChars: string[] = []
+        for (const char of Array.from(value)) {
+          if (/\s/.test(char)) continue
+          const cp = char.codePointAt(0)
+          if (cp !== undefined && !charSet.has(cp)) {
+            if (!missingChars.includes(char)) {
+              missingChars.push(char)
+              if (missingChars.length >= 10) break
+            }
+          }
+        }
+        if (missingChars.length > 0) {
+          throw new Error(`MISSING_GLYPH: ${missingChars.join(', ')}`)
+        }
+      }
+
       const naturalWidth = font.widthOfTextAtSize(value, fontSize)
       if (a.replaceOriginal && naturalWidth > boxWidth) fontSize = Math.max(6, fontSize * (boxWidth / naturalWidth))
       const textWidth = font.widthOfTextAtSize(value, fontSize)
