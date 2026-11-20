@@ -1,5 +1,18 @@
-import { PDFDocument } from 'pdf-lib'
+import { PDFDocument, degrees } from 'pdf-lib'
 import type { Annotation } from '../types'
+
+export async function rotatePage(
+  bytes: Uint8Array,
+  pageIndex: number,
+  delta: number = 90,
+): Promise<Uint8Array> {
+  const document = await PDFDocument.load(bytes)
+  const page = document.getPage(pageIndex)
+  const currentAngle = page.getRotation().angle
+  const nextAngle = (((currentAngle + delta) % 360) + 360) % 360
+  page.setRotation(degrees(nextAngle))
+  return new Uint8Array(await document.save())
+}
 
 export async function insertPdfPages(
   targetBytes: Uint8Array,

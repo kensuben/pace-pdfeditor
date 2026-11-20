@@ -16,12 +16,16 @@ import ActivityPanel from './ActivityPanel'
 import AdminPage from './AdminPage'
 import { apiRequest, authorizeSession, type ApiUser } from './api'
 import WordAnonymizerPage from './word-anonymizer/WordAnonymizerPage'
+import './pdf-editor/viewer.css'
 import {
-  clamp, uid, IconButton, TextFormatBar, PdfCanvas,
-  buildEditedPdf, insertPdfPages, movePage, deletePage,
+  clamp, uid, IconButton, TextFormatBar,
+  buildEditedPdf, insertPdfPages, movePage, deletePage, rotatePage,
   remapAnnotationsOnInsert, remapAnnotationsOnMove, remapAnnotationsOnDelete,
   buildReplacementAnnotation, parseOcrTsv, groupOcrWordsIntoLines,
   imageInsertSize,
+  PageList, ThumbnailList, ZoomMenu,
+  canRotatePage, rotateAnnotationsCw, resetHistoryOnPageOp,
+  fitZoom,
 } from './pdf-editor'
 
 // Query version bypasses any previously cached worker response that may have
@@ -67,6 +71,13 @@ function App() {
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [sidebar, setSidebar] = useState(true)
   const [busy, setBusy] = useState(false)
+  const [zoomMenuOpen, setZoomMenuOpen] = useState(false)
+  const [statusNotice, setStatusNotice] = useState<string | null>(null)
+  const [bytesVersion, setBytesVersion] = useState(0)
+  const documentAreaRef = useRef<HTMLDivElement>(null)
+  const scrollContainerRef = useRef<HTMLDivElement>(null)
+  const statusNoticeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const zoomLogTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [account, setAccount] = useState<AccountInfo | null>(null)
   const [authReady, setAuthReady] = useState(false)
   const [showActivities, setShowActivities] = useState(false)
@@ -199,14 +210,76 @@ function App() {
     if(selected)setTextStyle({fontFamily:selected.fontFamily||'Helvetica',fontSize:selected.fontSize||16,bold:!!selected.bold,italic:!!selected.italic,underline:!!selected.underline,align:selected.align||'left',color:selected.color})
   },[annotations])
 
+  const showStatusNotice = useCallback((msg: string) => {
+    setStatusNotice(msg)
+    if (statusNoticeTimerRef.current) clearTimeout(statusNoticeTimerRef.current)
+    statusNoticeTimerRef.current = setTimeout(() => {
+      setStatusNotice(null)
+      statusNoticeTimerRef.current = null
+    }, 4000)
+  }, [])
+
+  const debouncedLogZoom = useCallback(
+    (nextZoom: number) => {
+      if (zoomLogTimerRef.current) clearTimeout(zoomLogTimerRef.current)
+      zoomLogTimerRef.current = setTimeout(() => {
+        log('view.zoom_changed', 'Thay đổi mức zoom', { zoom: Math.round(nextZoom * 100) })
+        zoomLogTimerRef.current = null
+      }, 500)
+    },
+    [log],
+  )
+
+  const scrollToPage = useCallback((targetPage: number) => {
+    const container = scrollContainerRef.current || documentAreaRef.current
+    if (!container) return
+    const targetEl = container.querySelector(`[data-page-number="${targetPage}"]`)
+    if (targetEl && typeof targetEl.scrollIntoView === 'function') {
+      targetEl.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    }
+  }, [])
+
+  const handleFitWidth = useCallback(async () => {
+    if (!pdf) return
+    const p = await pdf.getPage(page)
+    const vp = p.getViewport({ scale: 1 })
+    const container = scrollContainerRef.current || documentAreaRef.current
+    const containerW = container?.clientWidth || window.innerWidth
+    const nextZ = fitZoom({ width: containerW, height: 700 }, { width: vp.width, height: vp.height }, 'width')
+    setZoom(nextZ)
+    log('view.zoom_changed', 'Thay đổi mức zoom', { fit: 'width', zoom: Math.round(nextZ * 100) })
+  }, [pdf, page, log])
+
+  const handleFitPage = useCallback(async () => {
+    if (!pdf) return
+    const p = await pdf.getPage(page)
+    const vp = p.getViewport({ scale: 1 })
+    const container = scrollContainerRef.current || documentAreaRef.current
+    const containerW = container?.clientWidth || window.innerWidth
+    const containerH = container?.clientHeight || window.innerHeight
+    const nextZ = fitZoom({ width: containerW, height: containerH }, { width: vp.width, height: vp.height }, 'page')
+    setZoom(nextZ)
+    log('view.zoom_changed', 'Thay đổi mức zoom', { fit: 'page', zoom: Math.round(nextZ * 100) })
+  }, [pdf, page, log])
+
   const openFile = async (file: File) => {
     if (file.type !== 'application/pdf' && !file.name.toLowerCase().endsWith('.pdf')) return alert('Please choose a PDF file.')
     setBusy(true)
     try {
       const data = new Uint8Array(await file.arrayBuffer())
       const loaded = await pdfjs.getDocument({ data: data.slice() }).promise
-      setBytes(data); setPdf(loaded); setInfo({ name: file.name, size: file.size, pages: loaded.numPages })
-      setPage(1); setZoom(1); setHistory([[]]); setHistoryIndex(0); setSelectedId(null); setTextRegions({})
+
+      setBytes(data)
+      setPdf(loaded)
+      setInfo({ name: file.name, size: file.size, pages: loaded.numPages })
+      setPage(1)
+      setZoom(1)
+      setHistory([[]])
+      setHistoryIndex(0)
+      setSelectedId(null)
+      setTextRegions({})
+      setBytesVersion((v) => v + 1)
+      setSidebar(window.innerWidth >= 768)
       log('document.opened', 'Mở tài liệu PDF', { fileExt: 'pdf', fileSize: file.size, pageCount: loaded.numPages }, 'success')
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error)
@@ -219,6 +292,25 @@ function App() {
 
   useEffect(() => {
     const key = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && (e.key === '=' || e.key === '+')) {
+        e.preventDefault()
+        const nextZ = clamp(Math.round((zoom + 0.1) * 100) / 100, 0.25, 4)
+        setZoom(nextZ)
+        log('view.zoom_changed', 'Thay đổi mức zoom', { direction: 'in', zoom: Math.round(nextZ * 100) })
+        return
+      }
+      if ((e.ctrlKey || e.metaKey) && e.key === '-') {
+        e.preventDefault()
+        const nextZ = clamp(Math.round((zoom - 0.1) * 100) / 100, 0.25, 4)
+        setZoom(nextZ)
+        log('view.zoom_changed', 'Thay đổi mức zoom', { direction: 'out', zoom: Math.round(nextZ * 100) })
+        return
+      }
+      if ((e.ctrlKey || e.metaKey) && e.key === '0') {
+        e.preventDefault()
+        handleFitWidth()
+        return
+      }
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
         e.preventDefault()
         if (e.shiftKey) setHistoryIndex((i) => Math.min(history.length - 1, i + 1))
@@ -227,11 +319,15 @@ function App() {
       if ((e.key === 'Delete' || e.key === 'Backspace') && selectedId && !(e.target instanceof HTMLInputElement) && !(e.target instanceof HTMLTextAreaElement)) { e.preventDefault();deleteSelected() }
     }
     window.addEventListener('keydown', key); return () => window.removeEventListener('keydown', key)
-  }, [deleteSelected, history.length, selectedId])
+  }, [deleteSelected, history.length, selectedId, zoom, log, handleFitWidth])
 
-  const pageAnnotations = useMemo(() => annotations.filter((a) => a.page === page), [annotations, page])
   const selectedText = useMemo(()=>annotations.find((a)=>a.id===selectedId&&a.type==='text'),[annotations,selectedId])
-  const handleTextRegions = useCallback((regions: TextRegion[]) => setTextRegions((current)=>({...current,[page]:[...regions,...(current[page]||[]).filter((x)=>x.source==='ocr')]})), [page])
+  const handleTextRegions = useCallback((targetPage: number, regions: TextRegion[]) => {
+    setTextRegions((current) => ({
+      ...current,
+      [targetPage]: [...regions, ...(current[targetPage] || []).filter((x) => x.source === 'ocr')],
+    }))
+  }, [])
 
   const buildPdfBytes = useCallback(() => {
     if (!bytes) throw new Error('Chưa có tài liệu để xử lý.')
@@ -285,9 +381,13 @@ function App() {
       const sourceBytes = new Uint8Array(await file.arrayBuffer())
       const { bytes: merged, insertedCount: count } = await insertPdfPages(bytes, sourceBytes, page)
       const loaded = await pdfjs.getDocument({ data: merged.slice() }).promise
+      const updatedAnnotations = remapAnnotationsOnInsert(annotations, page, count)
+      const { history: newHistory, historyIndex: newHistoryIndex } = resetHistoryOnPageOp(updatedAnnotations)
       setBytes(merged);setPdf(loaded);setInfo({...info,size:merged.byteLength,pages:loaded.numPages})
-      commit(remapAnnotationsOnInsert(annotations, page, count),{action:'pages.inserted',description:'Chèn trang từ PDF khác',metadata:{afterPage:page,insertedPages:count,fileExt:'pdf'}})
-      setTextRegions({});setPage(page+1)
+      setHistory(newHistory);setHistoryIndex(newHistoryIndex)
+      setTextRegions({});setPage(page+1);setBytesVersion((v)=>v+1)
+      showStatusNotice('Thao tác trang không hoàn tác được')
+      log('pages.inserted', 'Chèn trang từ PDF khác', { afterPage: page, insertedPages: count, fileExt: 'pdf' })
     }catch(error){console.error(error);alert(`Không thể chèn trang PDF.\n\n${error instanceof Error?error.message:String(error)}`)}finally{setBusy(false)}
   }
 
@@ -301,8 +401,11 @@ function App() {
       const loaded = await pdfjs.getDocument({ data: updatedBytes.slice() }).promise
       const fromPage=from+1,toPage=to+1
       const updatedAnnotations = remapAnnotationsOnMove(annotations, fromPage, toPage)
+      const { history: newHistory, historyIndex: newHistoryIndex } = resetHistoryOnPageOp(updatedAnnotations)
       setBytes(updatedBytes);setPdf(loaded);setInfo({...info,size:updatedBytes.byteLength});setTextRegions({});setPage(toPage);setSelectedId(null)
-      commit(updatedAnnotations,{action:'page.moved',description:direction<0?'Di chuyển trang lên':'Di chuyển trang xuống',metadata:{from:fromPage,to:toPage}})
+      setHistory(newHistory);setHistoryIndex(newHistoryIndex);setBytesVersion((v)=>v+1)
+      showStatusNotice('Thao tác trang không hoàn tác được')
+      log('page.moved', direction < 0 ? 'Di chuyển trang lên' : 'Di chuyển trang xuống', { from: fromPage, to: toPage })
     }catch(error){console.error(error);alert(`Không thể di chuyển trang.\n\n${error instanceof Error?error.message:String(error)}`)}finally{setBusy(false)}
   }
 
@@ -316,9 +419,47 @@ function App() {
       const loaded = await pdfjs.getDocument({ data: updatedBytes.slice() }).promise
       const updatedAnnotations = remapAnnotationsOnDelete(annotations, page)
       const nextPage=Math.min(page,loaded.numPages)
+      const { history: newHistory, historyIndex: newHistoryIndex } = resetHistoryOnPageOp(updatedAnnotations)
       setBytes(updatedBytes);setPdf(loaded);setInfo({...info,size:updatedBytes.byteLength,pages:loaded.numPages});setTextRegions({});setPage(nextPage);setSelectedId(null)
-      commit(updatedAnnotations,{action:'page.deleted',description:'Xóa trang PDF',metadata:{page,remainingPages:loaded.numPages}})
+      setHistory(newHistory);setHistoryIndex(newHistoryIndex);setBytesVersion((v)=>v+1)
+      showStatusNotice('Thao tác trang không hoàn tác được')
+      log('page.deleted', 'Xóa trang PDF', { page, remainingPages: loaded.numPages })
     }catch(error){console.error(error);alert(`Không thể xóa trang.\n\n${error instanceof Error?error.message:String(error)}`)}finally{setBusy(false)}
+  }
+
+  const rotateCurrentPage = async () => {
+    if (!bytes || !pdf || !info) return
+    if (!canRotatePage(annotations, page)) return
+    setBusy(true)
+    try {
+      const updatedBytes = await rotatePage(bytes, page - 1, 90)
+      const loaded = await pdfjs.getDocument({ data: updatedBytes.slice() }).promise
+      const oldPage = await pdf.getPage(page)
+      const oldVp = oldPage.getViewport({ scale: 1 })
+      const newPage = await loaded.getPage(page)
+      const newVp = newPage.getViewport({ scale: 1 })
+      const updatedAnnotations = rotateAnnotationsCw(
+        annotations,
+        page,
+        { width: oldVp.width, height: oldVp.height },
+        { width: newVp.width, height: newVp.height },
+      )
+      const { history: newHistory, historyIndex: newHistoryIndex } = resetHistoryOnPageOp(updatedAnnotations)
+      setBytes(updatedBytes)
+      setPdf(loaded)
+      setHistory(newHistory)
+      setHistoryIndex(newHistoryIndex)
+      setTextRegions({})
+      setSelectedId(null)
+      setBytesVersion((v) => v + 1)
+      showStatusNotice('Thao tác trang không hoàn tác được')
+      log('page.rotated', 'Xoay trang', { page, angle: 90 })
+    } catch (error) {
+      console.error(error)
+      alert(`Không thể xoay trang.\n\n${error instanceof Error ? error.message : String(error)}`)
+    } finally {
+      setBusy(false)
+    }
   }
 
   const editTextRegion = useCallback((region: TextRegion, next: string) => {
@@ -575,7 +716,17 @@ function App() {
       <div className="workspace">
       <aside className={`sidebar ${sidebar ? '' : 'collapsed'}`}>
         <div className="sidebar-head"><b>Pages</b><button onClick={() => setSidebar(false)}><ChevronLeft/></button></div>
-        <div className="thumbs">{Array.from({length: info.pages}, (_,i) => <button key={i} className={`thumb ${page===i+1?'active':''}`} onClick={() => { setPage(i+1); log('navigation.page_changed', 'Chuyển trang', { from: page, to: i+1 }) }}><div className="thumb-paper"><FileText/><span/><span/><span/></div><small>{i+1}</small></button>)}</div>
+        <ThumbnailList
+          pdf={pdf}
+          pageCount={info.pages}
+          currentPage={page}
+          onSelectPage={(p) => {
+            scrollToPage(p)
+            setPage(p)
+            log('navigation.page_changed', 'Chuyển trang', { from: page, to: p })
+          }}
+          bytesVersion={bytesVersion}
+        />
       </aside>
       {!sidebar && <button className="show-sidebar" onClick={() => setSidebar(true)}><ChevronRight/></button>}
       <section className="editor">
@@ -596,18 +747,45 @@ function App() {
           <IconButton label="Xóa đối tượng đã chọn" onClick={deleteSelected} disabled={!selectedId}><Trash2/></IconButton>
           <IconButton label="Undo" onClick={() => { setHistoryIndex(i=>Math.max(0,i-1)); log('edit.undo', 'Hoàn tác thay đổi') }} disabled={!historyIndex}><Undo2/></IconButton>
           <IconButton label="Redo" onClick={() => { setHistoryIndex(i=>Math.min(history.length-1,i+1)); log('edit.redo', 'Làm lại thay đổi') }} disabled={historyIndex===history.length-1}><Redo2/></IconButton>
-          <IconButton label="Rotate view"><RotateCw/></IconButton>
+          {(() => {
+            const canRotate = canRotatePage(annotations, page)
+            const rotateLabel = canRotate
+              ? 'Xoay trang'
+              : 'Trang có chữ đã sửa, chưa xoay được (sẽ hỗ trợ khi xoá chữ gốc thật)'
+            return (
+              <span title={rotateLabel}>
+                <IconButton
+                  label={rotateLabel}
+                  onClick={rotateCurrentPage}
+                  disabled={!canRotate}
+                >
+                  <RotateCw />
+                </IconButton>
+              </span>
+            )
+          })()}
         </div>
         {(tool==='text'||selectedText) && <TextFormatBar style={textStyle} onChange={changeTextStyle}/>}
-        <div className="document-area" onDragOver={(e)=>e.preventDefault()} onDrop={(e)=>{e.preventDefault(); const f=e.dataTransfer.files[0]; if(f)openFile(f)}}>
-          <PdfCanvas
+        <div
+          ref={documentAreaRef}
+          className="document-area has-page-list"
+          onDragOver={(e) => e.preventDefault()}
+          onDrop={(e) => {
+            e.preventDefault()
+            const f = e.dataTransfer.files[0]
+            if (f) openFile(f)
+          }}
+        >
+          <PageList
             pdf={pdf}
-            pageNumber={page}
+            pageCount={info.pages}
             zoom={zoom}
-            annotations={pageAnnotations}
+            annotations={annotations}
             tool={tool}
             color={color}
             textStyle={textStyle}
+            selectedId={selectedId}
+            onSelect={selectAnnotation}
             onAdd={(a) => {
               const next = a.type === 'text' ? { ...a, ...textStyle } : a
               commit([...annotations, next], {
@@ -643,18 +821,119 @@ function App() {
               commit(annotations.map((annotation) => (annotation.id === updated.id ? updated : annotation)))
               setSelectedId(updated.id)
             }}
-            selectedId={selectedId}
-            onSelect={selectAnnotation}
-            textRegions={textRegions[page] || []}
+            textRegions={textRegions}
             onTextRegions={handleTextRegions}
             onEditRegion={editTextRegion}
             onEditAnnotation={editTextAnnotation}
+            currentPage={page}
+            onCurrentPageChange={(p) => setPage(p)}
+            containerRef={scrollContainerRef}
+            onZoomChange={(nextZoom) => {
+              setZoom(nextZoom)
+              debouncedLogZoom(nextZoom)
+            }}
+            onInitialFit={(initialZoom) => {
+              setZoom(initialZoom)
+              log('view.zoom_changed', 'Thay đổi mức zoom ban đầu', { fit: 'width', zoom: Math.round(initialZoom * 100) })
+            }}
           />
         </div>
         <div className="statusbar">
-          <div className="page-nav"><IconButton label="Previous page" disabled={page===1} onClick={()=>{setPage(p=>p-1);log('navigation.page_changed','Chuyển trang',{from:page,to:page-1})}}><ChevronLeft/></IconButton><span><input value={page} onChange={(e)=>{const next=clamp(Number(e.target.value)||1,1,info.pages);setPage(next);log('navigation.page_changed','Chuyển trang',{from:page,to:next})}}/> / {info.pages}</span><IconButton label="Next page" disabled={page===info.pages} onClick={()=>{setPage(p=>p+1);log('navigation.page_changed','Chuyển trang',{from:page,to:page+1})}}><ChevronRight/></IconButton></div>
-          <div className="zoom"><IconButton label="Zoom out" onClick={()=>{setZoom(z=>clamp(z-.1,.5,2.5));log('view.zoom_changed','Thay đổi mức zoom',{direction:'out'})}}><Minus/></IconButton><input type="range" min="50" max="250" value={zoom*100} onChange={(e)=>setZoom(Number(e.target.value)/100)} onPointerUp={()=>log('view.zoom_changed','Thay đổi mức zoom',{zoom:Math.round(zoom*100)})}/><IconButton label="Zoom in" onClick={()=>{setZoom(z=>clamp(z+.1,.5,2.5));log('view.zoom_changed','Thay đổi mức zoom',{direction:'in'})}}><Plus/></IconButton><button className="zoom-value">{Math.round(zoom*100)}% <ChevronDown/></button></div>
-          <span className="saved"><Check/> Changes saved locally</span>
+          <div className="page-nav">
+            <IconButton
+              label="Previous page"
+              disabled={page === 1}
+              onClick={() => {
+                const nextP = page - 1
+                scrollToPage(nextP)
+                setPage(nextP)
+                log('navigation.page_changed', 'Chuyển trang', { from: page, to: nextP })
+              }}
+            >
+              <ChevronLeft />
+            </IconButton>
+            <span>
+              <input
+                value={page}
+                onChange={(e) => {
+                  const next = clamp(Number(e.target.value) || 1, 1, info.pages)
+                  scrollToPage(next)
+                  setPage(next)
+                  log('navigation.page_changed', 'Chuyển trang', { from: page, to: next })
+                }}
+              />{' '}
+              / {info.pages}
+            </span>
+            <IconButton
+              label="Next page"
+              disabled={page === info.pages}
+              onClick={() => {
+                const nextP = page + 1
+                scrollToPage(nextP)
+                setPage(nextP)
+                log('navigation.page_changed', 'Chuyển trang', { from: page, to: nextP })
+              }}
+            >
+              <ChevronRight />
+            </IconButton>
+          </div>
+          <div className="zoom">
+            <IconButton
+              label="Zoom out"
+              onClick={() => {
+                const nextZ = clamp(Math.round((zoom - 0.1) * 100) / 100, 0.25, 4)
+                setZoom(nextZ)
+                log('view.zoom_changed', 'Thay đổi mức zoom', { direction: 'out', zoom: Math.round(nextZ * 100) })
+              }}
+            >
+              <Minus />
+            </IconButton>
+            <input
+              type="range"
+              min="25"
+              max="400"
+              value={Math.round(zoom * 100)}
+              onChange={(e) => setZoom(Number(e.target.value) / 100)}
+              onPointerUp={() =>
+                log('view.zoom_changed', 'Thay đổi mức zoom', { zoom: Math.round(zoom * 100) })
+              }
+            />
+            <IconButton
+              label="Zoom in"
+              onClick={() => {
+                const nextZ = clamp(Math.round((zoom + 0.1) * 100) / 100, 0.25, 4)
+                setZoom(nextZ)
+                log('view.zoom_changed', 'Thay đổi mức zoom', { direction: 'in', zoom: Math.round(nextZ * 100) })
+              }}
+            >
+              <Plus />
+            </IconButton>
+            <div className="zoom-control-wrap">
+              <button
+                className="zoom-value"
+                onClick={() => setZoomMenuOpen((o) => !o)}
+                aria-haspopup="menu"
+                aria-expanded={zoomMenuOpen}
+              >
+                {Math.round(zoom * 100)}% <ChevronDown />
+              </button>
+              <ZoomMenu
+                isOpen={zoomMenuOpen}
+                onClose={() => setZoomMenuOpen(false)}
+                currentZoom={zoom}
+                onSelectZoom={(z) => {
+                  setZoom(z)
+                  log('view.zoom_changed', 'Thay đổi mức zoom', { zoom: Math.round(z * 100) })
+                }}
+                onFitWidth={handleFitWidth}
+                onFitPage={handleFitPage}
+              />
+            </div>
+          </div>
+          <span className="saved">
+            <Check /> Changes saved locally
+          </span>
+          {statusNotice && <span className="status-notice">{statusNotice}</span>}
         </div>
       </section>
     </div>)}

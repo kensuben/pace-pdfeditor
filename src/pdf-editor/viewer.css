@@ -1,0 +1,201 @@
+/* Virtualized Continuous Scroll & Viewer Enhancements (W-11) */
+
+/* W-11b: Ensure single scroll container - .document-area must not scroll or have padding when PageList is active */
+.document-area:has(.page-list-scroll),
+.document-area.has-page-list {
+  overflow: hidden !important;
+  padding: 0 !important;
+}
+
+.page-list-scroll {
+  width: 100%;
+  height: 100%;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 24px 16px;
+  gap: 16px;
+  box-sizing: border-box;
+}
+
+.page-container {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  position: relative;
+  box-sizing: border-box;
+  flex-shrink: 0;
+}
+
+.page-placeholder {
+  background: var(--paper, #fff);
+  box-shadow: 0 4px 16px rgba(12, 35, 64, 0.15);
+  border-radius: 2px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  color: var(--muted, #627087);
+  font-size: 13px;
+  box-sizing: border-box;
+}
+
+.page-placeholder-badge {
+  padding: 4px 10px;
+  border-radius: 12px;
+  background: #f0f4f9;
+  font-weight: 500;
+  color: var(--ink, #0c2340);
+}
+
+/* Real Thumbnails */
+.real-thumbs-container {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 12px;
+  width: 100%;
+  box-sizing: border-box;
+  overflow-y: auto;
+  max-height: 100%;
+}
+
+.real-thumb {
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 4px;
+  border-radius: 4px;
+  transition: background 0.15s ease;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.real-thumb:hover {
+  background: rgba(0, 71, 175, 0.06);
+}
+
+.real-thumb-canvas-wrap {
+  width: 120px;
+  background: #fff;
+  border: 1px solid var(--line, #d8dee7);
+  border-radius: 2px;
+  box-shadow: 0 2px 6px rgba(12, 35, 64, 0.08);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  position: relative;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.real-thumb.active .real-thumb-canvas-wrap {
+  border-color: var(--accent, #0047af);
+  box-shadow: 0 0 0 2px var(--accent, #0047af), 0 2px 9px rgba(0, 71, 175, 0.25);
+}
+
+.real-thumb-canvas {
+  display: block;
+  width: 120px;
+  height: auto;
+}
+
+.real-thumb-placeholder {
+  width: 120px;
+  height: 160px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #fafbfc;
+  color: var(--muted, #627087);
+  font-size: 11px;
+}
+
+.real-thumb small {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--muted, #627087);
+}
+
+.real-thumb.active small {
+  color: var(--accent, #0047af);
+  font-weight: 600;
+}
+
+/* Zoom Dropdown Menu */
+.zoom-control-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+.zoom-menu {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  right: 0;
+  background: #fff;
+  border: 1px solid var(--line, #d8dee7);
+  border-radius: 6px;
+  box-shadow: 0 6px 20px rgba(12, 35, 64, 0.16);
+  padding: 6px 0;
+  min-width: 160px;
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+}
+
+.zoom-menu-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 14px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--ink, #0c2340);
+  text-align: left;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.zoom-menu-item:hover,
+.zoom-menu-item:focus {
+  background: #f0f4f9;
+  outline: none;
+  color: var(--accent, #0047af);
+}
+
+.zoom-menu-item.active {
+  font-weight: 600;
+  color: var(--accent, #0047af);
+}
+
+.zoom-menu-divider {
+  height: 1px;
+  background: var(--line, #d8dee7);
+  margin: 4px 0;
+}
+
+.status-notice {
+  background: #fff8e6;
+  color: #925400;
+  border: 1px solid #ffe58f;
+  padding: 2px 8px;
+  border-radius: 3px;
+  font-size: 11px;
+  margin-left: 8px;
+  display: inline-flex;
+  align-items: center;
+  animation: fadeIn 0.2s ease;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(2px); }
+  to { opacity: 1; transform: translateY(0); }
+}
