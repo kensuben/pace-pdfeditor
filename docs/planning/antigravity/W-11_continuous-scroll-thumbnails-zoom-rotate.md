@@ -1,7 +1,7 @@
 # [W-11] PDF Editor: cuộn liên tục nhiều trang, thumbnail thật, zoom vừa trang/vừa chiều rộng, xoay trang lưu vào file
 
 Đọc `docs/planning/antigravity/00_RULES.md` trước khi làm. Bối cảnh: `docs/pdf-editor/01-PLAN.md` (lỗi B12, B13, B15; quyết định Q-P4).
-Tiền điều kiện: **W-8 và F-12 đã merge vào `main`**. W-11 sửa cùng file với W-8 (`App.tsx`, `PdfCanvas.tsx`). Xoay trang cần F-12 để file xuất đúng.
+Tiền điều kiện: **W-8, F-12 và F-13 đã merge vào `main`**. W-11 sửa cùng file với W-8/F-13 (`App.tsx`, `PdfCanvas.tsx`). Xoay trang cần F-12 để file xuất đúng.
 Nhánh: `feat/w11-continuous-scroll-view` (tạo từ `main`) · Commit: `feat(W-11): continuous virtualized page scroll, real thumbnails, fit zoom presets, persistent page rotation`
 Được tự commit + push nhánh này. KHÔNG push `main`, KHÔNG force-push.
 **Chỉ báo "done" khi đã chạy `git push` và Bước Z (cuối file) đạt – dán output ở ĐẦU báo cáo.**
@@ -9,9 +9,9 @@ Nhánh: `feat/w11-continuous-scroll-view` (tạo từ `main`) · Commit: `feat(W
 ## Bước 0 (PowerShell)
 Chạy **Bước A** trong `00_RULES.md` trước (repo bẩn hoặc `main` lệch `origin/main` → dừng, báo lại). Kiểm thêm:
 ```powershell
-git log --oneline -30 origin/main | Select-String "W-8","F-12"
+git log --oneline -30 origin/main | Select-String "W-8","F-12","F-13"
 ```
-Phải thấy **cả hai** (commit hoặc merge PR có `W-8` và `F-12`). Thiếu → **DỪNG**, báo lại. Sau đó:
+Phải thấy **cả ba** (commit hoặc merge PR có `W-8`, `F-12` và `F-13`). Thiếu → **DỪNG**, báo lại. Sau đó:
 ```powershell
 git checkout main
 git pull --ff-only

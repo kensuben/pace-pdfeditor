@@ -51,6 +51,8 @@ Toàn bộ PDF editor nằm trong `src/App.tsx` (878 dòng): component `PdfCanva
 | B17 | Bản xem trên màn hình của chữ font `Helvetica` hiện bằng font serif dự phòng trên máy không có Helvetica (Linux/Chromium), khác font khi xuất | Ảnh smoke test QA W-6 (2026-11-20): dòng đã sửa hiện kiểu Times | Xử lý ở W-9 (dùng Arimo cho bản xem Helvetica) |
 | **B18** | Xuất PDF đặt sai vị trí/hướng đối tượng trên trang có `/Rotate` (90/180/270) | QA 2026-11-20: trang `/Rotate 90`, highlight phủ dòng chữ → PDF xuất thành vệt dọc ở góc dưới | Sửa ở **F-12** |
 | **B19** | Xuất PDF lệch vị trí/kích thước trên trang có MediaBox/CropBox không bắt đầu ở gốc (0,0) | QA 2026-11-20: MediaBox `[100 100 700 500]` → highlight lệch, sai kích thước | Sửa ở **F-12** |
+| **B20** | **Highlight không hiện trên màn hình** (khung `div.annotation.highlight` chỉ có `color`/`opacity`, nền trong suốt); file xuất vẫn có vệt màu. Có từ bản phát hành đầu | QA W-8 (2026-11-20): `backgroundColor` tính được `rgba(0,0,0,0)` trên cả `main` và W-8 | Sửa ở **F-13** |
+| B21 | Chọn chữ làm thanh định dạng hiện ra, đẩy trang xuống 46px; bỏ chọn thì trang nhảy lên | QA W-8: toạ độ chữ 307px → 261px khi bỏ chọn | Xử lý ở W-8b (đưa định dạng vào panel bên phải) |
 
 ### 2.3 Thư viện hiện có [DK]
 - `pdf-lib` 1.17.1 (MIT): tạo/ghi PDF, nhúng font/ảnh, đối tượng cấp thấp. **Không có bộ phân tích content stream** (chỉ có parser đối tượng: `PDFObjectParser`, `PDFParser`…). Muốn xoá/sửa chữ gốc phải tự viết tokenizer content stream.
@@ -119,12 +121,13 @@ Nguyên tắc:
 | **W-6** | Tách PDF editor khỏi `App.tsx` thành module + test nền; **không đổi hành vi**; test "đặc tả" ghi nhận B1 | — | ✅ Đã merge (PR #38) |
 | **F-11** | Sửa B16: nhúng font TTF đầy đủ khi xuất, báo lỗi rõ khi thiếu font/glyph | W-6 | ✅ Đã merge (PR #40) |
 | **W-7** | Engine content stream: tokenizer, xoá thật chữ trong vùng, giữ vị trí chữ còn lại, báo `keptIntersecting` | W-6 | ✅ Đã merge (PR #42, gồm W-7b). Cổng Q-P1 **đạt** |
-| **W-8** | Khung chọn, 8 tay nắm, kéo/giãn mọi loại đối tượng, phím mũi tên, thêm chữ gõ tại chỗ, chèn ảnh đúng tỉ lệ (B7, B8, B10, B11) | W-7 | Prompt: `docs/planning/antigravity/W-8_selection-move-resize.md`. Song song với F-12 |
+| **W-8** | Khung chọn, 8 tay nắm, kéo/giãn mọi loại đối tượng, phím mũi tên, thêm chữ gõ tại chỗ, chèn ảnh đúng tỉ lệ (B7, B8, B10, B11) | W-7 | ✅ Đã merge (PR #44) |
+| **F-13** | Highlight hiện màu trên màn hình + xem trước dạng hình chữ nhật khi kéo (B20) | W-8 | Prompt: `docs/planning/antigravity/F-13_highlight-visible-on-screen.md`. Song song với F-12 |
 | **F-12** | Xuất đúng trên trang xoay / MediaBox-CropBox lệch gốc (B18, B19) | W-7 | Prompt: `docs/planning/antigravity/F-12_export-rotated-and-offset-pages.md`. Song song với W-8 |
-| W-8b | Panel thuộc tính (X/Y/W/H, khoá tỉ lệ, độ mờ), đường gióng/hút cạnh, nút "Hiện khung bao" | W-8 | Viết sau khi W-8 merge |
+| W-8b | Panel thuộc tính (X/Y/W/H, khoá tỉ lệ, độ mờ, định dạng chữ), đường gióng/hút cạnh, nút "Hiện khung bao", sửa B21 | W-11 | Viết sau khi W-11 merge (cùng sửa `PdfCanvas.tsx`/`App.tsx`) |
 | **W-9** | Sửa chữ gốc kiểu Acrobat: gom khối đoạn, nhận màu/cỡ/font, editor nhiều dòng, reflow; xuất bằng engine (xoá chữ cũ thật, bỏ hình chữ nhật che) + kiểm tra sót (B1–B6, B14) | W-7 đạt, W-8 | Có thể tách W-9a (nhận khối + editor) / W-9b (xuất bằng engine) |
 | **W-10** | Ảnh có sẵn: nhận, chọn, di chuyển, giãn, xoay, lật, thay, xoá, cắt; ảnh chèn có xoay/cắt/thay (B9) | W-7, W-8 | |
-| **W-11** | Cuộn liên tục có ảo hoá, thumbnail thật, menu zoom + vừa trang/vừa chiều rộng, xoay trang lưu vào file, đặt lại Undo sau thao tác trang (B12, B13, B15) | W-8, F-12 | Prompt: `docs/planning/antigravity/W-11_continuous-scroll-thumbnails-zoom-rotate.md`. **Không** song song với W-8 (cùng sửa `App.tsx`/`PdfCanvas.tsx`) |
+| **W-11** | Cuộn liên tục có ảo hoá, thumbnail thật, menu zoom + vừa trang/vừa chiều rộng, xoay trang lưu vào file, đặt lại Undo sau thao tác trang (B12, B13, B15) | W-8, F-12, F-13 | Prompt: `docs/planning/antigravity/W-11_continuous-scroll-thumbnails-zoom-rotate.md`. **Không** song song với W-8 (cùng sửa `App.tsx`/`PdfCanvas.tsx`) |
 | W-12a–d | Tìm & thay thế chữ · watermark + header/footer · crop trang · link | W-9 | Đã duyệt (Q-P3) |
 | — | Cập nhật trang hướng dẫn `/huong-dan/` | Sau W-9, W-10 | Claude tự làm, chụp ảnh với dữ liệu giả |
 
