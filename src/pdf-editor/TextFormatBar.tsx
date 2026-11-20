@@ -18,7 +18,6 @@ export function TextFormatBar({
       >
         <option>Be Vietnam Pro</option>
         <option>Arimo</option>
-        <option>Noto Sans</option>
         <option>Helvetica</option>
         <option>Times Roman</option>
         <option>Courier</option>

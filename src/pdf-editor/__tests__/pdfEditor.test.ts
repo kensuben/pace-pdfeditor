@@ -2,8 +2,11 @@
 import { describe, expect, it } from 'vitest'
 import fs from 'node:fs'
 import path from 'node:path'
-import zlib from 'node:zlib'
-import { PDFDocument, StandardFonts } from 'pdf-lib'
+import crypto from 'node:crypto'
+import { createRequire } from 'node:module'
+import { fileURLToPath } from 'node:url'
+import { PDFDict, PDFDocument, PDFName, PDFRef, StandardFonts } from 'pdf-lib'
+import fontkit from '@pdf-lib/fontkit'
 import * as pdfjsLib from 'pdfjs-dist/legacy/build/pdf.mjs'
 import type { Annotation, TextRegion } from '../../types'
 import {
@@ -13,6 +16,7 @@ import {
 } from '../textExtraction'
 import { buildReplacementAnnotation } from '../textEdit'
 import { buildEditedPdf } from '../exportPdf'
+import { EXPORT_FONT_FILES } from '../fonts'
 import {
   insertPdfPages,
   movePage,
@@ -22,8 +26,28 @@ import {
   remapAnnotationsOnDelete,
 } from '../pageOps'
 
+const require = createRequire(import.meta.url)
+const pdfjsPkgPath = require.resolve('pdfjs-dist/package.json')
+const standardFontDataUrl = path.join(path.dirname(pdfjsPkgPath), 'standard_fonts').replace(/\\/g, '/') + '/'
+const fontsDir = fileURLToPath(new URL('../fonts', import.meta.url))
+
+async function getBaseFontNames(pdfBytes: Uint8Array): Promise<string[]> {
+  const loaded = await PDFDocument.load(pdfBytes)
+  const page = loaded.getPage(0)
+  const fontDict = page.node.Resources()?.lookup(PDFName.of('Font'))
+  if (!(fontDict instanceof PDFDict)) return []
+  const names: string[] = []
+  for (const ref of fontDict.values()) {
+    const fontObj = ref instanceof PDFRef ? loaded.context.lookup(ref) : ref
+    if (fontObj instanceof PDFDict) {
+      const baseFont = fontObj.lookup(PDFName.of('BaseFont'))?.toString()
+      if (baseFont) names.push(baseFont)
+    }
+  }
+  return names
+}
+
 async function extractTextFromPdf(bytes: Uint8Array): Promise<string> {
-  const standardFontDataUrl = path.resolve(process.cwd(), 'node_modules/pdfjs-dist/standard_fonts/') + '/'
   const doc = await pdfjsLib.getDocument({
     data: bytes.slice(),
     standardFontDataUrl,
@@ -40,141 +64,16 @@ async function extractTextFromPdf(bytes: Uint8Array): Promise<string> {
   return fullText
 }
 
-// TODO(verify): @fontsource splits Google Fonts into unicode-range slices ('latin', 'vietnamese').
-// 'vietnamese-400-normal.woff' only contains diacritic glyphs (e.g. U+1ECD 'ọ') and lacks Latin ASCII.
-// Conversely, 'latin-400-normal.woff' contains ASCII + Latin-1 (H, c, v, i, ê, n, T, e, s, t, 0, 1) but lacks U+1ECD ('ọ').
-// For PDF export with pdf-lib / fontkit, we load 'be-vietnam-pro-latin-400-normal.woff' from node_modules/@fontsource/be-vietnam-pro/files/
-// and map code point U+1ECD to glyph 'o' so that the complete string 'Học viên Test 01' is preserved in the embedded font's ToUnicode CMap.
-function getBeVietnamProTestFontBytes(filePath: string): ArrayBuffer {
-  const woffBuf = fs.readFileSync(filePath)
-  const numTables = woffBuf.readUInt16BE(12)
-  let woffOffset = 44
-  const tables: Array<{ tag: string; data: Buffer; origChecksum: number }> = []
-  for (let i = 0; i < numTables; i++) {
-    const tag = woffBuf.toString('ascii', woffOffset, woffOffset + 4)
-    const tableOffset = woffBuf.readUInt32BE(woffOffset + 4)
-    const compLength = woffBuf.readUInt32BE(woffOffset + 8)
-    const origLength = woffBuf.readUInt32BE(woffOffset + 12)
-    const origChecksum = woffBuf.readUInt32BE(woffOffset + 16)
-    const compData = woffBuf.subarray(tableOffset, tableOffset + compLength)
-    const data = compLength === origLength ? compData : zlib.inflateSync(compData)
-    tables.push({ tag, data, origChecksum })
-    woffOffset += 20
-  }
-
-  const cmapEntry = tables.find((t) => t.tag === 'cmap')
-  if (!cmapEntry) return woffBuf.buffer.slice(woffBuf.byteOffset, woffBuf.byteOffset + woffBuf.byteLength)
-  const cmapData = cmapEntry.data
-
-  const sub1Offset = cmapData.readUInt32BE(8)
-  const oldSegCount = cmapData.readUInt16BE(sub1Offset + 6) / 2
-  const insertIdx = 15
-  const newSegCount = oldSegCount + 1
-
-  const oldEndCodes: number[] = []
-  const oldStartCodes: number[] = []
-  const oldDeltas: number[] = []
-  const oldRangeOffsets: number[] = []
-
-  const oldEndCodesOffset = sub1Offset + 14
-  const oldStartCodesOffset = oldEndCodesOffset + oldSegCount * 2 + 2
-  const oldDeltasOffset = oldStartCodesOffset + oldSegCount * 2
-  const oldRangeOffsetsOffset = oldDeltasOffset + oldSegCount * 2
-  const oldGlyphIdArrayOffset = oldRangeOffsetsOffset + oldSegCount * 2
-  const glyphIdArray = cmapData.subarray(oldGlyphIdArrayOffset)
-
-  for (let i = 0; i < oldSegCount; i++) {
-    oldEndCodes.push(cmapData.readUInt16BE(oldEndCodesOffset + i * 2))
-    oldStartCodes.push(cmapData.readUInt16BE(oldStartCodesOffset + i * 2))
-    oldDeltas.push(cmapData.readInt16BE(oldDeltasOffset + i * 2))
-    const ro = cmapData.readUInt16BE(oldRangeOffsetsOffset + i * 2)
-    if (ro !== 0) {
-      oldRangeOffsets.push(i < insertIdx ? ro + 2 : ro)
-    } else {
-      oldRangeOffsets.push(0)
-    }
-  }
-
-  const newEndCodes = [...oldEndCodes.slice(0, insertIdx), 7885, ...oldEndCodes.slice(insertIdx)]
-  const newStartCodes = [...oldStartCodes.slice(0, insertIdx), 7885, ...oldStartCodes.slice(insertIdx)]
-  const targetGlyphId = 93
-  const newDelta = (targetGlyphId - 7885) & 0xffff
-  const newDeltas = [
-    ...oldDeltas.slice(0, insertIdx),
-    newDelta > 32767 ? newDelta - 65536 : newDelta,
-    ...oldDeltas.slice(insertIdx),
-  ]
-  const newRangeOffsets = [...oldRangeOffsets.slice(0, insertIdx), 0, ...oldRangeOffsets.slice(insertIdx)]
-
-  const newSub1Length = 14 + newSegCount * 8 + 2 + glyphIdArray.length
-  const newSub1 = Buffer.alloc(newSub1Length)
-  newSub1.writeUInt16BE(4, 0)
-  newSub1.writeUInt16BE(newSub1Length, 2)
-  newSub1.writeUInt16BE(0, 4)
-  newSub1.writeUInt16BE(newSegCount * 2, 6)
-  const entrySelector = Math.floor(Math.log2(newSegCount))
-  const searchRange = Math.pow(2, entrySelector) * 2
-  newSub1.writeUInt16BE(searchRange, 8)
-  newSub1.writeUInt16BE(entrySelector, 10)
-  newSub1.writeUInt16BE(newSegCount * 2 - searchRange, 12)
-
-  let p = 14
-  newEndCodes.forEach((c) => {
-    newSub1.writeUInt16BE(c, p)
-    p += 2
-  })
-  newSub1.writeUInt16BE(0, p)
-  p += 2
-  newStartCodes.forEach((c) => {
-    newSub1.writeUInt16BE(c, p)
-    p += 2
-  })
-  newDeltas.forEach((c) => {
-    newSub1.writeInt16BE(c, p)
-    p += 2
-  })
-  newRangeOffsets.forEach((c) => {
-    newSub1.writeUInt16BE(c, p)
-    p += 2
-  })
-  glyphIdArray.copy(newSub1, p)
-
-  const newCmapData = Buffer.alloc(20 + newSub1Length)
-  newCmapData.writeUInt16BE(0, 0)
-  newCmapData.writeUInt16BE(2, 2)
-  newCmapData.writeUInt16BE(0, 4)
-  newCmapData.writeUInt16BE(3, 6)
-  newCmapData.writeUInt32BE(20, 8)
-  newCmapData.writeUInt16BE(3, 12)
-  newCmapData.writeUInt16BE(1, 14)
-  newCmapData.writeUInt32BE(20, 16)
-  newSub1.copy(newCmapData, 20)
-  cmapEntry.data = newCmapData
-
-  let totalDataLength = 0
-  tables.forEach((t) => {
-    totalDataLength += (t.data.length + 3) & ~3
-  })
-  const newWoff = Buffer.alloc(44 + numTables * 20 + totalDataLength)
-  woffBuf.copy(newWoff, 0, 0, 44)
-  let tblDataOffset = 44 + numTables * 20
-  for (let i = 0; i < numTables; i++) {
-    const t = tables[i]
-    const entOffset = 44 + i * 20
-    newWoff.write(t.tag, entOffset, 4, 'ascii')
-    newWoff.writeUInt32BE(tblDataOffset, entOffset + 4)
-    newWoff.writeUInt32BE(t.data.length, entOffset + 8)
-    newWoff.writeUInt32BE(t.data.length, entOffset + 12)
-    newWoff.writeUInt32BE(0, entOffset + 16)
-    t.data.copy(newWoff, tblDataOffset)
-    tblDataOffset += (t.data.length + 3) & ~3
-  }
-  newWoff.writeUInt32BE(tblDataOffset, 8)
-  const sliced = newWoff.subarray(0, tblDataOffset)
-  return sliced.buffer.slice(sliced.byteOffset, sliced.byteOffset + sliced.byteLength)
+const loadRealFontBytes = async (family: string, variant: string): Promise<ArrayBuffer> => {
+  const familyKey = family as keyof typeof EXPORT_FONT_FILES
+  const variantKey = variant as keyof (typeof EXPORT_FONT_FILES)[typeof familyKey]
+  const file = EXPORT_FONT_FILES[familyKey]?.[variantKey]
+  if (!file) throw new Error(`Unknown font ${family} ${variant}`)
+  const buf = fs.readFileSync(path.join(fontsDir, file))
+  return buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength)
 }
 
-describe('PDF Editor Modularized Unit Tests (W-6)', () => {
+describe('PDF Editor Modularized Unit Tests (W-6 & F-11)', () => {
   // T1: groupTextItemsIntoLines: 2 fragment cùng dòng, khoảng cách lớn → nối bằng 1 dấu cách; khoảng cách nhỏ → nối liền.
   it('T1: groupTextItemsIntoLines joins fragments with space for large gap and connects them for small gap', () => {
     const viewport = { transform: [1, 0, 0, 1, 0, 0], width: 600, height: 800 }
@@ -409,44 +308,228 @@ describe('PDF Editor Modularized Unit Tests (W-6)', () => {
     expect(loaded.numPages).toBe(1)
   })
 
-  // T9: text annotation Học viên Test 01, font Be Vietnam Pro (qua loadFontBytes) → pdf.js trích ra đúng Học viên Test 01.
-  it('T9: buildEditedPdf embeds custom font Be Vietnam Pro for Vietnamese text', async () => {
+  // ==========================================
+  // Task F-11 Tests: K1 - K6
+  // ==========================================
+
+  const S = 'Học viên Test 01 – Đường Ưu Đãi, Quận Mẫu ₫'
+  const vnLower = 'a à á ả ã ạ ă ằ ắ ẳ ẵ ặ â ầ ấ ẩ ẫ ậ b c d đ e è é ẻ ẽ ẹ ê ề ế ể ễ ệ g h i ì í ỉ ĩ ị k l m n o ò ó ỏ õ ọ ô ồ ố ổ ỗ ộ ơ ờ ớ ở ỡ ợ p q r s t u ù ú ủ ũ ụ ư ừ ứ ử ữ ự v x y ỳ ý ỷ ỹ ỵ'.split(' ')
+  const vnUpper = vnLower.map((c) => c.toUpperCase())
+  const digitsAndPunc = '0123456789.,;:!?()-/@%&"\'–₫'.split('')
+  const VN = Array.from(new Set([...vnLower, ...vnUpper, ...digitsAndPunc]))
+
+  // K1: Test đọc 8 file TTF: SHA256 khớp SOURCES.md; fontkit có glyph cho mọi ký tự trong VN.
+  it('K1: all 8 TTF files match SOURCES.md SHA256 and fontkit provides glyphs for all VN characters', () => {
+    const sourcesMd = fs.readFileSync(path.join(fontsDir, 'SOURCES.md'), 'utf-8')
+    const ttfFiles = [
+      'BeVietnamPro-Regular.ttf',
+      'BeVietnamPro-Italic.ttf',
+      'BeVietnamPro-Bold.ttf',
+      'BeVietnamPro-BoldItalic.ttf',
+      'Arimo-Regular.ttf',
+      'Arimo-Italic.ttf',
+      'Arimo-Bold.ttf',
+      'Arimo-BoldItalic.ttf',
+    ]
+
+    expect(ttfFiles).toHaveLength(8)
+
+    for (const filename of ttfFiles) {
+      const filePath = path.join(fontsDir, filename)
+      expect(fs.existsSync(filePath), `File exists: ${filename}`).toBe(true)
+      const buf = fs.readFileSync(filePath)
+
+      const hash = crypto.createHash('sha256').update(buf).digest('hex').toLowerCase()
+      expect(sourcesMd.toLowerCase()).toContain(hash)
+
+      const font = fontkit.create(buf)
+      for (const char of VN) {
+        const cp = char.codePointAt(0)!
+        const hasGlyph = font.hasGlyphForCodePoint(cp)
+        expect(hasGlyph, `Font ${filename} missing glyph for '${char}' (U+${cp.toString(16).toUpperCase()})`).toBe(true)
+      }
+    }
+  })
+
+  // K2: buildEditedPdf với 8 annotation (2 family × 4 biến thể), mỗi cái mang chuỗi S → pdf.js trích ra đúng nguyên văn S cho cả 8.
+  it('K2: buildEditedPdf with 8 annotations across 2 families and 4 variants extracts exact S for all', async () => {
     const doc = await PDFDocument.create()
-    doc.addPage([600, 400])
-    const pdfBytes = new Uint8Array(await doc.save())
+    doc.addPage([800, 1000])
+    const baseBytes = new Uint8Array(await doc.save())
 
-    const fontFilePath = path.resolve(
-      process.cwd(),
-      'node_modules/@fontsource/be-vietnam-pro/files/be-vietnam-pro-latin-400-normal.woff',
-    )
-    expect(fs.existsSync(fontFilePath)).toBe(true)
+    const families = ['Be Vietnam Pro', 'Arimo'] as const
+    const variants = [
+      { bold: false, italic: false },
+      { bold: false, italic: true },
+      { bold: true, italic: false },
+      { bold: true, italic: true },
+    ]
 
-    const loadFontBytes = async (family: string, variant: string): Promise<ArrayBuffer> => {
-      expect(family).toBe('Be Vietnam Pro')
-      expect(variant).toBe('regular')
-      return getBeVietnamProTestFontBytes(fontFilePath)
+    const annotations: Annotation[] = []
+    let idx = 0
+    for (const family of families) {
+      for (const v of variants) {
+        annotations.push({
+          id: `ann-k2-${idx}`,
+          page: 1,
+          type: 'text',
+          text: S,
+          fontFamily: family,
+          bold: v.bold,
+          italic: v.italic,
+          fontSize: 14,
+          color: '#0C2340',
+          opacity: 1,
+          x: 0.05,
+          y: 0.05 + idx * 0.1,
+          width: 0.9,
+          height: 0.08,
+        })
+        idx++
+      }
     }
 
-    const annotations: Annotation[] = [
-      {
-        id: 'ann-vietnamese',
+    const out = await buildEditedPdf(baseBytes, annotations, { loadFontBytes: loadRealFontBytes })
+    const extracted = await extractTextFromPdf(out)
+    const count = extracted.split(S).length - 1
+    expect(count).toBe(8)
+  })
+
+  // K3: fontFamily: 'Helvetica' + chuỗi S → xuất bằng Arimo (BaseFont trong PDF chứa Arimo), trích ra đúng S.
+  // Tương tự với Times Roman, Courier, Noto Sans.
+  it('K3: requested standard/Noto fonts with Vietnamese text S fall back to Arimo with BaseFont containing Arimo', async () => {
+    const testFamilies: Array<NonNullable<Annotation['fontFamily']>> = [
+      'Helvetica',
+      'Times Roman',
+      'Courier',
+      'Noto Sans',
+    ]
+
+    for (const reqFamily of testFamilies) {
+      const doc = await PDFDocument.create()
+      doc.addPage([600, 400])
+      const baseBytes = new Uint8Array(await doc.save())
+
+      const ann: Annotation = {
+        id: `ann-k3-${reqFamily}`,
         page: 1,
         type: 'text',
-        text: 'Học viên Test 01',
-        fontFamily: 'Be Vietnam Pro',
-        fontSize: 16,
-        color: '#0C2340',
+        text: S,
+        fontFamily: reqFamily,
+        fontSize: 14,
+        color: '#000000',
         opacity: 1,
         x: 0.1,
         y: 0.2,
-        width: 0.5,
+        width: 0.8,
         height: 0.1,
-      },
-    ]
+      }
 
-    const out = await buildEditedPdf(pdfBytes, annotations, { loadFontBytes })
+      const out = await buildEditedPdf(baseBytes, [ann], { loadFontBytes: loadRealFontBytes })
+      const baseFontNames = await getBaseFontNames(out)
+      expect(baseFontNames.some((bf) => bf.includes('Arimo'))).toBe(true)
+
+      const extracted = await extractTextFromPdf(out)
+      expect(extracted).toContain(S)
+    }
+  })
+
+  // K4: fontFamily: 'Helvetica' + Customer: Test 02 (ASCII) → vẫn dùng font chuẩn Helvetica (BaseFont Helvetica).
+  it('K4: requested standard font Helvetica with pure ASCII text preserves standard Helvetica font', async () => {
+    const doc = await PDFDocument.create()
+    doc.addPage([600, 400])
+    const baseBytes = new Uint8Array(await doc.save())
+
+    const asciiText = 'Customer: Test 02'
+    const ann: Annotation = {
+      id: 'ann-k4',
+      page: 1,
+      type: 'text',
+      text: asciiText,
+      fontFamily: 'Helvetica',
+      fontSize: 14,
+      color: '#000000',
+      opacity: 1,
+      x: 0.1,
+      y: 0.2,
+      width: 0.5,
+      height: 0.1,
+    }
+
+    const out = await buildEditedPdf(baseBytes, [ann], { loadFontBytes: loadRealFontBytes })
+    const baseFontNames = await getBaseFontNames(out)
+    expect(baseFontNames.some((bf) => bf.includes('Helvetica'))).toBe(true)
+    expect(baseFontNames.some((bf) => bf.includes('Arimo'))).toBe(false)
+
     const extracted = await extractTextFromPdf(out)
-    expect(extracted).toContain('Học viên Test 01')
+    expect(extracted).toContain(asciiText)
+  })
+
+  // K5: loadFontBytes reject → buildEditedPdf reject, message bắt đầu FONT_LOAD_FAILED:. Không sinh file.
+  it('K5: loadFontBytes rejection causes buildEditedPdf to reject loudly with FONT_LOAD_FAILED:', async () => {
+    const doc = await PDFDocument.create()
+    doc.addPage([600, 400])
+    const baseBytes = new Uint8Array(await doc.save())
+
+    const ann: Annotation = {
+      id: 'ann-k5',
+      page: 1,
+      type: 'text',
+      text: S,
+      fontFamily: 'Be Vietnam Pro',
+      fontSize: 14,
+      color: '#000000',
+      opacity: 1,
+      x: 0.1,
+      y: 0.2,
+      width: 0.5,
+      height: 0.1,
+    }
+
+    const failingLoadFontBytes = async (): Promise<ArrayBuffer> => {
+      throw new Error('Network timeout simulated')
+    }
+
+    await expect(
+      buildEditedPdf(baseBytes, [ann], { loadFontBytes: failingLoadFontBytes }),
+    ).rejects.toThrow(/^FONT_LOAD_FAILED:/)
+  })
+
+  // K6: annotation Be Vietnam Pro chứa Test 你好 😀 → reject, message bắt đầu MISSING_GLYPH: và chứa 你.
+  it('K6: annotation containing unsupported glyphs rejects with MISSING_GLYPH: and names the missing char', async () => {
+    const doc = await PDFDocument.create()
+    doc.addPage([600, 400])
+    const baseBytes = new Uint8Array(await doc.save())
+
+    const ann: Annotation = {
+      id: 'ann-k6',
+      page: 1,
+      type: 'text',
+      text: 'Test 你好 😀',
+      fontFamily: 'Be Vietnam Pro',
+      fontSize: 14,
+      color: '#000000',
+      opacity: 1,
+      x: 0.1,
+      y: 0.2,
+      width: 0.5,
+      height: 0.1,
+    }
+
+    let error: Error | null = null
+    try {
+      await buildEditedPdf(baseBytes, [ann], { loadFontBytes: loadRealFontBytes })
+    } catch (err: unknown) {
+      if (err instanceof Error) {
+        error = err
+      } else {
+        error = new Error(String(err))
+      }
+    }
+
+    expect(error).not.toBeNull()
+    expect(error!.message).toMatch(/^MISSING_GLYPH:/)
+    expect(error!.message).toContain('你')
   })
 
   // T10: pageOps: movePage, deletePage, insertPdfPages và các hàm remap annotations.
@@ -463,7 +546,6 @@ describe('PDF Editor Modularized Unit Tests (W-6)', () => {
     const initialBytes = new Uint8Array(await doc.save())
 
     // 1. movePage(0 -> 1): order P2, P1, P3
-    const standardFontDataUrl = path.resolve(process.cwd(), 'node_modules/pdfjs-dist/standard_fonts/') + '/'
     const movedBytes = await movePage(initialBytes, 0, 1)
     const movedDoc = await pdfjsLib.getDocument({ data: movedBytes.slice(), standardFontDataUrl }).promise
     expect(movedDoc.numPages).toBe(3)

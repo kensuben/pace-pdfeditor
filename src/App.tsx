@@ -256,7 +256,21 @@ function App() {
       const out=await buildPdfBytes(), blob = new Blob([out as BlobPart], { type: 'application/pdf' }), url = URL.createObjectURL(blob)
       const a = document.createElement('a'); a.href=url; a.download=info.name.replace(/\.pdf$/i,'')+'-edited.pdf'; a.click(); URL.revokeObjectURL(url)
       log('document.exported', 'Xuất tài liệu PDF thành công', { fileExt: 'pdf', annotationCount: annotations.length, pageCount: info.pages }, 'success')
-    } catch { log('document.export_failed', 'Xuất tài liệu PDF thất bại', { fileExt: 'pdf' }, 'warning'); alert('Could not export this PDF.') } finally { setBusy(false) }
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error)
+      let reason: 'font_load_failed' | 'missing_glyph' | 'unknown' = 'unknown'
+      if (msg.startsWith('FONT_LOAD_FAILED:')) {
+        reason = 'font_load_failed'
+        alert('Không tải được phông chữ để xuất PDF. Kiểm tra mạng rồi thử lại.')
+      } else if (msg.startsWith('MISSING_GLYPH:')) {
+        reason = 'missing_glyph'
+        const chars = msg.slice('MISSING_GLYPH:'.length).trim()
+        alert(`Phông chữ không hỗ trợ ký tự: ${chars}`)
+      } else {
+        alert('Could not export this PDF.')
+      }
+      log('document.export_failed', 'Xuất tài liệu PDF thất bại', { fileExt: 'pdf', reason }, 'warning')
+    } finally { setBusy(false) }
   }
 
   const insertImage = async (file: File) => {
