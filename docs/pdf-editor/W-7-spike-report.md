@@ -62,4 +62,30 @@ Nhóm spike khuyến nghị đi tiếp phương án tự phát triển engine co
 1. **`TODO(verify): ISO 32000-1 mục 9.6.2.2 Standard 14 Fonts width table`**:
    - `pdf-lib` không cung cấp API đồng bộ công khai để tra cứu metrics font chuẩn khi chưa embed. Engine đã tận dụng `StandardFontEmbedder` tích hợp sẵn trong `pdf-lib` để lấy độ rộng glyph chính xác cho Helvetica, Times-Roman, Courier, và dự phòng 0.5 em (`approximate: true`) nếu gặp font không xác định.
 2. **`TODO(verify): ISO 32000-1 mục 9.4.4 Text Space Details & Kerning Displacement`**:
-   - Khi xoá một chuỗi con trong mảng `TJ`, engine thay thế phần tử đó bằng kerning âm $-advanceEm$, đảm bảo bước dịch chuyển ngang của các phần tử tiếp theo không bị xê dịch dù chỉ 0.01 pt.
+   - Khi xoá một chuỗi con trong mảng `TJ` (hoặc thay thế toàn bộ lệnh chữ bằng `[n] TJ`), engine tính toán khoảng bù toạ độ theo chuẩn ISO 32000-1 mục 9.4.4 với công thức $n = -(tx \times 1000) / (Tfs \times Th)$, đảm bảo bước dịch chuyển ngang của các chữ phía sau trên cùng dòng được bảo toàn chính xác (độ lệch $\le 0.01$ pt với chữ thông thường và $\le 0.05$ pt khi kết hợp các tham số $Tc, Tw, Tz, Ts$).
+
+---
+
+## 6. Lỗi QA phát hiện & đã sửa (W-7b)
+
+Trong đợt nghiệm thu W-7, QA dựng fixture pixel test và phát hiện 4 vấn đề kỹ thuật. Tất cả 4 lỗi đã được khắc phục triệt để và kiểm chứng bằng bộ test T-A1..T-Z:
+
+1. **Vấn đề A – Mất độ tiến ngang khi xoá lệnh chữ:**
+   - *Hiện tượng:* Khi xoá toán tử `Tj`, `TJ`, `'`, hoặc `"`, engine trước đây loại bỏ hoàn toàn toán tử khỏi stream. Nếu trên cùng dòng có lệnh chữ tiếp theo (không có `Td`), chữ tiếp theo bị kéo dồn sang trái (ví dụ mất 105 pt trong mẫu `Name: Hoc vien Test 01 , Ha Noi`).
+   - *Khắc phục:* Lệnh chữ bị xoá toàn bộ được thay thế bằng toán tử chỉ dịch chuyển toạ độ `[n] TJ` với $n = -(tx \times 1000) / (Tfs \times Th)$, trong đó $tx$ là tổng độ tiến ngang trong không gian chữ (gồm $Tc$, $Tw$ cho khoảng trắng của font 1 byte, $Th = Tz/100$) theo ISO 32000-1 mục 9.4.4. Với `'`, xuất `T*` rồi `[n] TJ`. Với `"`, xuất `Tw, Tc, T*` rồi `[n] TJ`. Tuyệt đối không dùng `Td` vì làm biến đổi text line matrix ($Tlm$), gây sai lệch vị trí cho các lệnh `T*` tiếp theo. Nếu $Tfs = 0$ hoặc $Th = 0$, không xoá và đếm vào `skipped: zero-scale`.
+   - *Kiểm chứng:* Test T-A1, T-A2, T-A3 (độ lệch $\le 0.01$ pt).
+
+2. **Vấn đề B – Hỏng dữ liệu nhị phân ảnh inline:**
+   - *Hiện tượng:* `serializeContent` dùng `TextDecoder('latin1')` rồi `TextEncoder('utf-8')` lên chuỗi dữ liệu ảnh inline, làm các byte $\ge 0x80$ bị biến đổi sai lệch (0xFF thành 0xC3 0xBF).
+   - *Khắc phục:* Viết lại bộ tuần hoàn hoá bằng `ByteWriter` nhị phân, ghi trực tiếp ra `Uint8Array`. Chuỗi lệnh ASCII được encode byte-by-byte, dữ liệu ảnh inline được copy nguyên văn nhị phân (`Uint8Array.set`). Loại bỏ hoàn toàn `TextEncoder` và `TextDecoder` trong `contentTokenizer.ts`.
+   - *Kiểm chứng:* Test T-B1 (dải byte 0x00..0xFF bảo toàn tuyệt đối 100% qua chu trình serialize và writePageContent).
+
+3. **Vấn đề C – Sai lệch bù kerning khi xoá một phần TJ có $Tc, Tw, Tz$:**
+   - *Hiện tượng:* Khi xoá chuỗi con trong mảng `TJ`, công thức cũ chưa tính chuẩn tác động của tham số giãn chữ ($Tc$), giãn từ ($Tw$), và tỉ lệ ngang ($Tz$).
+   - *Khắc phục:* Sử dụng công thức chuẩn $n = -(tx \times 1000) / (Tfs \times Th)$ cho từng phần tử chuỗi bị xoá trong `TJ`.
+   - *Kiểm chứng:* Test T-C1 (độ lệch $\le 0.05$ pt cho cả ca $Tc=1, Tz=80, Tw=5$ và ca $Tc=-0.5, Ts=3$).
+
+4. **Vấn đề D – Thiếu cảnh báo chữ giao nhau chưa bị xoá (Q-P2):**
+   - *Hiện tượng:* Báo cáo `RemovalReport` không theo dõi các lệnh chữ có bounding box giao nhau với vùng xoá nhưng không bị xoá (do tâm nằm ngoài vùng xoá, Type3 font, Form XObject, zero-scale).
+   - *Khắc phục:* Bổ sung trường `keptIntersecting: number` vào `RemovalReport`. Bổ sung hàm thuần `pagesWithRemainingText(reports: Map<number, RemovalReport>): number[]` trả về danh sách trang có chữ còn sót (`keptIntersecting > 0` hoặc `skipped > 0`), sẵn sàng cho cảnh báo UI ở giai đoạn tiếp theo.
+   - *Kiểm chứng:* Test T-D1 và T-Z.

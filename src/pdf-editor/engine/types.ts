@@ -20,7 +20,12 @@ export interface ContentOp {
   operands: Operand[]
 }
 
-export type SkipReason = 'form-xobject' | 'type3-font' | 'approximate-width' | 'decode-error'
+export type SkipReason =
+  | 'form-xobject'
+  | 'type3-font'
+  | 'approximate-width'
+  | 'decode-error'
+  | 'zero-scale'
 
 export interface SkipRecord {
   reason: SkipReason
@@ -32,6 +37,7 @@ export interface RemovalReport {
   partialOps: number
   skipped: SkipRecord[]
   approximateOps: number
+  keptIntersecting: number
 }
 
 export interface TextShowInfo {

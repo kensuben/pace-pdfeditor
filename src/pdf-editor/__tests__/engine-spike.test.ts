@@ -14,7 +14,7 @@ import {
   ContentSyntaxError,
 } from '../engine/contentTokenizer'
 import { readPageContent, writePageContent } from '../engine/pageContent'
-import { removeTextInRegions } from '../engine/textRemoval'
+import { removeTextInRegions, pagesWithRemainingText } from '../engine/textRemoval'
 import type { Rect } from '../engine/types'
 
 const require = createRequire(import.meta.url)
@@ -484,5 +484,391 @@ describe('W-7 Content Stream Engine Spike Tests', () => {
     console.log(`[K10 Benchmark] Measurements: ${measurements.map((m) => m.toFixed(2)).join(', ')} ms. Median: ${median.toFixed(2)} ms`)
 
     expect(median).toBeLessThan(300)
+  })
+
+  // =========================================================================
+  // W-7b Tests (QA Bugfixes Verification: T-A1 .. T-Z)
+  // =========================================================================
+
+  it('T-A1: 3 Tj ops on same line, delete middle op -> subsequent item shift <= 0.01 pt; deleted text gone', async () => {
+    const doc = await PDFDocument.create()
+    const page = doc.addPage([600, 400])
+    const f1 = await doc.embedFont(StandardFonts.Helvetica)
+    const f2 = await doc.embedFont(StandardFonts.TimesRoman)
+
+    page.node.set(
+      PDFName.of('Resources'),
+      doc.context.obj({
+        Font: doc.context.obj({
+          [f1.name]: f1.ref,
+          [f2.name]: f2.ref,
+        }),
+      }),
+    )
+
+    const streamText = [
+      'BT',
+      `/${f1.name} 14 Tf`,
+      '20 60 Td',
+      '(Name: ) Tj',
+      '(Hoc vien Test 01) Tj',
+      `/${f2.name} 14 Tf`,
+      '(, Ha Noi) Tj',
+      'ET',
+    ].join('\n')
+
+    const flate = doc.context.flateStream(streamText)
+    const ref = doc.context.register(flate)
+    page.node.set(PDFName.of('Contents'), ref)
+    const baseBytes = new Uint8Array(await doc.save())
+
+    const beforeItems = await extractTextLines(baseBytes)
+    const suffixBefore = beforeItems.find((i) => i.str.includes(', Ha Noi'))!
+    expect(suffixBefore).toBeDefined()
+
+    const loaded = await PDFDocument.load(baseBytes)
+    // 'Name: ' is ~40 pt width, starting at x=20. 'Hoc vien Test 01' is at x ~ 65..170.
+    const region: Rect = { x: 65, y: 55, width: 95, height: 20 }
+    const report = removeTextInRegions(loaded, 0, [region])
+    expect(report.removedOps).toBeGreaterThan(0)
+
+    const afterBytes = new Uint8Array(await loaded.save())
+    const afterItems = await extractTextLines(afterBytes)
+    const allText = afterItems.map((i) => i.str).join(' ')
+    expect(allText).toContain('Name:')
+    expect(allText).not.toContain('Hoc vien Test 01')
+    expect(allText).toContain(', Ha Noi')
+
+    const suffixAfter = afterItems.find((i) => i.str.includes(', Ha Noi'))!
+    expect(Math.abs(suffixAfter.x - suffixBefore.x)).toBeLessThanOrEqual(0.01)
+    expect(Math.abs(suffixAfter.y - suffixBefore.y)).toBeLessThanOrEqual(0.01)
+  })
+
+  it('T-A2: 3 TJ ops on same line (middle TJ has kerning -50) -> subsequent item shift <= 0.01 pt', async () => {
+    const doc = await PDFDocument.create()
+    const page = doc.addPage([600, 400])
+    const f1 = await doc.embedFont(StandardFonts.Helvetica)
+    const f2 = await doc.embedFont(StandardFonts.TimesRoman)
+
+    page.node.set(
+      PDFName.of('Resources'),
+      doc.context.obj({
+        Font: doc.context.obj({
+          [f1.name]: f1.ref,
+          [f2.name]: f2.ref,
+        }),
+      }),
+    )
+
+    const streamText = [
+      'BT',
+      `/${f1.name} 14 Tf`,
+      '20 60 Td',
+      '[(Start: )] TJ',
+      '[(Middle ) -50 (Part)] TJ',
+      `/${f2.name} 14 Tf`,
+      '[(End)] TJ',
+      'ET',
+    ].join('\n')
+
+    const flate = doc.context.flateStream(streamText)
+    const ref = doc.context.register(flate)
+    page.node.set(PDFName.of('Contents'), ref)
+    const baseBytes = new Uint8Array(await doc.save())
+
+    const beforeItems = await extractTextLines(baseBytes)
+    const endBefore = beforeItems.find((i) => i.str.includes('End'))!
+    expect(endBefore).toBeDefined()
+
+    const loaded = await PDFDocument.load(baseBytes)
+    // Start: is ~41 pt. Middle Part is at x ~ 62..125
+    const region: Rect = { x: 65, y: 55, width: 55, height: 20 }
+    const report = removeTextInRegions(loaded, 0, [region])
+    expect(report.removedOps).toBeGreaterThan(0)
+
+    const afterBytes = new Uint8Array(await loaded.save())
+    const afterItems = await extractTextLines(afterBytes)
+    const allText = afterItems.map((i) => i.str).join(' ')
+    expect(allText).toContain('Start:')
+    expect(allText).not.toContain('Middle')
+    expect(allText).toContain('End')
+
+    const endAfter = afterItems.find((i) => i.str.includes('End'))!
+    expect(Math.abs(endAfter.x - endBefore.x)).toBeLessThanOrEqual(0.01)
+    expect(Math.abs(endAfter.y - endBefore.y)).toBeLessThanOrEqual(0.01)
+  })
+
+  it('T-A3: single quote \' and double quote " ops deleted, then Tj on same line -> shift <= 0.01 pt', async () => {
+    const doc = await PDFDocument.create()
+    const page = doc.addPage([600, 400])
+    const f1 = await doc.embedFont(StandardFonts.Helvetica)
+    const f2 = await doc.embedFont(StandardFonts.TimesRoman)
+
+    page.node.set(
+      PDFName.of('Resources'),
+      doc.context.obj({
+        Font: doc.context.obj({
+          [f1.name]: f1.ref,
+          [f2.name]: f2.ref,
+        }),
+      }),
+    )
+
+    const streamText = [
+      'BT',
+      `/${f1.name} 12 Tf`,
+      '14 TL',
+      '20 300 Td',
+      '(Line 1) Tj',
+      '(Line 2 to delete) \'',
+      `/${f2.name} 12 Tf`,
+      '(Suffix 1) Tj',
+      'ET',
+      'BT',
+      `/${f1.name} 12 Tf`,
+      '14 TL',
+      '20 200 Td',
+      '(Line 3) Tj',
+      '2 0 (Line 4 to delete) "',
+      `/${f2.name} 12 Tf`,
+      '(Suffix 2) Tj',
+      'ET',
+    ].join('\n')
+
+    const flate = doc.context.flateStream(streamText)
+    const ref = doc.context.register(flate)
+    page.node.set(PDFName.of('Contents'), ref)
+    const baseBytes = new Uint8Array(await doc.save())
+
+    const beforeItems = await extractTextLines(baseBytes)
+    const s1Before = beforeItems.find((i) => i.str.includes('Suffix 1'))!
+    const s2Before = beforeItems.find((i) => i.str.includes('Suffix 2'))!
+    expect(s1Before).toBeDefined()
+    expect(s2Before).toBeDefined()
+
+    const loaded = await PDFDocument.load(baseBytes)
+    // Line 2 is at y = 300 - 14 = 286. x ~ 20..110
+    // Line 4 is at y = 200 - 14 = 186. x ~ 20..120
+    const regions: Rect[] = [
+      { x: 20, y: 280, width: 85, height: 16 },
+      { x: 20, y: 180, width: 95, height: 16 },
+    ]
+    const report = removeTextInRegions(loaded, 0, regions)
+    expect(report.removedOps).toBe(2)
+
+    const afterBytes = new Uint8Array(await loaded.save())
+    const afterItems = await extractTextLines(afterBytes)
+    const allText = afterItems.map((i) => i.str).join(' ')
+    expect(allText).not.toContain('Line 2 to delete')
+    expect(allText).not.toContain('Line 4 to delete')
+    expect(allText).toContain('Suffix 1')
+    expect(allText).toContain('Suffix 2')
+
+    const s1After = afterItems.find((i) => i.str.includes('Suffix 1'))!
+    const s2After = afterItems.find((i) => i.str.includes('Suffix 2'))!
+    expect(Math.abs(s1After.x - s1Before.x)).toBeLessThanOrEqual(0.01)
+    expect(Math.abs(s1After.y - s1Before.y)).toBeLessThanOrEqual(0.01)
+    expect(Math.abs(s2After.x - s2Before.x)).toBeLessThanOrEqual(0.01)
+    expect(Math.abs(s2After.y - s2Before.y)).toBeLessThanOrEqual(0.01)
+  })
+
+  it('T-B1: inline image 16x1 grayscale preserves 0x00..0xFF verbatim through serialize and writePageContent', async () => {
+    const rawImage = new Uint8Array(256)
+    for (let i = 0; i < 256; i++) {
+      rawImage[i] = i
+    }
+
+    const header = new TextEncoder().encode('q\nBI\n/W 16\n/H 16\n/BPC 8\n/CS /G\nID ')
+    const trailer = new TextEncoder().encode(' EI\nQ\n')
+    const stream = new Uint8Array(header.length + rawImage.length + trailer.length)
+    stream.set(header, 0)
+    stream.set(rawImage, header.length)
+    stream.set(trailer, header.length + rawImage.length)
+
+    // Tokenize then serialize
+    const ops = tokenizeContent(stream)
+    const serialized = serializeContent(ops)
+
+    function extractImgBytes(buf: Uint8Array): Uint8Array {
+      let idIdx = -1
+      for (let i = 0; i < buf.length - 3; i++) {
+        if (buf[i] === 0x49 && buf[i + 1] === 0x44 && (buf[i + 2] === 0x20 || buf[i + 2] === 0x0a)) {
+          idIdx = i + 3
+          break
+        }
+      }
+      return buf.slice(idIdx, idIdx + 256)
+    }
+
+    const serImg = extractImgBytes(serialized)
+    expect(Array.from(serImg)).toEqual(Array.from(rawImage))
+
+    // Write to page content and read back
+    const doc = await PDFDocument.create()
+    doc.addPage([200, 200])
+    writePageContent(doc, 0, serialized)
+
+    const readBack = readPageContent(doc, 0)
+    const readImg = extractImgBytes(readBack)
+    expect(Array.from(readImg)).toEqual(Array.from(rawImage))
+  })
+
+  it('T-C1: partial TJ removal with Tc, Tz, Tw, Ts compensates accurately (shift <= 0.05 pt)', async () => {
+    const doc = await PDFDocument.create()
+    const page = doc.addPage([600, 400])
+    const f1 = await doc.embedFont(StandardFonts.Helvetica)
+    const f2 = await doc.embedFont(StandardFonts.TimesRoman)
+
+    page.node.set(
+      PDFName.of('Resources'),
+      doc.context.obj({
+        Font: doc.context.obj({
+          [f1.name]: f1.ref,
+          [f2.name]: f2.ref,
+        }),
+      }),
+    )
+
+    const streamText = [
+      'BT',
+      `/${f1.name} 12 Tf`,
+      '1 Tc',
+      '80 Tz',
+      '5 Tw',
+      '20 300 Td',
+      '[(PrefixOne ) (DeletePartOne)] TJ',
+      `/${f2.name} 12 Tf`,
+      '(SuffixOne) Tj',
+      'ET',
+      'BT',
+      `/${f1.name} 12 Tf`,
+      '-0.5 Tc',
+      '3 Ts',
+      '20 200 Td',
+      '[(PrefixTwo ) (DeletePartTwo)] TJ',
+      `/${f2.name} 12 Tf`,
+      '(SuffixTwo) Tj',
+      'ET',
+    ].join('\n')
+
+    const flate = doc.context.flateStream(streamText)
+    const ref = doc.context.register(flate)
+    page.node.set(PDFName.of('Contents'), ref)
+    const baseBytes = new Uint8Array(await doc.save())
+
+    const beforeItems = await extractTextLines(baseBytes)
+    const s1Before = beforeItems.find((i) => i.str.includes('SuffixOne'))!
+    const s2Before = beforeItems.find((i) => i.str.includes('SuffixTwo'))!
+    expect(s1Before).toBeDefined()
+    expect(s2Before).toBeDefined()
+
+    const loaded = await PDFDocument.load(baseBytes)
+    // PrefixOne is ~55 pt. DeletePartOne is at x ~ 75..140
+    // PrefixTwo is ~55 pt. DeletePartTwo is at x ~ 75..140
+    const regions: Rect[] = [
+      { x: 80, y: 295, width: 45, height: 18 },
+      { x: 80, y: 195, width: 45, height: 18 },
+    ]
+    const report = removeTextInRegions(loaded, 0, regions)
+    expect(report.partialOps).toBe(2)
+
+    const afterBytes = new Uint8Array(await loaded.save())
+    const afterItems = await extractTextLines(afterBytes)
+    const allText = afterItems.map((i) => i.str).join(' ')
+    expect(allText).not.toContain('DeletePartOne')
+    expect(allText).not.toContain('DeletePartTwo')
+    expect(allText).toContain('PrefixOne')
+    expect(allText).toContain('SuffixOne')
+    expect(allText).toContain('PrefixTwo')
+    expect(allText).toContain('SuffixTwo')
+
+    const s1After = afterItems.find((i) => i.str.includes('SuffixOne'))!
+    const s2After = afterItems.find((i) => i.str.includes('SuffixTwo'))!
+    expect(Math.abs(s1After.x - s1Before.x)).toBeLessThanOrEqual(0.05)
+    expect(Math.abs(s1After.y - s1Before.y)).toBeLessThanOrEqual(0.05)
+    expect(Math.abs(s2After.x - s2Before.x)).toBeLessThanOrEqual(0.05)
+    expect(Math.abs(s2After.y - s2Before.y)).toBeLessThanOrEqual(0.05)
+  })
+
+  it('T-D1: region covering 40% left of long Tj keeps text, records keptIntersecting = 1, pagesWithRemainingText returns [0]', async () => {
+    const doc = await PDFDocument.create()
+    const page = doc.addPage([600, 400])
+    const font = await doc.embedFont(StandardFonts.Helvetica)
+    page.node.set(
+      PDFName.of('Resources'),
+      doc.context.obj({
+        Font: doc.context.obj({
+          [font.name]: font.ref,
+        }),
+      }),
+    )
+
+    const longText = 'A very long text phrase that should not be deleted by 40 percent cover'
+    const streamText = [
+      'BT',
+      `/${font.name} 12 Tf`,
+      '50 200 Td',
+      `(${longText}) Tj`,
+      'ET',
+    ].join('\n')
+
+    const flate = doc.context.flateStream(streamText)
+    const ref = doc.context.register(flate)
+    page.node.set(PDFName.of('Contents'), ref)
+    const baseBytes = new Uint8Array(await doc.save())
+
+    const loaded = await PDFDocument.load(baseBytes)
+    const region: Rect = { x: 50, y: 195, width: 100, height: 20 }
+    const report = removeTextInRegions(loaded, 0, [region])
+
+    expect(report.removedOps).toBe(0)
+    expect(report.keptIntersecting).toBe(1)
+
+    const pages = pagesWithRemainingText(new Map([[0, report]]))
+    expect(pages).toEqual([0])
+
+    const afterBytes = new Uint8Array(await loaded.save())
+    const textAfter = await extractFullText(afterBytes)
+    expect(textAfter).toContain('A very long text phrase')
+  })
+
+  it('T-Z: zero font size (Tfs = 0) is not removed and counted into skipped with reason zero-scale', async () => {
+    const doc = await PDFDocument.create()
+    const page = doc.addPage([600, 400])
+    const font = await doc.embedFont(StandardFonts.Helvetica)
+    page.node.set(
+      PDFName.of('Resources'),
+      doc.context.obj({
+        Font: doc.context.obj({
+          [font.name]: font.ref,
+        }),
+      }),
+    )
+
+    const streamText = [
+      'BT',
+      `/${font.name} 0 Tf`,
+      '50 200 Td',
+      '(Zero Scaled Text) Tj',
+      'ET',
+    ].join('\n')
+
+    const flate = doc.context.flateStream(streamText)
+    const ref = doc.context.register(flate)
+    page.node.set(PDFName.of('Contents'), ref)
+    const baseBytes = new Uint8Array(await doc.save())
+
+    const loaded = await PDFDocument.load(baseBytes)
+    const region: Rect = { x: 40, y: 190, width: 100, height: 30 }
+    const report = removeTextInRegions(loaded, 0, [region])
+
+    expect(report.removedOps).toBe(0)
+    const zeroSkip = report.skipped.find((s) => s.reason === 'zero-scale')
+    expect(zeroSkip).toBeDefined()
+    expect(zeroSkip!.count).toBe(1)
+    expect(report.keptIntersecting).toBe(1)
+
+    const pages = pagesWithRemainingText(new Map([[0, report]]))
+    expect(pages).toEqual([0])
   })
 })

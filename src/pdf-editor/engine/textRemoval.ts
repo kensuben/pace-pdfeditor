@@ -28,6 +28,17 @@ function isPointInRegions(x: number, y: number, regions: Rect[]): boolean {
   return false
 }
 
+export function pagesWithRemainingText(reports: Map<number, RemovalReport>): number[] {
+  const pages: number[] = []
+  for (const [page, rep] of reports.entries()) {
+    const hasSkipped = rep.skipped.some((s) => s.count > 0)
+    if (rep.keptIntersecting > 0 || hasSkipped) {
+      pages.push(page)
+    }
+  }
+  return pages.sort((a, b) => a - b)
+}
+
 export function removeTextInRegions(
   doc: PDFDocument,
   pageIndex: number,
@@ -45,6 +56,7 @@ export function removeTextInRegions(
       partialOps: 0,
       skipped: [],
       approximateOps: 0,
+      keptIntersecting: 0,
     }
   }
 
@@ -58,6 +70,7 @@ export function removeTextInRegions(
       partialOps: 0,
       skipped: [{ reason: 'decode-error', count: 1 }],
       approximateOps: 0,
+      keptIntersecting: 0,
     }
   }
 
@@ -80,6 +93,7 @@ export function removeTextInRegions(
   let removedOps = 0
   let partialOps = 0
   let approximateOps = 0
+  let keptIntersecting = 0
 
   const outOps: ContentOp[] = []
 
@@ -229,11 +243,10 @@ export function removeTextInRegions(
       if (op.operands.length >= 1 && op.operands[0].type === 'name') {
         const formBbox = inspectFormXObject(doc, pageIndex, op.operands[0].value, ctm)
         if (formBbox) {
-          for (const reg of regions) {
-            if (isRectIntersecting(formBbox, reg)) {
-              addSkip('form-xobject')
-              break
-            }
+          const intersects = regions.some((reg) => isRectIntersecting(formBbox, reg))
+          if (intersects) {
+            addSkip('form-xobject')
+            keptIntersecting++
           }
         }
       }
@@ -242,15 +255,13 @@ export function removeTextInRegions(
     }
 
     // Text Showing Operators: Tj, ', ", TJ
+    const Th = hScale / 100
+    const isZeroScale = fontSize === 0 || Th === 0
+
     if (name === 'Tj') {
       if (op.operands.length >= 1 && op.operands[0].type === 'string') {
         const metrics = fontCache.getFontMetrics(fontResName)
         if (metrics.approximate) approximateOps++
-        if (metrics.isType3) {
-          addSkip('type3-font')
-          outOps.push(op)
-          continue
-        }
 
         const { advancePt, bbox } = computeTextAdvanceAndBbox(
           op.operands[0].bytes,
@@ -266,11 +277,28 @@ export function removeTextInRegions(
 
         const cx = bbox.x + bbox.width / 2
         const cy = bbox.y + bbox.height / 2
+        const intersects = regions.some((r) => isRectIntersecting(bbox, r) || isPointInRegions(cx, cy, [r]))
+        const inside = regions.length > 0 && isPointInRegions(cx, cy, regions)
+        const target = inside || intersects
 
-        if (regions.length > 0 && isPointInRegions(cx, cy, regions)) {
+        if (target && isZeroScale) {
+          addSkip('zero-scale')
+          keptIntersecting++
+          outOps.push(op)
+        } else if (target && metrics.isType3) {
+          addSkip('type3-font')
+          keptIntersecting++
+          outOps.push(op)
+        } else if (inside) {
           removedOps++
-          // Deleted Tj: do not output op
+          // Rule A: Replace whole text op with [n] TJ where n = -(tx * 1000) / (fontSize * Th)
+          const n = -(advancePt * 1000) / (fontSize * Th)
+          outOps.push({
+            operator: 'TJ',
+            operands: [{ type: 'array', value: [{ type: 'number', value: n }] }],
+          })
         } else {
+          if (intersects) keptIntersecting++
           outOps.push(op)
         }
 
@@ -289,11 +317,6 @@ export function removeTextInRegions(
       if (op.operands.length >= 1 && op.operands[0].type === 'string') {
         const metrics = fontCache.getFontMetrics(fontResName)
         if (metrics.approximate) approximateOps++
-        if (metrics.isType3) {
-          addSkip('type3-font')
-          outOps.push(op)
-          continue
-        }
 
         const { advancePt, bbox } = computeTextAdvanceAndBbox(
           op.operands[0].bytes,
@@ -309,12 +332,29 @@ export function removeTextInRegions(
 
         const cx = bbox.x + bbox.width / 2
         const cy = bbox.y + bbox.height / 2
+        const intersects = regions.some((r) => isRectIntersecting(bbox, r) || isPointInRegions(cx, cy, [r]))
+        const inside = regions.length > 0 && isPointInRegions(cx, cy, regions)
+        const target = inside || intersects
 
-        if (regions.length > 0 && isPointInRegions(cx, cy, regions)) {
+        if (target && isZeroScale) {
+          addSkip('zero-scale')
+          keptIntersecting++
+          outOps.push(op)
+        } else if (target && metrics.isType3) {
+          addSkip('type3-font')
+          keptIntersecting++
+          outOps.push(op)
+        } else if (inside) {
           removedOps++
-          // Preserve newline effect by replacing with T*
+          // Rule A: Replace ' with T* then [n] TJ
+          const n = -(advancePt * 1000) / (fontSize * Th)
           outOps.push({ operator: 'T*', operands: [] })
+          outOps.push({
+            operator: 'TJ',
+            operands: [{ type: 'array', value: [{ type: 'number', value: n }] }],
+          })
         } else {
+          if (intersects) keptIntersecting++
           outOps.push(op)
         }
 
@@ -336,11 +376,6 @@ export function removeTextInRegions(
         if (op.operands[2].type === 'string') {
           const metrics = fontCache.getFontMetrics(fontResName)
           if (metrics.approximate) approximateOps++
-          if (metrics.isType3) {
-            addSkip('type3-font')
-            outOps.push(op)
-            continue
-          }
 
           const { advancePt, bbox } = computeTextAdvanceAndBbox(
             op.operands[2].bytes,
@@ -356,13 +391,31 @@ export function removeTextInRegions(
 
           const cx = bbox.x + bbox.width / 2
           const cy = bbox.y + bbox.height / 2
+          const intersects = regions.some((r) => isRectIntersecting(bbox, r) || isPointInRegions(cx, cy, [r]))
+          const inside = regions.length > 0 && isPointInRegions(cx, cy, regions)
+          const target = inside || intersects
 
-          if (regions.length > 0 && isPointInRegions(cx, cy, regions)) {
+          if (target && isZeroScale) {
+            addSkip('zero-scale')
+            keptIntersecting++
+            outOps.push(op)
+          } else if (target && metrics.isType3) {
+            addSkip('type3-font')
+            keptIntersecting++
+            outOps.push(op)
+          } else if (inside) {
             removedOps++
+            // Rule A: Replace " with Tw, Tc, T* then [n] TJ
+            const n = -(advancePt * 1000) / (fontSize * Th)
             outOps.push({ operator: 'Tw', operands: [op.operands[0]] })
             outOps.push({ operator: 'Tc', operands: [op.operands[1]] })
             outOps.push({ operator: 'T*', operands: [] })
+            outOps.push({
+              operator: 'TJ',
+              operands: [{ type: 'array', value: [{ type: 'number', value: n }] }],
+            })
           } else {
+            if (intersects) keptIntersecting++
             outOps.push(op)
           }
 
@@ -379,18 +432,14 @@ export function removeTextInRegions(
         const arr = op.operands[0].value
         const metrics = fontCache.getFontMetrics(fontResName)
         if (metrics.approximate) approximateOps++
-        if (metrics.isType3) {
-          addSkip('type3-font')
-          outOps.push(op)
-          continue
-        }
 
         interface ElemAnalysis {
           index: number
           isString: boolean
           inRegion: boolean
+          intersects: boolean
           advancePt: number
-          advanceEm: number
+          compensationN: number
           operand: Operand
         }
 
@@ -399,14 +448,15 @@ export function removeTextInRegions(
         for (let i = 0; i < arr.length; i++) {
           const el = arr[i]
           if (el.type === 'number') {
-            const dispPt = -(el.value / 1000) * fontSize * (hScale / 100)
+            const dispPt = -(el.value / 1000) * fontSize * Th
             tm = multMatrix([1, 0, 0, 1, dispPt, 0], tm)
             analyses.push({
               index: i,
               isString: false,
               inRegion: false,
+              intersects: false,
               advancePt: dispPt,
-              advanceEm: -el.value,
+              compensationN: el.value,
               operand: el,
             })
           } else if (el.type === 'string') {
@@ -424,20 +474,41 @@ export function removeTextInRegions(
             const cx = bbox.x + bbox.width / 2
             const cy = bbox.y + bbox.height / 2
             const inRegion = regions.length > 0 && isPointInRegions(cx, cy, regions)
+            const intersects = regions.some((r) => isRectIntersecting(bbox, r) || isPointInRegions(cx, cy, [r]))
 
-            // Calculate advance in em (1/1000 em) for kerning replacement
-            const advanceEm = (advancePt / (fontSize * (hScale / 100))) * 1000
+            const compensationN = isZeroScale ? 0 : -(advancePt * 1000) / (fontSize * Th)
 
             tm = multMatrix([1, 0, 0, 1, advancePt, 0], tm)
             analyses.push({
               index: i,
               isString: true,
               inRegion,
+              intersects,
               advancePt,
-              advanceEm,
+              compensationN,
               operand: el,
             })
           }
+        }
+
+        const anyTarget = analyses.some((a) => a.isString && (a.intersects || a.inRegion))
+
+        if (isZeroScale) {
+          if (anyTarget) {
+            addSkip('zero-scale')
+            keptIntersecting++
+          }
+          outOps.push(op)
+          continue
+        }
+
+        if (metrics.isType3) {
+          if (anyTarget) {
+            addSkip('type3-font')
+            keptIntersecting++
+          }
+          outOps.push(op)
+          continue
         }
 
         const stringAnalyses = analyses.filter((a) => a.isString)
@@ -445,22 +516,40 @@ export function removeTextInRegions(
         const noneInside = stringAnalyses.every((a) => !a.inRegion)
 
         if (allInside) {
-          // Rule 1: Delete whole TJ operator
+          // Rule A: Entire TJ is removed -> replace with [totalN] TJ
+          let totalAdvancePt = 0
+          for (const a of analyses) {
+            totalAdvancePt += a.advancePt
+          }
+          const totalN = -(totalAdvancePt * 1000) / (fontSize * Th)
           removedOps++
+          outOps.push({
+            operator: 'TJ',
+            operands: [{ type: 'array', value: [{ type: 'number', value: totalN }] }],
+          })
         } else if (noneInside) {
+          // Entire TJ kept
+          const anyIntersects = stringAnalyses.some((a) => a.intersects)
+          if (anyIntersects) keptIntersecting++
           outOps.push(op)
         } else {
-          // Rule 2 (K9 expansion): partial removal in TJ
-          // Replace string elements in region with kerning numbers (-advanceEm)
+          // Rule C: Partial TJ removal
+          // Replace each deleted string element with its exact compensation number: n = -(tx * 1000) / (Tfs * Th)
           const newArray: Operand[] = []
+          let keptIntersects = false
+
           for (const a of analyses) {
             if (a.isString && a.inRegion) {
-              // Replacing string with negative kerning advances position by advanceEm
-              newArray.push({ type: 'number', value: -a.advanceEm })
+              newArray.push({ type: 'number', value: a.compensationN })
             } else {
               newArray.push(a.operand)
+              if (a.isString && a.intersects) {
+                keptIntersects = true
+              }
             }
           }
+
+          if (keptIntersects) keptIntersecting++
           partialOps++
           outOps.push({
             operator: 'TJ',
@@ -491,5 +580,6 @@ export function removeTextInRegions(
     partialOps,
     skipped,
     approximateOps,
+    keptIntersecting,
   }
 }

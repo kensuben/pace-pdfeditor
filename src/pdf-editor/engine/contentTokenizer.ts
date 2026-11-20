@@ -61,8 +61,11 @@ export function tokenizeContent(bytes: Uint8Array): ContentOp[] {
     while (pos < len && !isWhitespace(bytes[pos]) && !isDelimiter(bytes[pos])) {
       pos++
     }
-    const chunk = bytes.subarray(start, pos)
-    return new TextDecoder('latin1').decode(chunk)
+    let token = ''
+    for (let i = start; i < pos; i++) {
+      token += String.fromCharCode(bytes[i])
+    }
+    return token
   }
 
   function readLiteralString(): Operand {
@@ -467,26 +470,78 @@ function serializeOperand(op: Operand): string {
       return '<< ' + entries.join(' ') + ' >>'
     }
     case 'inline-image':
-      return new TextDecoder('latin1').decode(op.bytes)
+      return ''
+  }
+}
+
+class ByteWriter {
+  private chunks: Uint8Array[] = []
+  private totalLength = 0
+  private current: number[] = []
+
+  public writeByte(b: number): void {
+    this.current.push(b)
+    if (this.current.length >= 8192) {
+      this.flush()
+    }
+  }
+
+  public writeAscii(str: string): void {
+    for (let i = 0; i < str.length; i++) {
+      this.writeByte(str.charCodeAt(i) & 0xff)
+    }
+  }
+
+  public writeBytes(raw: Uint8Array): void {
+    this.flush()
+    this.chunks.push(raw)
+    this.totalLength += raw.length
+  }
+
+  private flush(): void {
+    if (this.current.length > 0) {
+      const u8 = new Uint8Array(this.current)
+      this.chunks.push(u8)
+      this.totalLength += u8.length
+      this.current = []
+    }
+  }
+
+  public toBytes(): Uint8Array {
+    this.flush()
+    const result = new Uint8Array(this.totalLength)
+    let offset = 0
+    for (const chunk of this.chunks) {
+      result.set(chunk, offset)
+      offset += chunk.length
+    }
+    return result
   }
 }
 
 export function serializeContent(ops: ContentOp[]): Uint8Array {
-  const parts: string[] = []
+  const writer = new ByteWriter()
+
   for (const op of ops) {
     if (op.operator === 'BI') {
       const img = op.operands.find((o) => o.type === 'inline-image')
       if (img && img.type === 'inline-image') {
-        parts.push(new TextDecoder('latin1').decode(img.bytes) + '\n')
+        writer.writeBytes(img.bytes)
+        writer.writeByte(0x0a)
       }
       continue
     }
+
     if (op.operands.length > 0) {
-      parts.push(op.operands.map(serializeOperand).join(' ') + ' ' + op.operator + '\n')
+      writer.writeAscii(op.operands.map(serializeOperand).join(' '))
+      writer.writeByte(0x20)
+      writer.writeAscii(op.operator)
+      writer.writeByte(0x0a)
     } else {
-      parts.push(op.operator + '\n')
+      writer.writeAscii(op.operator)
+      writer.writeByte(0x0a)
     }
   }
-  const fullText = parts.join('')
-  return new TextEncoder().encode(fullText)
+
+  return writer.toBytes()
 }

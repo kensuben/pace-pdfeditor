@@ -14,7 +14,8 @@ interface EmbedderStatic {
 let standardFontEmbedderMod: EmbedderStatic | null = null
 try {
   const mod = await import('pdf-lib/cjs/core/embedders/StandardFontEmbedder.js')
-  standardFontEmbedderMod = (mod.default || mod) as unknown as EmbedderStatic
+  const raw = mod.default || mod
+  standardFontEmbedderMod = ((raw as { default?: unknown }).default || raw) as unknown as EmbedderStatic
 } catch {
   // fallback if dynamic import not available
 }
@@ -217,8 +218,12 @@ export class FontMetricsCache {
           approximate: false,
           isType3: false,
           getGlyphWidth: (code: number) => {
-            const ch = String.fromCharCode(code)
             try {
+              const glyph = (embedder as unknown as { encoding?: { encodeUnicodeCodePoint?: (c: number) => { name?: string } } }).encoding?.encodeUnicodeCodePoint?.(code)
+              if (glyph && glyph.name) {
+                return embedder.widthOfGlyph(glyph.name) || 500
+              }
+              const ch = String.fromCharCode(code)
               return embedder.widthOfGlyph(ch) || 500
             } catch {
               return 500
