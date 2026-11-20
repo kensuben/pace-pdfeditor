@@ -1,7 +1,7 @@
 # [W-7] Spike engine PDF: đọc/ghi content stream và xoá thật chữ trong vùng, đo tỉ lệ đúng trên fixture
 
 Đọc `docs/planning/antigravity/00_RULES.md` trước khi làm. Bối cảnh: `docs/pdf-editor/01-PLAN.md` (mục 4, 7, 8 — Q-P1 = A).
-Tiền điều kiện: W-6 đã merge vào `main` (thư mục `src/pdf-editor/` đã tồn tại).
+Tiền điều kiện: W-6 (PR #38) và F-11 (PR #40) đã merge vào `main` (có `src/pdf-editor/` và font TTF đầy đủ ở `src/pdf-editor/fonts/`).
 Nhánh: `spike/w7-content-stream-engine` (tạo từ `main`) · Commit: `feat(W-7): content stream tokenizer and in-region text removal engine (spike, not wired to UI)`
 Được tự commit + push nhánh này. KHÔNG push `main`, KHÔNG force-push.
 **Chỉ báo "done" khi đã chạy `git push` và Bước Z (cuối file) đạt – dán output ở ĐẦU báo cáo.**
@@ -73,7 +73,7 @@ Lệnh an toàn:
   - `docs/pdf-editor/W-7-spike-report.md`.
 - KHÔNG sửa `exportPdf.ts`, `PdfCanvas.tsx`, `App.tsx`, CSS, `server/`, `public/`, test có sẵn. Không thêm dependency.
 - Fixture dựng trong test bằng `pdf-lib`, dữ liệu giả. Content stream viết tay được phép, ghi thẳng bằng `doc.context.flateStream('…')` / `context.stream`.
-- Font tiếng Việt trong test: đọc woff từ `node_modules/@fontsource/be-vietnam-pro/files/` bằng `fs`.
+- Font tiếng Việt trong test: đọc `src/pdf-editor/fonts/BeVietnamPro-Regular.ttf` (F-11) bằng `fs`, đường dẫn tính từ `import.meta.url` (`fileURLToPath(new URL('../fonts/…', import.meta.url))`). **KHÔNG** dùng `@fontsource/*-vietnamese-*.woff` (thiếu chữ Latin, lỗi B16) và **KHÔNG** dùng `process.cwd()`.
 - Kiểm chứng bằng pdf.js: `pdfjs-dist/legacy/build/pdf.mjs`, `getTextContent` (chữ còn/mất) và `getOperatorList` (đếm toán tử vẽ hình/ảnh).
 - Điểm chưa chắc về đặc tả PDF → `TODO(verify)` + dẫn mục trong ISO 32000-1 (ví dụ "9.4.4 Text Space Details"), không bịa.
 
