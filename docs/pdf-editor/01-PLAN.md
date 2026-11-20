@@ -1,6 +1,6 @@
 # PDF Editor — Kế hoạch nâng cấp chỉnh sửa text & hình ảnh (mục tiêu: trải nghiệm gần Acrobat "Edit PDF")
 
-Trạng thái: **bản nháp chờ chủ dự án duyệt** · Khảo sát trên `main` @ `947b062` · Người lập: Claude (planning/QA), người làm: Antigravity.
+Trạng thái: **đã duyệt hướng đi (Q-P1…Q-P4 chốt ngày 2026-11-20)** · Khảo sát trên `main` @ `947b062` · Người lập: Claude (planning/QA), người làm: Antigravity.
 
 Quy ước trong tài liệu: **[DK]** = dữ kiện đã kiểm chứng trên code/chạy thử · **[GĐ]** = giả định · **[ĐX]** = đề xuất · **chưa xác minh** = cần spike/đọc tài liệu chính thức trước khi dựa vào.
 
@@ -65,11 +65,11 @@ Toàn bộ PDF editor nằm trong `src/App.tsx` (878 dòng): component `PdfCanva
 | Panel OBJECTS: lật, xoay, cắt, sắp lớp, thay ảnh | Không | W-10 |
 | Di chuyển/đổi kích thước bằng tay nắm | Chỉ kéo ảnh chèn | W-8 |
 | Sửa thật nội dung (xoá chữ/ảnh cũ khỏi file) | Che bằng hình chữ nhật (B1) | W-7 → W-9, W-10 |
-| Thêm text, thêm ảnh, link, crop trang, header/footer, watermark | Thêm text (prompt), thêm ảnh | Thêm text: W-8. Còn lại: W-12 (tuỳ chọn) |
+| Thêm text, thêm ảnh, link, crop trang, header/footer, watermark | Thêm text (prompt), thêm ảnh | Thêm text: W-8. Còn lại: W-12a–d |
 
 ---
 
-## 4. Lựa chọn kỹ thuật cho "sửa thật" (cần chủ dự án quyết — Q-P1)
+## 4. Lựa chọn kỹ thuật cho "sửa thật" (đã chốt A — Q-P1)
 
 | Phương án | Mô tả | Ưu | Nhược / rủi ro |
 |---|---|---|---|
@@ -113,12 +113,12 @@ Nguyên tắc:
 | ID | Nội dung | Phụ thuộc | Ghi chú |
 |---|---|---|---|
 | **W-6** | Tách PDF editor khỏi `App.tsx` thành module + test nền; **không đổi hành vi**; test "đặc tả" ghi nhận B1 | — | Prompt: `docs/planning/antigravity/W-6_pdf-editor-modularize.md` |
-| **W-7** | Spike engine: tokenizer content stream + xoá chữ trong vùng trên fixture; báo cáo tỉ lệ đúng; **chưa nối UI** | W-6 | Cổng quyết định Q-P1 |
+| **W-7** | Spike engine: tokenizer content stream + xoá chữ trong vùng trên fixture; báo cáo tỉ lệ đúng; **chưa nối UI** | W-6 | Cổng: đạt mới làm W-9/W-10. Prompt: `docs/planning/antigravity/W-7_content-stream-engine-spike.md` |
 | **W-8** | Khung chọn & biến đổi đối tượng: bounding box, 8 tay nắm, kéo/giãn, Shift giữ tỉ lệ, phím mũi tên, đường gióng, panel thuộc tính; thay `window.prompt` (B7, B8, B10, B11) | W-6 | Áp cho text box mới, chữ đã sửa, ảnh chèn |
 | **W-9** | Sửa chữ gốc kiểu Acrobat: gom khối đoạn, nhận màu/cỡ/font, editor nhiều dòng, reflow; xuất bằng engine (xoá chữ cũ thật, bỏ hình chữ nhật che) + kiểm tra sót (B1–B6, B14) | W-7 đạt, W-8 | Có thể tách W-9a (nhận khối + editor) / W-9b (xuất bằng engine) |
 | **W-10** | Ảnh có sẵn: nhận, chọn, di chuyển, giãn, xoay, lật, thay, xoá, cắt; ảnh chèn có xoay/cắt/thay (B9) | W-7, W-8 | |
 | **W-11** | Trải nghiệm xem: cuộn liên tục, thumbnail thật, zoom vừa trang/vừa bề rộng, xoay trang lưu vào file, render ảo hoá cho file nhiều trang (B12, B13, B15) | W-6 | Độc lập, có thể làm song song W-8 |
-| W-12 | (tuỳ chọn) Tìm & thay thế chữ, watermark, header/footer, crop trang, link | W-9 | Chờ chủ dự án chọn |
+| W-12a–d | Tìm & thay thế chữ · watermark + header/footer · crop trang · link | W-9 | Đã duyệt (Q-P3) |
 | — | Cập nhật trang hướng dẫn `/huong-dan/` | Sau W-9, W-10 | Claude tự làm, chụp ảnh với dữ liệu giả |
 
 Ước lượng độ khó (tương đối, **không phải cam kết thời gian**): W-6 thấp · W-7 cao · W-8 trung bình · W-9 cao · W-10 trung bình–cao · W-11 trung bình.
@@ -138,9 +138,13 @@ Nguyên tắc:
 
 ---
 
-## 8. Quyết định cần chủ dự án
+## 8. Quyết định của chủ dự án (2026-11-20)
 
-- **Q-P1** Engine: A (tự viết, có spike chặn) / B (MuPDF.js, AGPL) / C (SDK thương mại). Đề xuất: **A**.
-- **Q-P2** Khi sửa/xoá chữ gốc mà engine **không xoá được** chữ cũ: (a) chặn xuất và báo lỗi, (b) cho xuất nhưng cảnh báo rõ trang nào còn chữ cũ, (c) che như hiện tại không báo. Đề xuất: **(b)**.
-- **Q-P3** Thứ tự sau W-6: W-7 → W-8 → W-9 → W-10, W-11 song song. Có làm W-12 không, làm mục nào.
-- **Q-P4** Điện thoại: chỉ xem + thao tác đơn giản, chỉnh sửa đầy đủ cho màn hình ≥ 1024px? Đề xuất: **có**.
+- **Q-P1 = A.** Tự viết engine content stream trên `pdf-lib`, không thêm thư viện. Spike W-7 là cổng: không đạt thì trình lại B/C kèm số liệu.
+- **Q-P2 = cảnh báo.** Không xoá được chữ cũ → vẫn cho xuất, nhưng hiện cảnh báo rõ **trang nào** còn chữ cũ trước khi tải về. Activity log chỉ ghi số trang/số vùng, không ghi nội dung.
+- **Q-P3 = có W-12.** Thứ tự W-7 → W-8 → W-9 → W-10, W-11 song song. W-12 tách nhỏ khi tới lượt:
+  - W-12a tìm & thay thế chữ (dùng engine của W-9);
+  - W-12b watermark + header/footer;
+  - W-12c crop trang;
+  - W-12d link.
+- **Q-P4 = đồng ý.** Màn hình < 1024px: xem, chuyển trang, zoom, thêm chữ/đánh dấu đơn giản; chỉnh sửa đầy đủ (khung chọn, tay nắm, panel thuộc tính, sửa chữ/ảnh gốc) từ ≥ 1024px.
