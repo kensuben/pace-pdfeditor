@@ -7,6 +7,7 @@ import { SelectionFrame } from './selection/SelectionFrame'
 import { moveBy, nudgeDelta } from './selection/geometry'
 import { useDesktopEditor } from './useDesktopEditor'
 import { annotationFill, draftRect } from './annotationStyle'
+import { globalRenderQueue } from './viewMath'
 
 export interface PdfCanvasProps {
   pdf: pdfjs.PDFDocumentProxy
@@ -72,6 +73,8 @@ export function PdfCanvas({
   useEffect(() => {
     let cancelled = false
     let task: pdfjs.RenderTask | undefined
+    let releasePermit: (() => void) | undefined
+    const canvasElement = canvasRef.current
     ;(async () => {
       const page = await pdf.getPage(pageNumber)
       const viewport = page.getViewport({ scale: zoom })
@@ -85,16 +88,35 @@ export function PdfCanvas({
       canvas.style.width = `${viewport.width}px`
       canvas.style.height = `${viewport.height}px`
       setSize({ width: viewport.width, height: viewport.height })
+
+      releasePermit = await globalRenderQueue.acquire()
+      if (cancelled) {
+        releasePermit()
+        return
+      }
+
       task = page.render({ canvas, viewport, transform: ratio === 1 ? undefined : [ratio, 0, 0, ratio, 0, 0] })
       await task.promise
     })().catch((error) => {
       if (error?.name !== 'RenderingCancelledException') console.error(error)
+    }).finally(() => {
+      releasePermit?.()
     })
     return () => {
       cancelled = true
       task?.cancel()
+      releasePermit?.()
+      if (canvasElement) {
+        canvasElement.width = 0
+        canvasElement.height = 0
+      }
     }
   }, [pdf, pageNumber, zoom])
+
+  const onTextRegionsRef = useRef(onTextRegions)
+  useEffect(() => {
+    onTextRegionsRef.current = onTextRegions
+  })
 
   useEffect(() => {
     let cancelled = false
@@ -104,12 +126,12 @@ export function PdfCanvas({
       const content = await page.getTextContent()
       if (cancelled) return
       const regions = groupTextItemsIntoLines(content.items, content.styles, viewport, pageNumber)
-      onTextRegions(regions)
+      onTextRegionsRef.current(regions)
     })().catch(console.error)
     return () => {
       cancelled = true
     }
-  }, [onTextRegions, pageNumber, pdf])
+  }, [pageNumber, pdf])
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
