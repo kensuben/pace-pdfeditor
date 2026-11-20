@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type * as pdfjs from 'pdfjs-dist'
 import type { Annotation, TextRegion, TextStyle, Tool } from '../types'
+import { clamp } from './geometry'
 import { PdfCanvas } from './PdfCanvas'
-import { pickCurrentPage } from './viewMath'
+import { FIT_PADDING, fitZoom, pickCurrentPage, zoomAroundPoint } from './viewMath'
 
 export interface PageListProps {
   pdf: pdfjs.PDFDocumentProxy
@@ -25,6 +26,8 @@ export interface PageListProps {
   currentPage: number
   onCurrentPageChange: (page: number) => void
   containerRef?: React.RefObject<HTMLDivElement | null>
+  onZoomChange?: (nextZoom: number) => void
+  onInitialFit?: (initialZoom: number) => void
 }
 
 interface PageDimensions {
@@ -55,6 +58,8 @@ export function PageList({
   currentPage,
   onCurrentPageChange,
   containerRef: externalContainerRef,
+  onZoomChange,
+  onInitialFit,
 }: PageListProps) {
   const localContainerRef = useRef<HTMLDivElement>(null)
   const containerRef = externalContainerRef || localContainerRef
@@ -68,6 +73,96 @@ export function PageList({
   useEffect(() => {
     onCurrentPageChangeRef.current = onCurrentPageChange
   })
+
+  const zoomRef = useRef(zoom)
+  useEffect(() => {
+    zoomRef.current = zoom
+  }, [zoom])
+
+  const onZoomChangeRef = useRef(onZoomChange)
+  useEffect(() => {
+    onZoomChangeRef.current = onZoomChange
+  })
+
+  // Wheel zoom attached directly to the actual scroll container (.page-list-scroll)
+  useEffect(() => {
+    const el = containerRef.current
+    if (!el) return
+
+    const handleWheel = (e: WheelEvent) => {
+      if (e.ctrlKey || e.metaKey) {
+        e.preventDefault()
+        const factor = e.deltaY < 0 ? 1.1 : 1 / 1.1
+        const currentZ = zoomRef.current
+        const nextZoom = clamp(Math.round(currentZ * factor * 100) / 100, 0.25, 4)
+        if (nextZoom === currentZ) return
+
+        const rect = el.getBoundingClientRect()
+        const pointer = { x: e.clientX - rect.left, y: e.clientY - rect.top }
+        const scroll = { left: el.scrollLeft, top: el.scrollTop }
+        const { nextScrollLeft, nextScrollTop } = zoomAroundPoint({
+          currentZoom: currentZ,
+          nextZoom,
+          pointer,
+          scroll,
+        })
+
+        el.scrollLeft = nextScrollLeft
+        el.scrollTop = nextScrollTop
+        requestAnimationFrame(() => {
+          el.scrollLeft = nextScrollLeft
+          el.scrollTop = nextScrollTop
+        })
+
+        onZoomChangeRef.current?.(nextZoom)
+      }
+    }
+
+    el.addEventListener('wheel', handleWheel, { passive: false })
+    return () => {
+      el.removeEventListener('wheel', handleWheel)
+    }
+  }, [containerRef])
+
+  // Calculate initial zoom after layout when container has clientWidth > 0
+  const initialFitDoneRef = useRef(false)
+  useEffect(() => {
+    initialFitDoneRef.current = false
+  }, [pdf])
+
+  const onInitialFitRef = useRef(onInitialFit)
+  useEffect(() => {
+    onInitialFitRef.current = onInitialFit
+  })
+
+  useEffect(() => {
+    if (initialFitDoneRef.current || dimensions.length === 0) return
+    const container = containerRef.current
+    if (!container) return
+
+    const tryInitialFit = () => {
+      if (initialFitDoneRef.current) return
+      const w = container.clientWidth
+      if (w > 0) {
+        initialFitDoneRef.current = true
+        const page1 = dimensions[0]
+        const availableW = w - FIT_PADDING
+        if (page1.width > availableW) {
+          const nextZ = fitZoom({ width: w, height: container.clientHeight || 700 }, page1, 'width')
+          onInitialFitRef.current?.(nextZ)
+        }
+      }
+    }
+
+    tryInitialFit()
+    if (!initialFitDoneRef.current && typeof ResizeObserver !== 'undefined') {
+      const ro = new ResizeObserver(() => {
+        tryInitialFit()
+      })
+      ro.observe(container)
+      return () => ro.disconnect()
+    }
+  }, [dimensions, containerRef])
 
   // Load unscaled page dimensions for all pages once per document
   useEffect(() => {

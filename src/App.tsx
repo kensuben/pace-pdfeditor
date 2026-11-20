@@ -25,7 +25,7 @@ import {
   imageInsertSize,
   PageList, ThumbnailList, ZoomMenu,
   canRotatePage, rotateAnnotationsCw, resetHistoryOnPageOp,
-  fitZoom, zoomAroundPoint, FIT_PADDING,
+  fitZoom,
 } from './pdf-editor'
 
 // Query version bypasses any previously cached worker response that may have
@@ -75,6 +75,7 @@ function App() {
   const [statusNotice, setStatusNotice] = useState<string | null>(null)
   const [bytesVersion, setBytesVersion] = useState(0)
   const documentAreaRef = useRef<HTMLDivElement>(null)
+  const scrollContainerRef = useRef<HTMLDivElement>(null)
   const statusNoticeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const zoomLogTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [account, setAccount] = useState<AccountInfo | null>(null)
@@ -230,7 +231,7 @@ function App() {
   )
 
   const scrollToPage = useCallback((targetPage: number) => {
-    const container = documentAreaRef.current
+    const container = scrollContainerRef.current || documentAreaRef.current
     if (!container) return
     const targetEl = container.querySelector(`[data-page-number="${targetPage}"]`)
     if (targetEl && typeof targetEl.scrollIntoView === 'function') {
@@ -242,7 +243,8 @@ function App() {
     if (!pdf) return
     const p = await pdf.getPage(page)
     const vp = p.getViewport({ scale: 1 })
-    const containerW = documentAreaRef.current?.clientWidth || window.innerWidth
+    const container = scrollContainerRef.current || documentAreaRef.current
+    const containerW = container?.clientWidth || window.innerWidth
     const nextZ = fitZoom({ width: containerW, height: 700 }, { width: vp.width, height: vp.height }, 'width')
     setZoom(nextZ)
     log('view.zoom_changed', 'Thay đổi mức zoom', { fit: 'width', zoom: Math.round(nextZ * 100) })
@@ -252,8 +254,9 @@ function App() {
     if (!pdf) return
     const p = await pdf.getPage(page)
     const vp = p.getViewport({ scale: 1 })
-    const containerW = documentAreaRef.current?.clientWidth || window.innerWidth
-    const containerH = documentAreaRef.current?.clientHeight || window.innerHeight
+    const container = scrollContainerRef.current || documentAreaRef.current
+    const containerW = container?.clientWidth || window.innerWidth
+    const containerH = container?.clientHeight || window.innerHeight
     const nextZ = fitZoom({ width: containerW, height: containerH }, { width: vp.width, height: vp.height }, 'page')
     setZoom(nextZ)
     log('view.zoom_changed', 'Thay đổi mức zoom', { fit: 'page', zoom: Math.round(nextZ * 100) })
@@ -265,17 +268,12 @@ function App() {
     try {
       const data = new Uint8Array(await file.arrayBuffer())
       const loaded = await pdfjs.getDocument({ data: data.slice() }).promise
-      const p1 = await loaded.getPage(1)
-      const vp1 = p1.getViewport({ scale: 1 })
-      const containerW = documentAreaRef.current?.clientWidth || window.innerWidth
-      const fitW = fitZoom({ width: containerW, height: 700 }, { width: vp1.width, height: vp1.height }, 'width')
-      const initialZoom = vp1.width > containerW - FIT_PADDING ? fitW : 1
 
       setBytes(data)
       setPdf(loaded)
       setInfo({ name: file.name, size: file.size, pages: loaded.numPages })
       setPage(1)
-      setZoom(initialZoom)
+      setZoom(1)
       setHistory([[]])
       setHistoryIndex(0)
       setSelectedId(null)
@@ -291,40 +289,6 @@ function App() {
     }
     finally { setBusy(false) }
   }
-
-  useEffect(() => {
-    const el = documentAreaRef.current
-    if (!el) return
-
-    const handleWheel = (e: WheelEvent) => {
-      if (e.ctrlKey || e.metaKey) {
-        e.preventDefault()
-        const factor = e.deltaY < 0 ? 1.1 : 1 / 1.1
-        const nextZoom = clamp(Math.round(zoom * factor * 100) / 100, 0.25, 4)
-        if (nextZoom === zoom) return
-
-        const rect = el.getBoundingClientRect()
-        const pointer = { x: e.clientX - rect.left, y: e.clientY - rect.top }
-        const scroll = { left: el.scrollLeft, top: el.scrollTop }
-        const { nextScrollLeft, nextScrollTop } = zoomAroundPoint({
-          currentZoom: zoom,
-          nextZoom,
-          pointer,
-          scroll,
-        })
-
-        setZoom(nextZoom)
-        requestAnimationFrame(() => {
-          el.scrollLeft = nextScrollLeft
-          el.scrollTop = nextScrollTop
-        })
-        debouncedLogZoom(nextZoom)
-      }
-    }
-
-    el.addEventListener('wheel', handleWheel, { passive: false })
-    return () => el.removeEventListener('wheel', handleWheel)
-  }, [zoom, debouncedLogZoom])
 
   useEffect(() => {
     const key = (e: KeyboardEvent) => {
@@ -804,7 +768,7 @@ function App() {
         {(tool==='text'||selectedText) && <TextFormatBar style={textStyle} onChange={changeTextStyle}/>}
         <div
           ref={documentAreaRef}
-          className="document-area"
+          className="document-area has-page-list"
           onDragOver={(e) => e.preventDefault()}
           onDrop={(e) => {
             e.preventDefault()
@@ -863,7 +827,15 @@ function App() {
             onEditAnnotation={editTextAnnotation}
             currentPage={page}
             onCurrentPageChange={(p) => setPage(p)}
-            containerRef={documentAreaRef}
+            containerRef={scrollContainerRef}
+            onZoomChange={(nextZoom) => {
+              setZoom(nextZoom)
+              debouncedLogZoom(nextZoom)
+            }}
+            onInitialFit={(initialZoom) => {
+              setZoom(initialZoom)
+              log('view.zoom_changed', 'Thay đổi mức zoom ban đầu', { fit: 'width', zoom: Math.round(initialZoom * 100) })
+            }}
           />
         </div>
         <div className="statusbar">
