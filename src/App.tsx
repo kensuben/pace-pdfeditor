@@ -3,27 +3,12 @@ import {
   Activity, BookOpen, Check, ChevronDown, ChevronLeft, ChevronRight, Download, FileText,
   Highlighter, Image as ImageIcon, Minus, MousePointer2, PenLine,
   Plus, Redo2, RotateCw, Sparkles, Type, Undo2, Upload, LogIn, LogOut, ScanText,
-  Bold, Italic, Underline, AlignLeft, AlignCenter, AlignRight,
   ImagePlus, FilePlus2, BadgeCheck, Trash2, ZoomIn, ZoomOut, ArrowUp, ArrowDown,
   Settings,
 } from 'lucide-react'
 import * as pdfjs from 'pdfjs-dist'
-import { PDFDocument, rgb, StandardFonts, type PDFFont } from 'pdf-lib'
-import fontkit from '@pdf-lib/fontkit'
-import beRegular from '@fontsource/be-vietnam-pro/files/be-vietnam-pro-vietnamese-400-normal.woff?url'
-import beItalic from '@fontsource/be-vietnam-pro/files/be-vietnam-pro-vietnamese-400-italic.woff?url'
-import beBold from '@fontsource/be-vietnam-pro/files/be-vietnam-pro-vietnamese-700-normal.woff?url'
-import beBoldItalic from '@fontsource/be-vietnam-pro/files/be-vietnam-pro-vietnamese-700-italic.woff?url'
-import arimoRegular from '@fontsource/arimo/files/arimo-vietnamese-400-normal.woff?url'
-import arimoItalic from '@fontsource/arimo/files/arimo-vietnamese-400-italic.woff?url'
-import arimoBold from '@fontsource/arimo/files/arimo-vietnamese-700-normal.woff?url'
-import arimoBoldItalic from '@fontsource/arimo/files/arimo-vietnamese-700-italic.woff?url'
-import notoRegular from '@fontsource/noto-sans/files/noto-sans-vietnamese-400-normal.woff?url'
-import notoItalic from '@fontsource/noto-sans/files/noto-sans-vietnamese-400-italic.woff?url'
-import notoBold from '@fontsource/noto-sans/files/noto-sans-vietnamese-700-normal.woff?url'
-import notoBoldItalic from '@fontsource/noto-sans/files/noto-sans-vietnamese-700-italic.woff?url'
 import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url'
-import type { Annotation, DocumentInfo, Point, TextRegion, TextStyle, Tool } from './types'
+import type { Annotation, DocumentInfo, TextRegion, TextStyle, Tool } from './types'
 import type { AccountInfo } from '@azure/msal-browser'
 import { initializeAuth, isMicrosoftAuthConfigured, signInMicrosoft, signOutMicrosoft } from './auth'
 import { recordActivity } from './activityLog'
@@ -31,42 +16,22 @@ import ActivityPanel from './ActivityPanel'
 import AdminPage from './AdminPage'
 import { apiRequest, authorizeSession, type ApiUser } from './api'
 import WordAnonymizerPage from './word-anonymizer/WordAnonymizerPage'
+import {
+  clamp, uid, IconButton, TextFormatBar, PdfCanvas,
+  buildEditedPdf, insertPdfPages, movePage, deletePage,
+  remapAnnotationsOnInsert, remapAnnotationsOnMove, remapAnnotationsOnDelete,
+  buildReplacementAnnotation, parseOcrTsv, groupOcrWordsIntoLines,
+} from './pdf-editor'
 
 // Query version bypasses any previously cached worker response that may have
 // been served with an incorrect MIME type before the Nginx fix.
 pdfjs.GlobalWorkerOptions.workerSrc = `${workerUrl}?v=20260714-1`
 
 const COLORS = ['#E85D3F', '#F5C84C', '#4FAF7B', '#3F7DD9', '#7B61B5', '#1F252B']
-const uid = () => crypto.randomUUID()
-const clamp = (n: number, min: number, max: number) => Math.min(max, Math.max(min, n))
 
 function formatBytes(bytes: number) {
   if (!bytes) return '0 KB'
   return bytes > 1_048_576 ? `${(bytes / 1_048_576).toFixed(1)} MB` : `${Math.ceil(bytes / 1024)} KB`
-}
-
-function IconButton({ label, children, onClick, disabled, active }: { label: string; children: React.ReactNode; onClick?: () => void; disabled?: boolean; active?: boolean }) {
-  return <button className={`icon-button ${active ? 'active' : ''}`} aria-label={label} title={label} onClick={onClick} disabled={disabled}>{children}</button>
-}
-
-function TextFormatBar({ style, onChange }: { style: TextStyle; onChange: (patch: Partial<TextStyle>) => void }) {
-  return <div className="text-format-bar" aria-label="Định dạng văn bản">
-    <select aria-label="Font chữ" value={style.fontFamily} onChange={(e)=>onChange({fontFamily:e.target.value as TextStyle['fontFamily']})}>
-      <option>Be Vietnam Pro</option><option>Arimo</option><option>Noto Sans</option><option>Helvetica</option><option>Times Roman</option><option>Courier</option>
-    </select>
-    <select className="font-size" aria-label="Cỡ chữ" value={style.fontSize} onChange={(e)=>onChange({fontSize:Number(e.target.value)})}>
-      {[8,9,10,11,12,14,16,18,20,24,28,32,36,48,64,72].map((n)=><option key={n} value={n}>{n}</option>)}
-    </select>
-    <span className="format-divider"/>
-    <IconButton label="Đậm" active={style.bold} onClick={()=>onChange({bold:!style.bold})}><Bold/></IconButton>
-    <IconButton label="Nghiêng" active={style.italic} onClick={()=>onChange({italic:!style.italic})}><Italic/></IconButton>
-    <IconButton label="Gạch chân" active={style.underline} onClick={()=>onChange({underline:!style.underline})}><Underline/></IconButton>
-    <span className="format-divider"/>
-    <IconButton label="Căn trái" active={style.align==='left'} onClick={()=>onChange({align:'left'})}><AlignLeft/></IconButton>
-    <IconButton label="Căn giữa" active={style.align==='center'} onClick={()=>onChange({align:'center'})}><AlignCenter/></IconButton>
-    <IconButton label="Căn phải" active={style.align==='right'} onClick={()=>onChange({align:'right'})}><AlignRight/></IconButton>
-    <label className="text-color" title="Màu chữ"><input type="color" value={style.color} onChange={(e)=>onChange({color:e.target.value})}/><span style={{'--text-color':style.color} as React.CSSProperties}>A</span></label>
-  </div>
 }
 
 function EmptyState({ onOpen }: { onOpen: () => void }) {
@@ -83,175 +48,6 @@ function EmptyState({ onOpen }: { onOpen: () => void }) {
       <div><PenLine/><span><b>Ghi chú & ký</b><small>Tương tác trực tiếp trên tài liệu</small></span></div>
     </div>
   </main>
-}
-
-function PdfCanvas({ pdf, pageNumber, zoom, annotations, tool, color, onAdd, onUpdate, selectedId, onSelect, textRegions, onTextRegions, onEditRegion, onEditAnnotation }: {
-  pdf: pdfjs.PDFDocumentProxy; pageNumber: number; zoom: number; annotations: Annotation[]; tool: Tool; color: string;
-  onAdd: (a: Annotation) => void; onUpdate: (a: Annotation) => void; selectedId: string | null; onSelect: (id: string | null) => void;
-  textRegions: TextRegion[]; onTextRegions: (regions: TextRegion[]) => void; onEditRegion: (region: TextRegion, text: string) => void; onEditAnnotation: (annotation: Annotation, text: string) => void
-}) {
-  const canvasRef = useRef<HTMLCanvasElement>(null)
-  const wrapRef = useRef<HTMLDivElement>(null)
-  const [size, setSize] = useState({ width: 612, height: 792 })
-  const [draft, setDraft] = useState<Point[]>([])
-  const [inlineEdit, setInlineEdit] = useState<{ kind:'region'|'annotation'; id:string; value:string; backgroundColor?:string } | null>(null)
-  const [imageDrag,setImageDrag]=useState<{id:string;startClientX:number;startClientY:number;startX:number;startY:number;x:number;y:number}|null>(null)
-
-  useEffect(()=>{
-    if(!imageDrag)return
-    const move=(event:PointerEvent)=>{
-      const rect=wrapRef.current?.getBoundingClientRect();if(!rect)return
-      setImageDrag((drag)=>drag?{...drag,x:clamp(drag.startX+(event.clientX-drag.startClientX)/rect.width,0,1),y:clamp(drag.startY+(event.clientY-drag.startClientY)/rect.height,0,1)}:null)
-    }
-    const up=()=>{
-      setImageDrag((drag)=>{
-        if(drag){const annotation=annotations.find((item)=>item.id===drag.id);if(annotation)onUpdate({...annotation,x:clamp(drag.x,0,1-annotation.width),y:clamp(drag.y,0,1-annotation.height)})}
-        return null
-      })
-    }
-    window.addEventListener('pointermove',move);window.addEventListener('pointerup',up,{once:true})
-    return()=>{window.removeEventListener('pointermove',move);window.removeEventListener('pointerup',up)}
-  },[annotations,imageDrag,onUpdate])
-
-  useEffect(() => {
-    let cancelled = false
-    let task: pdfjs.RenderTask | undefined
-    ;(async () => {
-      const page = await pdf.getPage(pageNumber)
-      const viewport = page.getViewport({ scale: zoom })
-      if (cancelled || !canvasRef.current) return
-      const canvas = canvasRef.current
-      const ratio = window.devicePixelRatio || 1
-      canvas.width = Math.floor(viewport.width * ratio)
-      canvas.height = Math.floor(viewport.height * ratio)
-      canvas.style.width = `${viewport.width}px`
-      canvas.style.height = `${viewport.height}px`
-      setSize({ width: viewport.width, height: viewport.height })
-      task = page.render({ canvas, viewport, transform: ratio === 1 ? undefined : [ratio, 0, 0, ratio, 0, 0] })
-      await task.promise
-    })().catch((error) => { if (error?.name !== 'RenderingCancelledException') console.error(error) })
-    return () => { cancelled = true; task?.cancel() }
-  }, [pdf, pageNumber, zoom])
-
-  useEffect(() => {
-    let cancelled = false
-    ;(async () => {
-      const page = await pdf.getPage(pageNumber)
-      const viewport = page.getViewport({ scale: 1 })
-      const content = await page.getTextContent()
-      if (cancelled) return
-      const fragments = content.items.flatMap((raw, index): TextRegion[] => {
-        if (!('str' in raw) || !raw.str.trim()) return []
-        const item = raw as { str: string; transform: number[]; width: number; height: number; fontName?: string }
-        const tx = pdfjs.Util.transform(viewport.transform, item.transform)
-        const fontHeight = Math.max(Math.hypot(tx[2], tx[3]), item.height || 8)
-        const fontInfo = item.fontName ? content.styles[item.fontName] : undefined
-        const fontLabel = `${item.fontName || ''} ${fontInfo?.fontFamily || ''}`.toLowerCase()
-        const fontFamily: TextRegion['fontFamily'] = /courier|mono/.test(fontLabel) ? 'Courier' : /times|serif/.test(fontLabel) ? 'Times Roman' : 'Helvetica'
-        return [{
-          id: `native-${pageNumber}-${index}`, page: pageNumber, text: item.str,
-          x: clamp(tx[4] / viewport.width, 0, 1), y: clamp((tx[5] - fontHeight) / viewport.height, 0, 1),
-          width: clamp((item.width || fontHeight) / viewport.width, .002, 1), height: clamp(fontHeight / viewport.height, .005, 1),
-          fontSize: fontHeight, fontFamily, bold:/bold|black|heavy/.test(fontLabel), italic:/italic|oblique/.test(fontLabel), color:'#000000', align:'left', source: 'native',
-        }]
-      })
-      const uniqueFragments=fragments.filter((fragment,index,list)=>!list.slice(0,index).some((previous)=>previous.text===fragment.text&&Math.abs(previous.x-fragment.x)<.002&&Math.abs(previous.y-fragment.y)<.002&&Math.abs(previous.width-fragment.width)<.003))
-      const regions = uniqueFragments.sort((a,b)=>a.y-b.y||a.x-b.x).reduce<TextRegion[]>((lines,fragment)=>{
-        const centerY=fragment.y+fragment.height/2
-        const line=lines.find((candidate)=>Math.abs((candidate.y+candidate.height/2)-centerY)<=Math.max(candidate.height,fragment.height)*.42 && fragment.x-(candidate.x+candidate.width)<=Math.max(.025,fragment.fontSize*3/viewport.width) && Math.abs(candidate.fontSize-fragment.fontSize)<=Math.max(1,fragment.fontSize*.25) && candidate.fontFamily===fragment.fontFamily && candidate.bold===fragment.bold && candidate.italic===fragment.italic)
-        if(!line){lines.push({...fragment,id:`native-line-${pageNumber}-${lines.length}`});return lines}
-        const lineRight=line.x+line.width,fragmentRight=fragment.x+fragment.width
-        const gap=(fragment.x-lineRight)*viewport.width
-        const separator=gap>Math.max(1,fragment.fontSize*.12)&&!line.text.endsWith(' ')?' ':''
-        line.text=`${line.text}${separator}${fragment.text}`
-        const left=Math.min(line.x,fragment.x),top=Math.min(line.y,fragment.y)
-        line.width=Math.max(lineRight,fragmentRight)-left
-        line.height=Math.max(line.y+line.height,fragment.y+fragment.height)-top
-        line.x=left;line.y=top;line.fontSize=Math.max(line.fontSize,fragment.fontSize)
-        return lines
-      },[])
-      onTextRegions(regions)
-    })().catch(console.error)
-    return () => { cancelled = true }
-  }, [onTextRegions, pageNumber, pdf])
-
-  const pointFromEvent = (e: React.PointerEvent) => {
-    const rect = wrapRef.current!.getBoundingClientRect()
-    return { x: clamp((e.clientX - rect.left) / rect.width, 0, 1), y: clamp((e.clientY - rect.top) / rect.height, 0, 1) }
-  }
-
-  const pointerDown = (e: React.PointerEvent) => {
-    if (tool === 'select') { if (e.target === e.currentTarget) onSelect(null); return }
-    e.currentTarget.setPointerCapture(e.pointerId)
-    setDraft([pointFromEvent(e)])
-  }
-  const pointerMove = (e: React.PointerEvent) => { if (draft.length) setDraft((p) => [...p, pointFromEvent(e)]) }
-  const pointerUp = (e: React.PointerEvent) => {
-    if (!draft.length) return
-    const end = pointFromEvent(e), start = draft[0]
-    const x = Math.min(start.x, end.x), y = Math.min(start.y, end.y)
-    const width = Math.max(Math.abs(end.x - start.x), tool === 'text' ? .22 : .03)
-    const height = Math.max(Math.abs(end.y - start.y), tool === 'text' ? .045 : .018)
-    const base = { id: uid(), page: pageNumber, type: tool as Annotation['type'], x, y, width, height, color, opacity: tool === 'highlight' ? .38 : 1 }
-    if (tool === 'text') {
-      const text = window.prompt('Enter text')?.trim()
-      if (text) onAdd({ ...base, text, fontSize: 16 })
-    } else if (tool === 'draw' || tool === 'signature') {
-      onAdd({ ...base, points: [...draft, end], width: 0, height: 0 })
-    } else onAdd(base)
-    setDraft([])
-  }
-
-  const path = (points: Point[]) => points.map((p, i) => `${i ? 'L' : 'M'} ${p.x * size.width} ${p.y * size.height}`).join(' ')
-  const sampleBackground = (region: Pick<TextRegion,'x'|'y'|'width'|'height'>) => {
-    const canvas = canvasRef.current
-    if (!canvas) return '#ffffff'
-    const ratioX=canvas.width/size.width,ratioY=canvas.height/size.height
-    const ctx=canvas.getContext('2d',{willReadFrequently:true})
-    if(!ctx)return '#ffffff'
-    const samples:number[][]=[]
-    for(let row=0;row<7;row++)for(let column=0;column<13;column++){
-      const px=(column+.5)/13,py=(row+.5)/7
-      const x=clamp(Math.round((region.x+region.width*px)*size.width*ratioX),0,canvas.width-1)
-      const y=clamp(Math.round((region.y+region.height*py)*size.height*ratioY),0,canvas.height-1)
-      samples.push(Array.from(ctx.getImageData(x,y,1,1).data.slice(0,3)))
-    }
-    const buckets=new Map<string,number[][]>()
-    samples.forEach((pixel)=>{
-      const key=pixel.map((channel)=>Math.round(channel/12)*12).join(',')
-      buckets.set(key,[...(buckets.get(key)||[]),pixel])
-    })
-    const dominant=[...buckets.values()].sort((a,b)=>b.length-a.length)[0]||[[255,255,255]]
-    const channel=(index:number)=>Math.round(dominant.reduce((sum,pixel)=>sum+pixel[index],0)/dominant.length)
-    return `#${[channel(0),channel(1),channel(2)].map((value)=>value.toString(16).padStart(2,'0')).join('')}`
-  }
-  const finishInlineEdit = (commitChange: boolean) => {
-    if (!inlineEdit) return
-    const edit = inlineEdit
-    setInlineEdit(null)
-    if (!commitChange) return
-    if (edit.kind === 'region') {
-      const region = textRegions.find((item)=>item.id===edit.id)
-      if (region && edit.value !== region.text) onEditRegion({...region,backgroundColor:edit.backgroundColor||region.backgroundColor}, edit.value)
-    } else {
-      const annotation = annotations.find((item)=>item.id===edit.id)
-      if (annotation && edit.value !== annotation.text) onEditAnnotation({...annotation,backgroundColor:edit.backgroundColor||annotation.backgroundColor}, edit.value)
-    }
-  }
-  const editorKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    e.stopPropagation()
-    if (e.key === 'Escape') { e.preventDefault(); finishInlineEdit(false) }
-    else if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); finishInlineEdit(true) }
-  }
-  return <div className="page-shell" style={{ width: size.width, height: size.height }}>
-    <canvas ref={canvasRef}/>
-    <div ref={wrapRef} className={`annotation-layer tool-${tool}`} onPointerDown={pointerDown} onPointerMove={pointerMove} onPointerUp={pointerUp}>
-      {tool === 'select' && textRegions.map((region) => inlineEdit?.kind==='region'&&inlineEdit.id===region.id ? <textarea key={region.id} autoFocus className="inline-text-editor" value={inlineEdit.value} style={{left:`${region.x*100}%`,top:`${region.y*100}%`,width:`${Math.max(region.width,.04)*100}%`,height:`${Math.max(region.height,.018)*100}%`,fontSize:region.fontSize*zoom,fontFamily:region.fontFamily||'Helvetica',fontWeight:region.bold?700:400,fontStyle:region.italic?'italic':'normal',color:region.color||'#000',textAlign:region.align||'left',backgroundColor:inlineEdit.backgroundColor||'#fff'}} onChange={(e)=>setInlineEdit({...inlineEdit,value:e.target.value})} onKeyDown={editorKeyDown} onBlur={()=>finishInlineEdit(true)} onPointerDown={(e)=>e.stopPropagation()}/> : <button key={region.id} className={`text-region ${region.source}`} title={`${region.source === 'ocr' ? 'OCR' : 'PDF'}: ${region.text}`} style={{ left:`${region.x*100}%`, top:`${region.y*100}%`, width:`${region.width*100}%`, height:`${region.height*100}%` }} onPointerDown={(e)=>e.stopPropagation()} onClick={(e)=>{e.stopPropagation();setInlineEdit({kind:'region',id:region.id,value:region.text,backgroundColor:sampleBackground(region)})}}><span>{region.text}</span></button>)}
-      {annotations.map((a) => a.points ? <svg key={a.id} className={`ink ${selectedId === a.id ? 'selected' : ''}`} viewBox={`0 0 ${size.width} ${size.height}`} onPointerDown={(e) => { e.stopPropagation(); onSelect(a.id) }}><path d={path(a.points)} stroke={a.color} strokeWidth={a.type === 'signature' ? 3 : 2.5} fill="none" strokeLinecap="round" strokeLinejoin="round"/></svg> : a.type==='image'&&a.imageDataUrl ? <img key={a.id} draggable={false} className={`image-annotation ${selectedId===a.id?'selected':''} ${imageDrag?.id===a.id?'dragging':''}`} src={a.imageDataUrl} alt="Inserted" style={{left:`${(imageDrag?.id===a.id?clamp(imageDrag.x,0,1-a.width):a.x)*100}%`,top:`${(imageDrag?.id===a.id?clamp(imageDrag.y,0,1-a.height):a.y)*100}%`,width:`${a.width*100}%`,height:`${a.height*100}%`}} onPointerDown={(e)=>{e.preventDefault();e.stopPropagation();onSelect(a.id);setImageDrag({id:a.id,startClientX:e.clientX,startClientY:e.clientY,startX:a.x,startY:a.y,x:a.x,y:a.y})}}/> :
-        inlineEdit?.kind==='annotation'&&inlineEdit.id===a.id ? <textarea key={a.id} autoFocus className="inline-text-editor annotation-editor" value={inlineEdit.value} style={{left:`${a.x*100}%`,top:`${a.y*100}%`,width:`${a.width*100}%`,height:`${a.height*100}%`,fontSize:(a.fontSize||16)*zoom,fontFamily:a.fontFamily||'Helvetica',fontWeight:a.bold?700:400,fontStyle:a.italic?'italic':'normal',textDecoration:a.underline?'underline':'none',color:a.color,textAlign:a.align||'left',backgroundColor:inlineEdit.backgroundColor||'#fff'}} onChange={(e)=>setInlineEdit({...inlineEdit,value:e.target.value})} onKeyDown={editorKeyDown} onBlur={()=>finishInlineEdit(true)} onPointerDown={(e)=>e.stopPropagation()}/> : <div key={a.id} className={`annotation ${a.type} ${a.replaceOriginal ? 'replacement' : ''} ${selectedId === a.id ? 'selected' : ''}`} style={{ left: `${a.x*100}%`, top: `${a.y*100}%`, width: `${a.width*100}%`, height: `${a.height*100}%`, '--replacement-background':a.backgroundColor||'#fff', '--mask-pad-x':`${(a.maskPadX??.0015)*size.width}px`, '--mask-pad-top':`${(a.maskPadTop??.001)*size.height}px`, '--mask-pad-bottom':`${(a.maskPadBottom??.0015)*size.height}px`, opacity: a.opacity, color: a.color, fontSize: (a.fontSize || 16) * zoom, fontFamily:a.fontFamily||'Helvetica', fontWeight:a.bold?700:400, fontStyle:a.italic?'italic':'normal', textDecoration:a.underline?'underline':'none', textAlign:a.align||'left' } as React.CSSProperties} onPointerDown={(e) => { e.stopPropagation(); onSelect(a.id) }} onDoubleClick={(e)=>{e.stopPropagation();if(a.type==='text')setInlineEdit({kind:'annotation',id:a.id,value:a.text||'',backgroundColor:a.replaceOriginal?sampleBackground(a):a.backgroundColor})}}>{a.text}</div>)}
-      {draft.length > 1 && <svg className="ink draft" viewBox={`0 0 ${size.width} ${size.height}`}><path d={path(draft)} stroke={color} strokeWidth="2.5" fill="none" strokeLinecap="round"/></svg>}
-    </div>
-  </div>
 }
 
 function App() {
@@ -447,54 +243,12 @@ function App() {
   const pageAnnotations = useMemo(() => annotations.filter((a) => a.page === page), [annotations, page])
   const selectedText = useMemo(()=>annotations.find((a)=>a.id===selectedId&&a.type==='text'),[annotations,selectedId])
   const handleTextRegions = useCallback((regions: TextRegion[]) => setTextRegions((current)=>({...current,[page]:[...regions,...(current[page]||[]).filter((x)=>x.source==='ocr')]})), [page])
-  const buildPdfBytes = async () => {
-      if(!bytes)throw new Error('Chưa có tài liệu để xử lý.')
-      const doc = await PDFDocument.load(bytes)
-      doc.registerFontkit(fontkit)
-      const fontCache = new Map<string, PDFFont>()
-      const getFont = async (a: Annotation) => {
-        const requestedFamily=a.fontFamily||'Helvetica',hasUnicode=Array.from(a.text||'').some((character)=>(character.codePointAt(0)||0)>127),family=hasUnicode&&['Helvetica','Times Roman','Courier'].includes(requestedFamily)?'Noto Sans':requestedFamily, variant=`${a.bold?'bold':''}${a.italic?'italic':''}`||'regular', key=`${family}-${variant}`
-        const cached=fontCache.get(key);if(cached)return cached
-        const customFonts:Record<string,Record<string,string>>={
-          'Be Vietnam Pro':{regular:beRegular,italic:beItalic,bold:beBold,bolditalic:beBoldItalic},
-          Arimo:{regular:arimoRegular,italic:arimoItalic,bold:arimoBold,bolditalic:arimoBoldItalic},
-          'Noto Sans':{regular:notoRegular,italic:notoItalic,bold:notoBold,bolditalic:notoBoldItalic},
-        }
-        if(customFonts[family]){const data=await fetch(customFonts[family][variant]).then((response)=>response.arrayBuffer());const embedded=await doc.embedFont(data,{subset:true});fontCache.set(key,embedded);return embedded}
-        let name: StandardFonts
-        if(family==='Times Roman') name=a.bold&&a.italic?StandardFonts.TimesRomanBoldItalic:a.bold?StandardFonts.TimesRomanBold:a.italic?StandardFonts.TimesRomanItalic:StandardFonts.TimesRoman
-        else if(family==='Courier') name=a.bold&&a.italic?StandardFonts.CourierBoldOblique:a.bold?StandardFonts.CourierBold:a.italic?StandardFonts.CourierOblique:StandardFonts.Courier
-        else name=a.bold&&a.italic?StandardFonts.HelveticaBoldOblique:a.bold?StandardFonts.HelveticaBold:a.italic?StandardFonts.HelveticaOblique:StandardFonts.Helvetica
-        const embedded=await doc.embedFont(name);fontCache.set(key,embedded);return embedded
-      }
-      for (const a of annotations) {
-        const p = doc.getPage(a.page - 1), { width, height } = p.getSize()
-        const hex = a.color.replace('#', ''), c = rgb(parseInt(hex.slice(0,2),16)/255, parseInt(hex.slice(2,4),16)/255, parseInt(hex.slice(4,6),16)/255)
-        if (a.type === 'text') {
-          const font=await getFont(a),boxWidth=a.width*width
-          let fontSize=a.fontSize||16
-          const value=a.text||''
-          const naturalWidth=font.widthOfTextAtSize(value,fontSize)
-          if(a.replaceOriginal&&naturalWidth>boxWidth)fontSize=Math.max(6,fontSize*(boxWidth/naturalWidth))
-          const textWidth=font.widthOfTextAtSize(value,fontSize)
-          const textX=a.x*width+(a.align==='center'?Math.max(0,(boxWidth-textWidth)/2):a.align==='right'?Math.max(0,boxWidth-textWidth):0)
-          const textY=height-(a.y*height)-fontSize
-          if (a.replaceOriginal) {
-            const background=(a.backgroundColor||'#ffffff').replace('#','')
-            const backgroundRgb=rgb(parseInt(background.slice(0,2),16)/255,parseInt(background.slice(2,4),16)/255,parseInt(background.slice(4,6),16)/255)
-            const padX=a.maskPadX!==undefined?a.maskPadX*width:Math.max(.5,fontSize*.08)
-            const padTop=a.maskPadTop!==undefined?a.maskPadTop*height:Math.max(.5,fontSize*.08)
-            const padBottom=a.maskPadBottom!==undefined?a.maskPadBottom*height:Math.max(.7,fontSize*.12)
-            p.drawRectangle({ x:a.x*width-padX, y:height-(a.y+a.height)*height-padBottom, width:a.width*width+padX*2, height:a.height*height+padTop+padBottom, color:backgroundRgb, opacity:1 })
-          }
-          if(value){p.drawText(value, { x:textX, y:textY, size:fontSize, font, color:c, opacity:a.opacity, maxWidth:boxWidth });if(a.underline)p.drawLine({start:{x:textX,y:textY-1.5},end:{x:Math.min(textX+textWidth,a.x*width+boxWidth),y:textY-1.5},color:c,thickness:Math.max(.6,fontSize/18),opacity:a.opacity})}
-        }
-        else if(a.type==='image'&&a.imageDataUrl){const data=await fetch(a.imageDataUrl).then((r)=>r.arrayBuffer());const embedded=a.imageDataUrl.startsWith('data:image/png')?await doc.embedPng(data):await doc.embedJpg(data);p.drawImage(embedded,{x:a.x*width,y:height-(a.y+a.height)*height,width:a.width*width,height:a.height*height,opacity:a.opacity})}
-        else if (a.type === 'highlight') p.drawRectangle({ x: a.x*width, y: height-(a.y+a.height)*height, width: a.width*width, height: a.height*height, color: c, opacity: a.opacity })
-        else if (a.points && a.points.length > 1) for (let i=1;i<a.points.length;i++) p.drawLine({ start:{x:a.points[i-1].x*width,y:height-a.points[i-1].y*height}, end:{x:a.points[i].x*width,y:height-a.points[i].y*height}, color:c, thickness:a.type==='signature'?2.2:1.8, opacity:a.opacity })
-      }
-      return new Uint8Array(await doc.save())
-  }
+
+  const buildPdfBytes = useCallback(() => {
+    if (!bytes) throw new Error('Chưa có tài liệu để xử lý.')
+    return buildEditedPdf(bytes, annotations)
+  }, [bytes, annotations])
+
   const exportPdf = async () => {
     if (!bytes || !info) return
     setBusy(true)
@@ -519,13 +273,11 @@ function App() {
     if(!bytes||!pdf||!info)return
     setBusy(true)
     try{
-      const source=await PDFDocument.load(await file.arrayBuffer()),target=await PDFDocument.load(bytes)
-      const copied=await target.copyPages(source,source.getPageIndices())
-      copied.forEach((copiedPage,index)=>target.insertPage(page+index,copiedPage))
-      const merged=new Uint8Array(await target.save()),loaded=await pdfjs.getDocument({data:merged.slice()}).promise
-      const count=copied.length
+      const sourceBytes = new Uint8Array(await file.arrayBuffer())
+      const { bytes: merged, insertedCount: count } = await insertPdfPages(bytes, sourceBytes, page)
+      const loaded = await pdfjs.getDocument({ data: merged.slice() }).promise
       setBytes(merged);setPdf(loaded);setInfo({...info,size:merged.byteLength,pages:loaded.numPages})
-      commit(annotations.map((a)=>a.page>page?{...a,page:a.page+count}:a),{action:'pages.inserted',description:'Chèn trang từ PDF khác',metadata:{afterPage:page,insertedPages:count,fileExt:'pdf'}})
+      commit(remapAnnotationsOnInsert(annotations, page, count),{action:'pages.inserted',description:'Chèn trang từ PDF khác',metadata:{afterPage:page,insertedPages:count,fileExt:'pdf'}})
       setTextRegions({});setPage(page+1)
     }catch(error){console.error(error);alert(`Không thể chèn trang PDF.\n\n${error instanceof Error?error.message:String(error)}`)}finally{setBusy(false)}
   }
@@ -536,11 +288,10 @@ function App() {
     if(to<0||to>=info.pages)return
     setBusy(true)
     try{
-      const document=await PDFDocument.load(bytes),movingPage=document.getPage(from)
-      document.removePage(from);document.insertPage(to,movingPage)
-      const updatedBytes=new Uint8Array(await document.save()),loaded=await pdfjs.getDocument({data:updatedBytes.slice()}).promise
+      const updatedBytes = await movePage(bytes, from, to)
+      const loaded = await pdfjs.getDocument({ data: updatedBytes.slice() }).promise
       const fromPage=from+1,toPage=to+1
-      const updatedAnnotations=annotations.map((annotation)=>annotation.page===fromPage?{...annotation,page:toPage}:annotation.page===toPage?{...annotation,page:fromPage}:annotation)
+      const updatedAnnotations = remapAnnotationsOnMove(annotations, fromPage, toPage)
       setBytes(updatedBytes);setPdf(loaded);setInfo({...info,size:updatedBytes.byteLength});setTextRegions({});setPage(toPage);setSelectedId(null)
       commit(updatedAnnotations,{action:'page.moved',description:direction<0?'Di chuyển trang lên':'Di chuyển trang xuống',metadata:{from:fromPage,to:toPage}})
     }catch(error){console.error(error);alert(`Không thể di chuyển trang.\n\n${error instanceof Error?error.message:String(error)}`)}finally{setBusy(false)}
@@ -552,9 +303,9 @@ function App() {
     if(!window.confirm(`Xóa trang ${page}?`))return
     setBusy(true)
     try{
-      const document=await PDFDocument.load(bytes);document.removePage(page-1)
-      const updatedBytes=new Uint8Array(await document.save()),loaded=await pdfjs.getDocument({data:updatedBytes.slice()}).promise
-      const updatedAnnotations=annotations.filter((annotation)=>annotation.page!==page).map((annotation)=>annotation.page>page?{...annotation,page:annotation.page-1}:annotation)
+      const updatedBytes = await deletePage(bytes, page - 1)
+      const loaded = await pdfjs.getDocument({ data: updatedBytes.slice() }).promise
+      const updatedAnnotations = remapAnnotationsOnDelete(annotations, page)
       const nextPage=Math.min(page,loaded.numPages)
       setBytes(updatedBytes);setPdf(loaded);setInfo({...info,size:updatedBytes.byteLength,pages:loaded.numPages});setTextRegions({});setPage(nextPage);setSelectedId(null)
       commit(updatedAnnotations,{action:'page.deleted',description:'Xóa trang PDF',metadata:{page,remainingPages:loaded.numPages}})
@@ -564,11 +315,7 @@ function App() {
   const editTextRegion = useCallback((region: TextRegion, next: string) => {
     if (next === region.text) return
     const neighbors=textRegions[region.page]||[]
-    const overlapsX=(candidate:TextRegion)=>candidate.x<region.x+region.width&&candidate.x+candidate.width>region.x
-    const gapAbove=Math.min(...neighbors.filter((candidate)=>candidate.id!==region.id&&overlapsX(candidate)&&candidate.y+candidate.height<=region.y).map((candidate)=>region.y-(candidate.y+candidate.height)),Infinity)
-    const gapBelow=Math.min(...neighbors.filter((candidate)=>candidate.id!==region.id&&overlapsX(candidate)&&candidate.y>=region.y+region.height).map((candidate)=>candidate.y-(region.y+region.height)),Infinity)
-    const desiredTop=region.height*.08,desiredBottom=region.height*.12
-    const replacement: Annotation = { id:uid(), page:region.page, type:'text', x:region.x, y:region.y, width:Math.max(region.width,.04), height:Math.max(region.height,.015), opacity:1, text:next, replaceOriginal:true, fontFamily:region.fontFamily||'Helvetica', fontSize:Math.max(7,region.fontSize), bold:region.bold||false, italic:region.italic||false, underline:false, align:region.align||'left', color:region.color||'#000000', backgroundColor:region.backgroundColor||'#ffffff', maskPadX:region.height*.08, maskPadTop:Number.isFinite(gapAbove)?Math.min(desiredTop,gapAbove*.25):desiredTop, maskPadBottom:Number.isFinite(gapBelow)?Math.min(desiredBottom,gapBelow*.25):desiredBottom }
+    const replacement = buildReplacementAnnotation(region, next, neighbors)
     commit([...annotations,replacement], { action:'text_region.edited', description:'Chỉnh sửa vùng chữ', metadata:{ page:region.page, source:region.source } })
     setSelectedId(replacement.id)
     setTextRegions((current)=>({...current,[region.page]:(current[region.page]||[]).filter((x)=>x.id!==region.id)}))
@@ -591,22 +338,8 @@ function App() {
       const result = await worker.recognize(canvas, {}, { tsv:true })
       await worker.terminate()
       const tsv = result.data.tsv || ''
-      const words = tsv.split(/\r?\n/).slice(1).flatMap((line,index):TextRegion[]=>{
-        const cols=line.split('\t'); if(cols.length<12||cols[0]!=='5')return []
-        const left=Number(cols[6]),top=Number(cols[7]),w=Number(cols[8]),h=Number(cols[9]),confidence=Number(cols[10]),text=cols.slice(11).join('\t').trim()
-        if(!text||confidence<35||w<=0||h<=0)return []
-        return [{id:`ocr-${page}-${index}-${uid()}`,page,text,x:left/canvas.width,y:top/canvas.height,width:w/canvas.width,height:h/canvas.height,fontSize:Math.max(7,h/2),confidence,source:'ocr'}]
-      })
-      const regions=words.sort((a,b)=>a.y-b.y||a.x-b.x).reduce<TextRegion[]>((lines,word)=>{
-        const centerY=word.y+word.height/2
-        const current=lines.find((candidate)=>Math.abs((candidate.y+candidate.height/2)-centerY)<=Math.max(candidate.height,word.height)*.45 && word.x-(candidate.x+candidate.width)<=Math.max(.025,word.height*2.5))
-        if(!current){lines.push({...word,id:`ocr-line-${page}-${lines.length}-${uid()}`,fontFamily:'Helvetica',color:'#000000',align:'left'});return lines}
-        const right=Math.max(current.x+current.width,word.x+word.width),top=Math.min(current.y,word.y)
-        current.text=`${current.text} ${word.text}`;current.width=right-Math.min(current.x,word.x);current.x=Math.min(current.x,word.x)
-        current.height=Math.max(current.y+current.height,word.y+word.height)-top;current.y=top
-        current.confidence=Math.min(current.confidence??100,word.confidence??100)
-        return lines
-      },[])
+      const words = parseOcrTsv(tsv, page, canvas.width, canvas.height)
+      const regions = groupOcrWordsIntoLines(words, page)
       setTextRegions((current)=>({...current,[page]:[...(current[page]||[]).filter((x)=>x.source!=='ocr'),...regions]}))
       log('ocr.page_scanned','OCR trang tài liệu',{page,regionCount:regions.length},'success')
       if(!regions.length)alert('OCR hoàn tất nhưng không tìm thấy vùng chữ đủ độ tin cậy.')
