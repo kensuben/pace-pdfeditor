@@ -4,7 +4,7 @@ Hướng dẫn cho Claude Code khi làm việc trong repo này. Chính sách PAC
 
 ## Dự án
 - SPA React + TypeScript + Vite (`src/`), PDF editor xử lý tại trình duyệt; backend Node `server/index.mjs` (audit log, quản trị user, JSON store trong volume `paperly_data`); nginx + node trong Docker.
-- Kế hoạch tính năng: `docs/word-anonymizer/` (Word Comment Anonymizer). Prompt giao việc cho Antigravity: `docs/planning/antigravity/`.
+- Kế hoạch tính năng: `docs/word-anonymizer/` (Word Comment Anonymizer). Nâng cấp PDF editor: `docs/pdf-editor/01-PLAN.md`. Prompt giao việc cho Antigravity: `docs/planning/antigravity/`.
 
 ## Vai trò mặc định: lập kế hoạch → viết prompt cho Antigravity → QA
 Khi người dùng yêu cầu "chỉ làm planning / viết prompt cho Antigravity":
