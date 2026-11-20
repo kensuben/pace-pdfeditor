@@ -122,12 +122,12 @@ Nguyên tắc:
 | **F-11** | Sửa B16: nhúng font TTF đầy đủ khi xuất, báo lỗi rõ khi thiếu font/glyph | W-6 | ✅ Đã merge (PR #40) |
 | **W-7** | Engine content stream: tokenizer, xoá thật chữ trong vùng, giữ vị trí chữ còn lại, báo `keptIntersecting` | W-6 | ✅ Đã merge (PR #42, gồm W-7b). Cổng Q-P1 **đạt** |
 | **W-8** | Khung chọn, 8 tay nắm, kéo/giãn mọi loại đối tượng, phím mũi tên, thêm chữ gõ tại chỗ, chèn ảnh đúng tỉ lệ (B7, B8, B10, B11) | W-7 | ✅ Đã merge (PR #44) |
-| **F-13** | Highlight hiện màu trên màn hình + xem trước dạng hình chữ nhật khi kéo (B20) | W-8 | Prompt: `docs/planning/antigravity/F-13_highlight-visible-on-screen.md`. Song song với F-12 |
-| **F-12** | Xuất đúng trên trang xoay / MediaBox-CropBox lệch gốc (B18, B19) | W-7 | Prompt: `docs/planning/antigravity/F-12_export-rotated-and-offset-pages.md`. Song song với W-8 |
-| W-8b | Panel thuộc tính (X/Y/W/H, khoá tỉ lệ, độ mờ, định dạng chữ), đường gióng/hút cạnh, nút "Hiện khung bao", sửa B21 | W-11 | Viết sau khi W-11 merge (cùng sửa `PdfCanvas.tsx`/`App.tsx`) |
+| **F-13** | Highlight hiện màu trên màn hình + xem trước dạng hình chữ nhật khi kéo (B20) | W-8 | ✅ Đã merge (PR #46) |
+| **F-12** | Xuất đúng trên trang xoay / MediaBox-CropBox lệch gốc (B18, B19) | W-7 | ✅ Đã merge (PR #47) |
+| **W-8b** | Panel thuộc tính (X/Y/W/H pt, khoá tỉ lệ, độ mờ, định dạng chữ), đường gióng/hút cạnh, nút "Hiện khung bao", sửa B21, zoom giữ điểm dưới con trỏ, sidebar ≤ 800px, highlight xuất `Multiply` | W-11 | Prompt: `docs/planning/antigravity/W-8b_properties-panel-guides-polish.md` |
 | **W-9** | Sửa chữ gốc kiểu Acrobat: gom khối đoạn, nhận màu/cỡ/font, editor nhiều dòng, reflow; xuất bằng engine (xoá chữ cũ thật, bỏ hình chữ nhật che) + kiểm tra sót (B1–B6, B14) | W-7 đạt, W-8 | Có thể tách W-9a (nhận khối + editor) / W-9b (xuất bằng engine) |
 | **W-10** | Ảnh có sẵn: nhận, chọn, di chuyển, giãn, xoay, lật, thay, xoá, cắt; ảnh chèn có xoay/cắt/thay (B9) | W-7, W-8 | |
-| **W-11** | Cuộn liên tục có ảo hoá, thumbnail thật, menu zoom + vừa trang/vừa chiều rộng, xoay trang lưu vào file, đặt lại Undo sau thao tác trang (B12, B13, B15) | W-8, F-12, F-13 | Prompt: `docs/planning/antigravity/W-11_continuous-scroll-thumbnails-zoom-rotate.md`. **Không** song song với W-8 (cùng sửa `App.tsx`/`PdfCanvas.tsx`) |
+| **W-11** | Cuộn liên tục có ảo hoá, thumbnail thật, menu zoom + vừa trang/vừa chiều rộng, xoay trang lưu vào file, đặt lại Undo sau thao tác trang (B12, B13, B15) | W-8, F-12, F-13 | ✅ Đã merge (PR #48, gồm W-11b) |
 | W-12a–d | Tìm & thay thế chữ · watermark + header/footer · crop trang · link | W-9 | Đã duyệt (Q-P3) |
 | — | Cập nhật trang hướng dẫn `/huong-dan/` | Sau W-9, W-10 | Claude tự làm, chụp ảnh với dữ liệu giả |
 
