@@ -1,8 +1,11 @@
 import { useEffect, useRef, useState } from 'react'
 import type * as pdfjs from 'pdfjs-dist'
-import type { Annotation, Point, TextRegion, Tool } from '../types'
+import type { Annotation, Point, TextRegion, TextStyle, Tool } from '../types'
 import { clamp, uid } from './geometry'
 import { groupTextItemsIntoLines } from './textExtraction'
+import { SelectionFrame } from './selection/SelectionFrame'
+import { moveBy, nudgeDelta } from './selection/geometry'
+import { useDesktopEditor } from './useDesktopEditor'
 
 export interface PdfCanvasProps {
   pdf: pdfjs.PDFDocumentProxy
@@ -11,8 +14,11 @@ export interface PdfCanvasProps {
   annotations: Annotation[]
   tool: Tool
   color: string
+  textStyle?: TextStyle
   onAdd: (a: Annotation) => void
   onUpdate: (a: Annotation) => void
+  onResize?: (a: Annotation) => void
+  onNudge?: (a: Annotation) => void
   selectedId: string | null
   onSelect: (id: string | null) => void
   textRegions: TextRegion[]
@@ -28,8 +34,11 @@ export function PdfCanvas({
   annotations,
   tool,
   color,
+  textStyle,
   onAdd,
   onUpdate,
+  onResize,
+  onNudge,
   selectedId,
   onSelect,
   textRegions,
@@ -37,63 +46,27 @@ export function PdfCanvas({
   onEditRegion,
   onEditAnnotation,
 }: PdfCanvasProps) {
+  const isDesktop = useDesktopEditor()
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const wrapRef = useRef<HTMLDivElement>(null)
   const [size, setSize] = useState({ width: 612, height: 792 })
+  const [pagePt, setPagePt] = useState({ width: 612, height: 792 })
   const [draft, setDraft] = useState<Point[]>([])
+  const [preview, setPreview] = useState<Annotation | null>(null)
+  const [creatingText, setCreatingText] = useState<{
+    id: string
+    x: number
+    y: number
+    width: number
+    height: number
+    value: string
+  } | null>(null)
   const [inlineEdit, setInlineEdit] = useState<{
     kind: 'region' | 'annotation'
     id: string
     value: string
     backgroundColor?: string
   } | null>(null)
-  const [imageDrag, setImageDrag] = useState<{
-    id: string
-    startClientX: number
-    startClientY: number
-    startX: number
-    startY: number
-    x: number
-    y: number
-  } | null>(null)
-
-  useEffect(() => {
-    if (!imageDrag) return
-    const move = (event: PointerEvent) => {
-      const rect = wrapRef.current?.getBoundingClientRect()
-      if (!rect) return
-      setImageDrag((drag) =>
-        drag
-          ? {
-              ...drag,
-              x: clamp(drag.startX + (event.clientX - drag.startClientX) / rect.width, 0, 1),
-              y: clamp(drag.startY + (event.clientY - drag.startClientY) / rect.height, 0, 1),
-            }
-          : null,
-      )
-    }
-    const up = () => {
-      setImageDrag((drag) => {
-        if (drag) {
-          const annotation = annotations.find((item) => item.id === drag.id)
-          if (annotation) {
-            onUpdate({
-              ...annotation,
-              x: clamp(drag.x, 0, 1 - annotation.width),
-              y: clamp(drag.y, 0, 1 - annotation.height),
-            })
-          }
-        }
-        return null
-      })
-    }
-    window.addEventListener('pointermove', move)
-    window.addEventListener('pointerup', up, { once: true })
-    return () => {
-      window.removeEventListener('pointermove', move)
-      window.removeEventListener('pointerup', up)
-    }
-  }, [annotations, imageDrag, onUpdate])
 
   useEffect(() => {
     let cancelled = false
@@ -101,7 +74,9 @@ export function PdfCanvas({
     ;(async () => {
       const page = await pdf.getPage(pageNumber)
       const viewport = page.getViewport({ scale: zoom })
+      const unscaled = page.getViewport({ scale: 1 })
       if (cancelled || !canvasRef.current) return
+      setPagePt({ width: unscaled.width, height: unscaled.height })
       const canvas = canvasRef.current
       const ratio = window.devicePixelRatio || 1
       canvas.width = Math.floor(viewport.width * ratio)
@@ -134,6 +109,49 @@ export function PdfCanvas({
       cancelled = true
     }
   }, [onTextRegions, pageNumber, pdf])
+
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null
+      if (target) {
+        const tag = target.tagName.toLowerCase()
+        if (tag === 'input' || tag === 'textarea' || tag === 'select' || target.isContentEditable) {
+          return
+        }
+        if (target.closest('input, textarea, select, [contenteditable="true"]')) {
+          return
+        }
+      }
+
+      if (e.key === 'Escape') {
+        if (selectedId) {
+          e.preventDefault()
+          onSelect(null)
+        }
+        return
+      }
+
+      if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) {
+        if (!isDesktop) return
+        if (!selectedId) return
+        const active = annotations.find((a) => a.id === selectedId)
+        if (!active || active.page !== pageNumber || active.replaceOriginal) return
+
+        e.preventDefault()
+        const stepPt = e.shiftKey ? 10 : 1
+        const delta = nudgeDelta(pagePt, stepPt, e.key as 'ArrowUp' | 'ArrowDown' | 'ArrowLeft' | 'ArrowRight')
+        const updated = moveBy(active, delta.dx, delta.dy)
+        if (onNudge) {
+          onNudge(updated)
+        } else {
+          onUpdate(updated)
+        }
+      }
+    }
+
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [annotations, isDesktop, onNudge, onSelect, onUpdate, pageNumber, pagePt, selectedId])
 
   const pointFromEvent = (e: React.PointerEvent) => {
     const rect = wrapRef.current!.getBoundingClientRect()
@@ -176,12 +194,58 @@ export function PdfCanvas({
       opacity: tool === 'highlight' ? 0.38 : 1,
     }
     if (tool === 'text') {
-      const text = window.prompt('Enter text')?.trim()
-      if (text) onAdd({ ...base, text, fontSize: 16 })
+      setCreatingText({
+        id: uid(),
+        x,
+        y,
+        width,
+        height,
+        value: '',
+      })
     } else if (tool === 'draw' || tool === 'signature') {
       onAdd({ ...base, points: [...draft, end], width: 0, height: 0 })
     } else onAdd(base)
     setDraft([])
+  }
+
+  const finishCreatingText = (commitChange: boolean) => {
+    if (!creatingText) return
+    const item = creatingText
+    setCreatingText(null)
+    const trimmed = item.value.trim()
+    if (commitChange && trimmed) {
+      const newAnnotation: Annotation = {
+        id: item.id,
+        page: pageNumber,
+        type: 'text',
+        x: item.x,
+        y: item.y,
+        width: item.width,
+        height: item.height,
+        color: textStyle?.color || color,
+        opacity: 1,
+        text: trimmed,
+        fontSize: textStyle?.fontSize || 16,
+        fontFamily: textStyle?.fontFamily || 'Helvetica',
+        bold: textStyle?.bold,
+        italic: textStyle?.italic,
+        underline: textStyle?.underline,
+        align: textStyle?.align || 'left',
+      }
+      onAdd(newAnnotation)
+      onSelect(newAnnotation.id)
+    }
+  }
+
+  const creatingTextKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    e.stopPropagation()
+    if (e.key === 'Escape') {
+      e.preventDefault()
+      finishCreatingText(false)
+    } else if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault()
+      finishCreatingText(true)
+    }
   }
 
   const path = (points: Point[]) =>
@@ -247,6 +311,18 @@ export function PdfCanvas({
     }
   }
 
+  const handleAnnotationDoubleClick = (a: Annotation) => {
+    if (a.type === 'text')
+      setInlineEdit({
+        kind: 'annotation',
+        id: a.id,
+        value: a.text || '',
+        backgroundColor: a.replaceOriginal ? sampleBackground(a) : a.backgroundColor,
+      })
+  }
+
+  const selectedAnnotation = annotations.find((a) => a.id === selectedId && a.page === pageNumber)
+
   return (
     <div className="page-shell" style={{ width: size.width, height: size.height }}>
       <canvas ref={canvasRef} />
@@ -309,8 +385,9 @@ export function PdfCanvas({
               </button>
             ),
           )}
-        {annotations.map((a) =>
-          a.points ? (
+        {annotations.map((a) => {
+          const display = preview && preview.id === a.id ? preview : a
+          return display.points ? (
             <svg
               key={a.id}
               className={`ink ${selectedId === a.id ? 'selected' : ''}`}
@@ -321,7 +398,7 @@ export function PdfCanvas({
               }}
             >
               <path
-                d={path(a.points)}
+                d={path(display.points)}
                 stroke={a.color}
                 strokeWidth={a.type === 'signature' ? 3 : 2.5}
                 fill="none"
@@ -333,28 +410,19 @@ export function PdfCanvas({
             <img
               key={a.id}
               draggable={false}
-              className={`image-annotation ${selectedId === a.id ? 'selected' : ''} ${imageDrag?.id === a.id ? 'dragging' : ''}`}
+              className={`image-annotation ${selectedId === a.id ? 'selected' : ''}`}
               src={a.imageDataUrl}
               alt="Inserted"
               style={{
-                left: `${(imageDrag?.id === a.id ? clamp(imageDrag.x, 0, 1 - a.width) : a.x) * 100}%`,
-                top: `${(imageDrag?.id === a.id ? clamp(imageDrag.y, 0, 1 - a.height) : a.y) * 100}%`,
-                width: `${a.width * 100}%`,
-                height: `${a.height * 100}%`,
+                left: `${display.x * 100}%`,
+                top: `${display.y * 100}%`,
+                width: `${display.width * 100}%`,
+                height: `${display.height * 100}%`,
               }}
               onPointerDown={(e) => {
                 e.preventDefault()
                 e.stopPropagation()
                 onSelect(a.id)
-                setImageDrag({
-                  id: a.id,
-                  startClientX: e.clientX,
-                  startClientY: e.clientY,
-                  startX: a.x,
-                  startY: a.y,
-                  x: a.x,
-                  y: a.y,
-                })
               }}
             />
           ) : inlineEdit?.kind === 'annotation' && inlineEdit.id === a.id ? (
@@ -388,10 +456,10 @@ export function PdfCanvas({
               className={`annotation ${a.type} ${a.replaceOriginal ? 'replacement' : ''} ${selectedId === a.id ? 'selected' : ''}`}
               style={
                 {
-                  left: `${a.x * 100}%`,
-                  top: `${a.y * 100}%`,
-                  width: `${a.width * 100}%`,
-                  height: `${a.height * 100}%`,
+                  left: `${display.x * 100}%`,
+                  top: `${display.y * 100}%`,
+                  width: `${display.width * 100}%`,
+                  height: `${display.height * 100}%`,
                   '--replacement-background': a.backgroundColor || '#fff',
                   '--mask-pad-x': `${(a.maskPadX ?? 0.0015) * size.width}px`,
                   '--mask-pad-top': `${(a.maskPadTop ?? 0.001) * size.height}px`,
@@ -412,18 +480,55 @@ export function PdfCanvas({
               }}
               onDoubleClick={(e) => {
                 e.stopPropagation()
-                if (a.type === 'text')
-                  setInlineEdit({
-                    kind: 'annotation',
-                    id: a.id,
-                    value: a.text || '',
-                    backgroundColor: a.replaceOriginal ? sampleBackground(a) : a.backgroundColor,
-                  })
+                handleAnnotationDoubleClick(a)
               }}
             >
               {a.text}
             </div>
-          ),
+          )
+        })}
+        {selectedAnnotation && !inlineEdit && (
+          <SelectionFrame
+            annotation={preview && preview.id === selectedAnnotation.id ? preview : selectedAnnotation}
+            zoom={zoom}
+            pageSize={size}
+            isDesktop={isDesktop}
+            onPreviewChange={setPreview}
+            onCommit={(updated, kind) => {
+              setPreview(null)
+              if (kind === 'resize' && onResize) {
+                onResize(updated)
+              } else {
+                onUpdate(updated)
+              }
+            }}
+            onDoubleClick={() => handleAnnotationDoubleClick(selectedAnnotation)}
+          />
+        )}
+        {creatingText && (
+          <textarea
+            autoFocus
+            className="inline-text-editor annotation-editor"
+            value={creatingText.value}
+            style={{
+              left: `${creatingText.x * 100}%`,
+              top: `${creatingText.y * 100}%`,
+              width: `${creatingText.width * 100}%`,
+              height: `${creatingText.height * 100}%`,
+              fontSize: (textStyle?.fontSize || 16) * zoom,
+              fontFamily: textStyle?.fontFamily || 'Helvetica',
+              fontWeight: textStyle?.bold ? 700 : 400,
+              fontStyle: textStyle?.italic ? 'italic' : 'normal',
+              textDecoration: textStyle?.underline ? 'underline' : 'none',
+              color: textStyle?.color || color,
+              textAlign: textStyle?.align || 'left',
+              backgroundColor: '#fff',
+            }}
+            onChange={(e) => setCreatingText({ ...creatingText, value: e.target.value })}
+            onKeyDown={creatingTextKeyDown}
+            onBlur={() => finishCreatingText(true)}
+            onPointerDown={(e) => e.stopPropagation()}
+          />
         )}
         {draft.length > 1 && (
           <svg className="ink draft" viewBox={`0 0 ${size.width} ${size.height}`}>

@@ -1,0 +1,82 @@
+.selection-frame {
+  position: absolute;
+  box-sizing: border-box;
+  border: 1.5px solid var(--accent, #0047af);
+  background-color: rgba(0, 71, 175, 0.05);
+  pointer-events: auto;
+  z-index: 50;
+  user-select: none;
+}
+
+.selection-frame.movable {
+  cursor: move;
+}
+
+.selection-frame.not-allowed {
+  cursor: not-allowed;
+  border-style: dashed;
+  background-color: rgba(12, 35, 64, 0.03);
+}
+
+.selection-handle {
+  position: absolute;
+  box-sizing: border-box;
+  width: 8px;
+  height: 8px;
+  background: var(--paper, #ffffff);
+  border: 1.5px solid var(--accent, #0047af);
+  border-radius: 1px;
+  box-shadow: 0 1px 3px rgba(12, 35, 64, 0.2);
+  pointer-events: auto;
+  padding: 0;
+  margin: 0;
+  z-index: 51;
+}
+
+.selection-handle.handle-nw {
+  top: -4px;
+  left: -4px;
+  cursor: nwse-resize;
+}
+
+.selection-handle.handle-n {
+  top: -4px;
+  left: calc(50% - 4px);
+  cursor: ns-resize;
+}
+
+.selection-handle.handle-ne {
+  top: -4px;
+  right: -4px;
+  cursor: nesw-resize;
+}
+
+.selection-handle.handle-e {
+  top: calc(50% - 4px);
+  right: -4px;
+  cursor: ew-resize;
+}
+
+.selection-handle.handle-se {
+  bottom: -4px;
+  right: -4px;
+  cursor: nwse-resize;
+}
+
+.selection-handle.handle-s {
+  bottom: -4px;
+  left: calc(50% - 4px);
+  cursor: ns-resize;
+}
+
+.selection-handle.handle-sw {
+  bottom: -4px;
+  left: -4px;
+  cursor: nesw-resize;
+}
+
+.selection-handle.handle-w {
+  top: calc(50% - 4px);
+  left: -4px;
+  cursor: ew-resize;
+}
