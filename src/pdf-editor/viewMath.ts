@@ -275,4 +275,13 @@ export function anchorScrollDelta(
   return { deltaX, deltaY }
 }
 
+/**
+ * Determines whether aspect ratio locking should be enabled by default for an annotation type.
+ * Images have aspect ratio locked by default; text and other annotations do not.
+ */
+export function defaultAspectLockedForType(type?: string): boolean {
+  return type === 'image'
+}
+
+
 

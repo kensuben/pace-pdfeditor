@@ -445,6 +445,7 @@ export function PdfCanvas({
                 top: `${display.y * 100}%`,
                 width: `${display.width * 100}%`,
                 height: `${display.height * 100}%`,
+                opacity: display.opacity ?? 1,
               }}
               onPointerDown={(e) => {
                 e.preventDefault()

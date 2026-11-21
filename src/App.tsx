@@ -29,6 +29,7 @@ import {
   SIDEBAR_OVERLAY_MAX_WIDTH,
   PropertiesPanel,
   useDesktopEditor,
+  defaultAspectLockedForType,
 } from './pdf-editor'
 
 // Query version bypasses any previously cached worker response that may have
@@ -235,9 +236,7 @@ function App() {
   const selectAnnotation = useCallback((id: string | null) => {
     setSelectedId(id)
     const selected = annotations.find((a) => a.id === id)
-    if (selected?.type === 'image') {
-      setAspectLocked(true)
-    }
+    setAspectLocked(defaultAspectLockedForType(selected?.type))
     if (selected && selected.type === 'text') {
       setTextStyle({
         fontFamily: selected.fontFamily || 'Helvetica',
@@ -250,6 +249,18 @@ function App() {
       })
     }
   }, [annotations])
+
+  // Centralized aspect lock management on selection change / undo / redo
+  const prevSelectedRef = useRef<{ id: string | null; type?: string }>({ id: null, type: undefined })
+
+  useEffect(() => {
+    const selected = annotations.find((a) => a.id === selectedId)
+    const currentType = selected?.type
+    if (selectedId !== prevSelectedRef.current.id || currentType !== prevSelectedRef.current.type) {
+      prevSelectedRef.current = { id: selectedId, type: currentType }
+      setAspectLocked(defaultAspectLockedForType(currentType))
+    }
+  }, [selectedId, annotations])
 
   const targetPageNumber = useMemo(() => {
     const sel = annotations.find((a) => a.id === selectedId)
@@ -430,7 +441,7 @@ function App() {
     )
     const annotation:Annotation={id:uid(),page,type:'image',x:(1-width)/2,y:(1-height)/2,width,height,color:'#000000',opacity:1,imageDataUrl:dataUrl}
     commit([...annotations,annotation],{action:'image.inserted',description:'Chèn hình ảnh',metadata:{page,fileExt:file.type.includes('png')?'png':'jpeg',fileSize:file.size}})
-    setSelectedId(annotation.id)
+    selectAnnotation(annotation.id)
   }
 
   const insertPages = async (file: File) => {

@@ -108,7 +108,8 @@ export function PageList({
       for (let i = 0; i < pageRefs.current.length; i++) {
         const el = pageRefs.current[i]
         if (!el) continue
-        const r = el.getBoundingClientRect()
+        const shellEl = el.querySelector<HTMLElement>('.page-shell') || el
+        const r = shellEl.getBoundingClientRect()
         if (clientX >= r.left && clientX <= r.right && clientY >= r.top && clientY <= r.bottom) {
           bestIdx = i
           bestRect = r
@@ -121,7 +122,8 @@ export function PageList({
         const el = pageRefs.current[fallbackIdx]
         if (el) {
           bestIdx = fallbackIdx
-          bestRect = el.getBoundingClientRect()
+          const shellEl = el.querySelector<HTMLElement>('.page-shell') || el
+          bestRect = shellEl.getBoundingClientRect()
         }
       }
 
@@ -207,7 +209,8 @@ export function PageList({
       const pageEl = pageRefs.current[anchor.pageIndex]
       const scrollEl = containerRef.current
       if (!pageEl || !scrollEl) return
-      const afterRect = pageEl.getBoundingClientRect()
+      const shellEl = pageEl.querySelector<HTMLElement>('.page-shell') || pageEl
+      const afterRect = shellEl.getBoundingClientRect()
       const { deltaX, deltaY } = anchorScrollDelta(
         anchor.beforeRect,
         afterRect,
