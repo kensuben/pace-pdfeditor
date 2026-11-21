@@ -190,3 +190,22 @@ Mức độ: 🔴 Cao · 🟠 Trung bình · 🟡 Thấp. Đây là phát hiện
 ## 7. Ngoài phạm vi phase 1
 
 `.doc`/`.docm`/`.odt`; Excel/PowerPoint comments; tự động "giải ẩn danh" câu trả lời của AI; xử lý file nhúng; Web Worker; ẩn danh tên người trong thân tài liệu bằng NER.
+
+## 8. Mở rộng 2026-11: chữ đã xoá, thay thế từ khoá, gợi ý theo nhãn
+
+**Bối cảnh (dữ kiện):** người dùng gửi ảnh một hợp đồng (đã yêu cầu ẩn danh hoá ảnh lần sau), trong đó toàn bộ khối Bên A/Bên B (tên pháp nhân, người đại diện, chức vụ, địa chỉ, điện thoại, MST, số giấy uỷ quyền) nằm trong **chữ đã xoá có theo dõi** (`w:del`/`w:delText`). Code hiện tại chỉ thay trên `w:t` (`core/textReplace.ts`), nên chữ đã xoá lộ nguyên văn — đúng theo quyết định Q3 của W-5 lúc đó ("không che chữ đã xoá, chỉ cảnh báo").
+
+**Quyết định của chủ dự án (2026-11-21):**
+- **Q-W1** — Chữ đã xoá: **cho người dùng chọn** giữa che như chữ thường / bỏ hẳn / giữ nguyên + cảnh báo; **mặc định là che**. Thay thế quyết định Q3 của W-5.
+- **Q-W2** — Trường pháp nhân: **tự gợi ý theo nhãn** (Bên A/B…, Đại diện, Chức vụ, Giấy uỷ quyền số, Hợp đồng số), người dùng **duyệt** rồi mới thêm; không tự thay khi chưa duyệt.
+- **Q-W3** — Chức năng **nhập từ khoá → thay thế tất cả** đặt trong module Ẩn danh Word.
+
+**Lộ trình** (tuần tự vì cùng sửa `textReplace.ts` / `anonymize.ts` / `WordAnonymizerPage.tsx`):
+
+| ID | Nội dung | Phụ thuộc | Prompt |
+|---|---|---|---|
+| W-13 | Chế độ xử lý chữ đã xoá: `mask` (mặc định) / `remove` / `keep`; residual theo chế độ | — | `docs/planning/antigravity/W-13_deleted-text-handling-modes.md` |
+| W-14 | Danh sách từ khoá → thay thế tất cả (nguyên từ, không phân biệt hoa thường, tuỳ chọn bỏ dấu), xem trước số lần khớp, kiểm tra sót, không lưu danh sách | W-13 | `docs/planning/antigravity/W-14_keyword-replace-all.md` |
+| W-15 | Gợi ý pháp nhân / người đại diện / chức vụ / số giấy uỷ quyền / số hợp đồng từ nhãn (cả trong chữ đã xoá) → người dùng duyệt → thêm vào entity hoặc từ khoá | W-13, W-14 | `docs/planning/antigravity/W-15_label-based-entity-suggestions.md` |
+
+**Rủi ro:** gợi ý theo nhãn có thể nhận nhầm/sót với mẫu hợp đồng khác mẫu PACE → luôn qua bước duyệt; từ khoá do người dùng nhập có thể chứa tên thật → không lưu `localStorage`, không ghi log.
