@@ -4,6 +4,7 @@ import {
   AnonymizeOptions,
   AnonymizeReplacements,
   CustomEntity,
+  DeletedTextMode,
   SensitiveKind,
 } from './types'
 
@@ -15,10 +16,13 @@ interface ReplacementSpan {
   kind?: SensitiveKind
 }
 
-function getDirectParagraphTNodes(p: Element): Element[] {
-  const allT = Array.from(p.getElementsByTagNameNS(OOXML_NAMESPACES.w, 't'))
-  return allT.filter((tNode) => {
-    let curr = tNode.parentElement
+function getDirectParagraphTNodes(
+  p: Element,
+  localName: 't' | 'delText' = 't'
+): Element[] {
+  const allNodes = Array.from(p.getElementsByTagNameNS(OOXML_NAMESPACES.w, localName))
+  return allNodes.filter((node) => {
+    let curr = node.parentElement
     while (curr && curr !== p) {
       if (curr.localName === 'p' && curr.namespaceURI === OOXML_NAMESPACES.w) {
         return false
@@ -144,8 +148,8 @@ export function findEntityMatches(
   return selected
 }
 
-export function replaceParagraphText(
-  p: Element,
+export function replaceNodeListText(
+  nodes: Element[],
   opts: {
     customEntities?: CustomEntity[]
     maskKinds?: Partial<Record<SensitiveKind, boolean>>
@@ -153,41 +157,40 @@ export function replaceParagraphText(
   },
   stats: AnonymizeReplacements
 ): boolean {
+  if (nodes.length === 0) return false
+
   const customEntities = opts.customEntities || []
   const maskKinds = opts.maskKinds || {}
   const keepValues = opts.keepValues || []
 
-  const tNodes = getDirectParagraphTNodes(p)
-  if (tNodes.length === 0) return false
-
   // NFD safety (Requirement 3):
-  // Normalize each w:t node to NFC and write it back so paragraph text and nodes share exact same NFC string.
-  let paraText = ''
+  // Normalize each node to NFC and write it back so paragraph text and nodes share exact same NFC string.
+  let streamText = ''
   const nodeRanges: { node: Element; start: number; end: number; originalText: string }[] = []
 
-  for (const node of tNodes) {
+  for (const node of nodes) {
     const raw = node.textContent || ''
     const nfc = raw.normalize('NFC')
     if (raw !== nfc) {
       node.textContent = nfc
     }
-    const start = paraText.length
-    paraText += nfc
-    const end = paraText.length
+    const start = streamText.length
+    streamText += nfc
+    const end = streamText.length
     nodeRanges.push({ node, start, end, originalText: nfc })
   }
 
-  if (paraText.length === 0) return false
+  if (streamText.length === 0) return false
 
   // Step (a): Entity matches
-  const entitySpans = findEntityMatches(paraText, customEntities)
+  const entitySpans = findEntityMatches(streamText, customEntities)
   const occupiedRanges: { start: number; end: number }[] = entitySpans.map((s) => ({
     start: s.start,
     end: s.end,
   }))
 
   // Step (b): Detect sensitive data (email, phone, CCCD, MST, STK) outside entity ranges
-  const allSensitive = findSensitive(paraText)
+  const allSensitive = findSensitive(streamText)
   const specificMatches = allSensitive.filter((s) => s.kind !== 'address')
   const specificSpans: ReplacementSpan[] = []
 
@@ -228,7 +231,7 @@ export function replaceParagraphText(
 
       let addrReplaced = false
       for (const [subStart, subEnd] of subRanges) {
-        const subRaw = paraText.slice(subStart, subEnd)
+        const subRaw = streamText.slice(subStart, subEnd)
         const trimmed = subRaw.trim()
         if (trimmed.length < 3) continue
 
@@ -258,9 +261,9 @@ export function replaceParagraphText(
 
   allSpans.sort((a, b) => a.start - b.start)
 
-  let paragraphModified = false
+  let streamModified = false
 
-  // Map replacement spans back onto tNodes
+  // Map replacement spans back onto nodes
   for (const range of nodeRanges) {
     const { node, start: nodeStart, end: nodeEnd, originalText: nodeText } = range
     let result = ''
@@ -295,7 +298,42 @@ export function replaceParagraphText(
       if (/^\s|\s$/.test(result)) {
         node.setAttribute('xml:space', 'preserve')
       }
+      streamModified = true
+    }
+  }
+
+  return streamModified
+}
+
+export function replaceParagraphText(
+  p: Element,
+  opts: {
+    customEntities?: CustomEntity[]
+    maskKinds?: Partial<Record<SensitiveKind, boolean>>
+    keepValues?: string[]
+    deletedTextMode?: DeletedTextMode
+  },
+  stats: AnonymizeReplacements
+): boolean {
+  let paragraphModified = false
+
+  // 1. Regular text stream (w:t)
+  const tNodes = getDirectParagraphTNodes(p, 't')
+  if (tNodes.length > 0) {
+    if (replaceNodeListText(tNodes, opts, stats)) {
       paragraphModified = true
+    }
+  }
+
+  // 2. Track Changes deleted text stream (w:delText)
+  // Mask mode (default when mode is 'mask' or not explicitly set):
+  const mode = opts.deletedTextMode ?? 'mask'
+  if (mode === 'mask') {
+    const delNodes = getDirectParagraphTNodes(p, 'delText')
+    if (delNodes.length > 0) {
+      if (replaceNodeListText(delNodes, opts, stats)) {
+        paragraphModified = true
+      }
     }
   }
 
@@ -304,7 +342,7 @@ export function replaceParagraphText(
 
 export function replaceTextInXmlDocument(
   doc: Document,
-  opts: Pick<AnonymizeOptions, 'customEntities' | 'maskKinds' | 'keepValues'>,
+  opts: Pick<AnonymizeOptions, 'customEntities' | 'maskKinds' | 'keepValues' | 'deletedTextMode'>,
   stats: AnonymizeReplacements
 ): boolean {
   const paragraphs = Array.from(doc.getElementsByTagNameNS(OOXML_NAMESPACES.w, 'p'))

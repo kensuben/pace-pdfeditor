@@ -30,6 +30,7 @@ const DEFAULT_OPTIONS: Required<AnonymizeOptions> = {
     address: true,
   },
   keepValues: [],
+  deletedTextMode: 'mask',
 }
 
 function findNearestHyperlinkAncestor(node: Node): Element | null {
@@ -119,6 +120,7 @@ export async function anonymizeDocx(
     },
     customEntities: options?.customEntities || [],
     keepValues: options?.keepValues || [],
+    deletedTextMode: options?.deletedTextMode || 'mask',
   }
   const zip = await loadSafeDocx(input)
   const inspection = await inspectLoadedDocx(zip, opts.customEntities)
@@ -137,6 +139,7 @@ export async function anonymizeDocx(
       bankAccount: 0,
       address: 0,
     },
+    deletedRunsRemoved: 0,
   }
 
   const getMapped = (rawAuthor: string): MappedIdentity | undefined => {
@@ -708,15 +711,58 @@ export async function anonymizeDocx(
     const xmlText = await file.async('string')
     const doc = parseXml(xmlText)
 
-    let docModified = replaceTextInXmlDocument(
-      doc,
-      {
-        customEntities: opts.customEntities,
-        maskKinds: opts.maskKinds,
-        keepValues: opts.keepValues,
-      },
-      replacements
-    )
+    let docModified = false
+
+    // W-13: Handle 'remove' mode for deleted text (Track Changes)
+    if (opts.deletedTextMode === 'remove') {
+      const delElements = Array.from(doc.getElementsByTagNameNS(OOXML_NAMESPACES.w, 'del'))
+      for (const del of delElements) {
+        // Do not touch w:del inside w:rPr or w:ins
+        let curr: Node | null = del.parentNode
+        let isProtected = false
+        while (curr && curr !== doc) {
+          if (curr.nodeType === 1 /* Element */) {
+            const el = curr as Element
+            if (
+              el.namespaceURI === OOXML_NAMESPACES.w &&
+              (el.localName === 'rPr' || el.localName === 'ins')
+            ) {
+              isProtected = true
+              break
+            }
+          }
+          curr = curr.parentNode
+        }
+        if (isProtected) continue
+
+        // TODO(verify): w:moveFrom handling for moved text is not verified across Word versions, skipped per instruction
+
+        const delTexts = del.getElementsByTagNameNS(OOXML_NAMESPACES.w, 'delText')
+        const delInstrs = del.getElementsByTagNameNS(OOXML_NAMESPACES.w, 'delInstrText')
+        if (delTexts.length > 0 || delInstrs.length > 0) {
+          const runCount = del.getElementsByTagNameNS(OOXML_NAMESPACES.w, 'r').length
+          const textCount = delTexts.length + delInstrs.length
+          replacements.deletedRunsRemoved += Math.max(1, runCount, textCount)
+          del.parentNode?.removeChild(del)
+          docModified = true
+        }
+      }
+    }
+
+    if (
+      replaceTextInXmlDocument(
+        doc,
+        {
+          customEntities: opts.customEntities,
+          maskKinds: opts.maskKinds,
+          keepValues: opts.keepValues,
+          deletedTextMode: opts.deletedTextMode,
+        },
+        replacements
+      )
+    ) {
+      docModified = true
+    }
 
     // Also replace HYPERLINK field codes in w:instrText and w:fldSimple
     const fldSimples = doc.getElementsByTagNameNS(OOXML_NAMESPACES.w, 'fldSimple')

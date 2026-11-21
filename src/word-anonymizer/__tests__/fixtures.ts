@@ -288,3 +288,69 @@ export async function createMockDocx(options: FixtureOptions = {}): Promise<Arra
     compression: options.compression || 'DEFLATE',
   })
 }
+
+export async function createW13FixtureDocx(options: {
+  delTextRuns?: string[]
+  secondDelText?: string
+  commentsDelText?: string
+  headerDelText?: string
+} = {}): Promise<ArrayBuffer> {
+  const wNs = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'
+  const delRuns = options.delTextRuns || ['Công ty TNHH ', 'Mẫu Thử']
+  const secondDel =
+    options.secondDelText !== undefined
+      ? options.secondDelText
+      : ', Điện thoại: 0912 345 678, MST 0101234567, địa chỉ tại Số 1 Đường Test, Hà Nội'
+
+  let delRunsXml = ''
+  for (const r of delRuns) {
+    delRunsXml += `<w:r><w:delText xml:space="preserve">${r}</w:delText></w:r>`
+  }
+
+  let secondDelXml = ''
+  if (secondDel) {
+    secondDelXml = `<w:del w:id="2" w:author="Author 1" w:date="2026-01-01T00:00:00Z"><w:r><w:delText>${secondDel}</w:delText></w:r></w:del>`
+  }
+
+  const documentXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="${wNs}">
+  <w:body>
+    <w:p>
+      <w:r><w:t xml:space="preserve">Bên A: </w:t></w:r>
+      <w:del w:id="1" w:author="Author 1" w:date="2026-01-01T00:00:00Z">
+        ${delRunsXml}
+      </w:del>
+      ${secondDelXml}
+    </w:p>
+  </w:body>
+</w:document>`
+
+  const extraXmlFiles: Record<string, string> = {}
+  if (options.headerDelText) {
+    extraXmlFiles['word/header1.xml'] = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:hdr xmlns:w="${wNs}">
+  <w:p>
+    <w:del w:id="3" w:author="Author 1">
+      <w:r><w:delText>${options.headerDelText}</w:delText></w:r>
+    </w:del>
+  </w:p>
+</w:hdr>`
+  }
+
+  const comments = options.commentsDelText
+    ? [
+        {
+          id: 1,
+          author: 'Author 1',
+          initials: 'A1',
+          rawContent: `<w:del w:id="4" w:author="Author 1"><w:r><w:delText>${options.commentsDelText}</w:delText></w:r></w:del>`,
+        },
+      ]
+    : undefined
+
+  return createMockDocx({
+    documentXmlOverride: documentXml,
+    extraXmlFiles: Object.keys(extraXmlFiles).length > 0 ? extraXmlFiles : undefined,
+    comments,
+  })
+}
