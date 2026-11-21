@@ -3,7 +3,7 @@ import type * as pdfjs from 'pdfjs-dist'
 import type { Annotation, TextRegion, TextStyle, Tool } from '../types'
 import { clamp } from './geometry'
 import { PdfCanvas } from './PdfCanvas'
-import { FIT_PADDING, fitZoom, pickCurrentPage, zoomAroundPoint } from './viewMath'
+import { FIT_PADDING, fitZoom, pickCurrentPage, anchorScrollDelta, type ClientRectLike } from './viewMath'
 
 export interface PageListProps {
   pdf: pdfjs.PDFDocumentProxy
@@ -28,6 +28,8 @@ export interface PageListProps {
   containerRef?: React.RefObject<HTMLDivElement | null>
   onZoomChange?: (nextZoom: number) => void
   onInitialFit?: (initialZoom: number) => void
+  showBoundingBoxes?: boolean
+  aspectLocked?: boolean
 }
 
 interface PageDimensions {
@@ -60,6 +62,8 @@ export function PageList({
   containerRef: externalContainerRef,
   onZoomChange,
   onInitialFit,
+  showBoundingBoxes,
+  aspectLocked,
 }: PageListProps) {
   const localContainerRef = useRef<HTMLDivElement>(null)
   const containerRef = externalContainerRef || localContainerRef
@@ -84,10 +88,72 @@ export function PageList({
     onZoomChangeRef.current = onZoomChange
   })
 
-  // Wheel zoom attached directly to the actual scroll container (.page-list-scroll)
+  interface ZoomAnchor {
+    pageIndex: number
+    fx: number
+    fy: number
+    pointer: { x: number; y: number }
+    beforeRect: ClientRectLike
+  }
+
+  const pendingAnchorRef = useRef<ZoomAnchor | null>(null)
+  const lastPointerRef = useRef<{ x: number; y: number } | null>(null)
+  const prevZoomRef = useRef(zoom)
+
+  const findAnchorAt = useCallback(
+    (clientX: number, clientY: number): ZoomAnchor | null => {
+      let bestIdx = -1
+      let bestRect: ClientRectLike | null = null
+
+      for (let i = 0; i < pageRefs.current.length; i++) {
+        const el = pageRefs.current[i]
+        if (!el) continue
+        const r = el.getBoundingClientRect()
+        if (clientX >= r.left && clientX <= r.right && clientY >= r.top && clientY <= r.bottom) {
+          bestIdx = i
+          bestRect = r
+          break
+        }
+      }
+
+      if (bestIdx === -1) {
+        const fallbackIdx = Math.max(0, Math.min(pageCount - 1, currentPage - 1))
+        const el = pageRefs.current[fallbackIdx]
+        if (el) {
+          bestIdx = fallbackIdx
+          bestRect = el.getBoundingClientRect()
+        }
+      }
+
+      if (bestIdx === -1 || !bestRect) return null
+
+      const fx = (clientX - bestRect.left) / (bestRect.width || 1)
+      const fy = (clientY - bestRect.top) / (bestRect.height || 1)
+
+      return {
+        pageIndex: bestIdx,
+        fx,
+        fy,
+        pointer: { x: clientX, y: clientY },
+        beforeRect: {
+          left: bestRect.left,
+          top: bestRect.top,
+          width: bestRect.width,
+          height: bestRect.height,
+        },
+      }
+    },
+    [pageCount, currentPage],
+  )
+
+  // Wheel zoom with anchor preservation attached directly to .page-list-scroll
   useEffect(() => {
     const el = containerRef.current
     if (!el) return
+
+    const handlePointerMove = (e: MouseEvent) => {
+      lastPointerRef.current = { x: e.clientX, y: e.clientY }
+    }
 
     const handleWheel = (e: WheelEvent) => {
       if (e.ctrlKey || e.metaKey) {
@@ -97,32 +163,62 @@ export function PageList({
         const nextZoom = clamp(Math.round(currentZ * factor * 100) / 100, 0.25, 4)
         if (nextZoom === currentZ) return
 
-        const rect = el.getBoundingClientRect()
-        const pointer = { x: e.clientX - rect.left, y: e.clientY - rect.top }
-        const scroll = { left: el.scrollLeft, top: el.scrollTop }
-        const { nextScrollLeft, nextScrollTop } = zoomAroundPoint({
-          currentZoom: currentZ,
-          nextZoom,
-          pointer,
-          scroll,
-        })
-
-        el.scrollLeft = nextScrollLeft
-        el.scrollTop = nextScrollTop
-        requestAnimationFrame(() => {
-          el.scrollLeft = nextScrollLeft
-          el.scrollTop = nextScrollTop
-        })
+        const anchor = findAnchorAt(e.clientX, e.clientY)
+        if (anchor) {
+          pendingAnchorRef.current = anchor
+        }
 
         onZoomChangeRef.current?.(nextZoom)
       }
     }
 
+    el.addEventListener('mousemove', handlePointerMove)
     el.addEventListener('wheel', handleWheel, { passive: false })
     return () => {
+      el.removeEventListener('mousemove', handlePointerMove)
       el.removeEventListener('wheel', handleWheel)
     }
-  }, [containerRef])
+  }, [containerRef, findAnchorAt])
+
+  // Anchored scroll adjustment when zoom changes (covers Ctrl+Wheel, Ctrl +/-, Zoom controls)
+  useEffect(() => {
+    if (prevZoomRef.current === zoom) return
+    prevZoomRef.current = zoom
+
+    const container = containerRef.current
+    if (!container) return
+
+    if (!pendingAnchorRef.current) {
+      let pt = lastPointerRef.current
+      if (!pt && container) {
+        const cr = container.getBoundingClientRect()
+        pt = { x: cr.left + cr.width / 2, y: cr.top + cr.height / 2 }
+      }
+      if (pt) {
+        pendingAnchorRef.current = findAnchorAt(pt.x, pt.y)
+      }
+    }
+
+    const anchor = pendingAnchorRef.current
+    if (!anchor) return
+    pendingAnchorRef.current = null
+
+    requestAnimationFrame(() => {
+      const pageEl = pageRefs.current[anchor.pageIndex]
+      const scrollEl = containerRef.current
+      if (!pageEl || !scrollEl) return
+      const afterRect = pageEl.getBoundingClientRect()
+      const { deltaX, deltaY } = anchorScrollDelta(
+        anchor.beforeRect,
+        afterRect,
+        anchor.fx,
+        anchor.fy,
+        anchor.pointer,
+      )
+      scrollEl.scrollLeft += deltaX
+      scrollEl.scrollTop += deltaY
+    })
+  }, [zoom, containerRef, findAnchorAt])
 
   // Calculate initial zoom after layout when container has clientWidth > 0
   const initialFitDoneRef = useRef(false)
@@ -306,6 +402,8 @@ export function PageList({
                 onTextRegions={(regions) => onTextRegions(pageNumber, regions)}
                 onEditRegion={onEditRegion}
                 onEditAnnotation={onEditAnnotation}
+                showBoundingBoxes={showBoundingBoxes}
+                aspectLocked={aspectLocked}
               />
             ) : (
               <div

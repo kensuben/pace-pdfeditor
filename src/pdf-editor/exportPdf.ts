@@ -1,4 +1,4 @@
-import { PDFDocument, rgb, StandardFonts, degrees, type PDFFont } from 'pdf-lib'
+import { PDFDocument, rgb, StandardFonts, degrees, BlendMode, type PDFFont } from 'pdf-lib'
 import fontkit from '@pdf-lib/fontkit'
 import beRegular from './fonts/BeVietnamPro-Regular.ttf?url'
 import beItalic from './fonts/BeVietnamPro-Italic.ttf?url'
@@ -230,6 +230,7 @@ export async function buildEditedPdf(
         height: rectH,
         color: c,
         opacity: a.opacity,
+        blendMode: BlendMode.Multiply,
       })
     } else if (a.points && a.points.length > 1) {
       for (let i = 1; i < a.points.length; i++) {

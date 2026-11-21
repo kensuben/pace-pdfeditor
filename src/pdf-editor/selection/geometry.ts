@@ -253,3 +253,80 @@ export function imageInsertSize(
 
   return { width, height }
 }
+
+export interface PanelDimensionsPatch {
+  xPt?: number
+  yPt?: number
+  widthPt?: number
+  heightPt?: number
+  keepAspect?: boolean
+  opacity?: number
+}
+
+/**
+ * Pure function to apply properties panel changes (pt units, aspect lock, opacity)
+ * to an annotation in normalized coordinates.
+ */
+export function applyPanelDimensions(
+  annotation: Annotation,
+  patch: PanelDimensionsPatch,
+  pageSizePt: { width: number; height: number },
+): Annotation {
+  const b = getBounds(annotation)
+  const pageW = pageSizePt.width || 1
+  const pageH = pageSizePt.height || 1
+
+  const currentW_pt = b.width * pageW
+  const currentH_pt = b.height * pageH
+  const currentX_pt = b.x * pageW
+  const currentY_pt = b.y * pageH
+
+  const newX_pt = patch.xPt !== undefined ? patch.xPt : currentX_pt
+  const newY_pt = patch.yPt !== undefined ? patch.yPt : currentY_pt
+  let newW_pt = patch.widthPt !== undefined ? patch.widthPt : currentW_pt
+  let newH_pt = patch.heightPt !== undefined ? patch.heightPt : currentH_pt
+
+  // Aspect ratio locking:
+  // K3: chỉnh W ở panel cho ảnh 2:1 khi khoá tỉ lệ → H = W/2. Bỏ khoá → H giữ nguyên.
+  if (patch.keepAspect && currentH_pt > 0 && currentW_pt > 0) {
+    const ratio = currentW_pt / currentH_pt
+    if (patch.widthPt !== undefined && patch.heightPt === undefined) {
+      newH_pt = newW_pt / ratio
+    } else if (patch.heightPt !== undefined && patch.widthPt === undefined) {
+      newW_pt = newH_pt * ratio
+    }
+  }
+
+  const newNormW = newW_pt / pageW
+  const newNormH = newH_pt / pageH
+  const newNormX = newX_pt / pageW
+  const newNormY = newY_pt / pageH
+
+  const clampedX = Math.max(0, Math.min(1 - newNormW, newNormX))
+  const clampedY = Math.max(0, Math.min(1 - newNormH, newNormY))
+
+  const updated: Annotation = {
+    ...annotation,
+    x: clampedX,
+    y: clampedY,
+    width: newNormW,
+    height: newNormH,
+  }
+
+  if (patch.opacity !== undefined) {
+    updated.opacity = Math.max(0.1, Math.min(1, patch.opacity))
+  }
+
+  // Scale drawing/signature points
+  if (annotation.points && annotation.points.length > 0 && b.width > 0 && b.height > 0) {
+    const scaleX = newNormW / b.width
+    const scaleY = newNormH / b.height
+    updated.points = annotation.points.map((p) => ({
+      x: clampedX + (p.x - b.x) * scaleX,
+      y: clampedY + (p.y - b.y) * scaleY,
+    }))
+  }
+
+  return updated
+}
+

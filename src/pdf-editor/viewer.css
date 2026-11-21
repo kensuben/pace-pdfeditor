@@ -199,3 +199,20 @@
   from { opacity: 0; transform: translateY(2px); }
   to { opacity: 1; transform: translateY(0); }
 }
+
+/* Layout container for document-area and right-side PropertiesPanel (W-8b) */
+.editor-body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  overflow: hidden;
+  position: relative;
+}
+
+.editor-body .document-area {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+}
+
