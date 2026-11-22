@@ -717,7 +717,7 @@ export async function anonymizeDocx(
     if (opts.deletedTextMode === 'remove') {
       const delElements = Array.from(doc.getElementsByTagNameNS(OOXML_NAMESPACES.w, 'del'))
       for (const del of delElements) {
-        // Do not touch w:del inside w:rPr or w:ins
+        // Do not touch w:del inside w:rPr or w:pPr (paragraph / run mark deletion indicators)
         let curr: Node | null = del.parentNode
         let isProtected = false
         while (curr && curr !== doc) {
@@ -725,7 +725,7 @@ export async function anonymizeDocx(
             const el = curr as Element
             if (
               el.namespaceURI === OOXML_NAMESPACES.w &&
-              (el.localName === 'rPr' || el.localName === 'ins')
+              (el.localName === 'rPr' || el.localName === 'pPr')
             ) {
               isProtected = true
               break
@@ -764,15 +764,15 @@ export async function anonymizeDocx(
       docModified = true
     }
 
-    // Also replace HYPERLINK field codes in w:instrText and w:fldSimple
+    // Also replace HYPERLINK field codes in w:instrText, w:delInstrText, and w:fldSimple
     const fldSimples = doc.getElementsByTagNameNS(OOXML_NAMESPACES.w, 'fldSimple')
     for (let i = 0; i < fldSimples.length; i++) {
       const el = fldSimples[i]
       const instr = el.getAttributeNS(OOXML_NAMESPACES.w, 'instr') || ''
-      if (/HYPERLINK/i.test(instr)) {
-        let newInstr = instr
+      let newInstr = instr
+      if (/HYPERLINK/i.test(newInstr)) {
         // mailto:
-        const mailtoMatch = instr.match(/mailto:([^\s"]+)/i)
+        const mailtoMatch = newInstr.match(/mailto:([^\s"]+)/i)
         if (mailtoMatch && isEmailMasked(mailtoMatch[1])) {
           newInstr = newInstr.replace(
             /mailto:[^\s"]+/i,
@@ -780,44 +780,67 @@ export async function anonymizeDocx(
           )
         }
         // tel:
-        const telMatch = instr.match(/tel:([^\s"]+)/i)
+        const telMatch = newInstr.match(/tel:([^\s"]+)/i)
         if (telMatch) {
           const { masked, maskedValue } = isPhoneMasked(telMatch[1])
           if (masked) {
             newInstr = newInstr.replace(/tel:[^\s"]+/i, `tel:${maskedValue}`)
           }
         }
-        if (newInstr !== instr) {
-          el.setAttributeNS(OOXML_NAMESPACES.w, 'instr', newInstr)
-          docModified = true
+      }
+      for (const entity of opts.customEntities) {
+        for (const val of entity.values) {
+          if (!val || val.length === 0) continue
+          const regex = new RegExp(escapeRegex(val), 'gi')
+          if (regex.test(newInstr)) {
+            newInstr = newInstr.replace(regex, entity.label)
+          }
         }
+      }
+      if (newInstr !== instr) {
+        el.setAttributeNS(OOXML_NAMESPACES.w, 'instr', newInstr)
+        docModified = true
       }
     }
 
-    const instrTexts = doc.getElementsByTagNameNS(OOXML_NAMESPACES.w, 'instrText')
-    for (let i = 0; i < instrTexts.length; i++) {
-      const el = instrTexts[i]
+    const targetInstrElements = [
+      ...Array.from(doc.getElementsByTagNameNS(OOXML_NAMESPACES.w, 'instrText')),
+      ...(opts.deletedTextMode !== 'keep'
+        ? Array.from(doc.getElementsByTagNameNS(OOXML_NAMESPACES.w, 'delInstrText'))
+        : []),
+    ]
+    for (let i = 0; i < targetInstrElements.length; i++) {
+      const el = targetInstrElements[i]
       const instr = el.textContent || ''
-      if (/HYPERLINK/i.test(instr)) {
-        let newInstr = instr
-        const mailtoMatch = instr.match(/mailto:([^\s"]+)/i)
+      let newInstr = instr
+      if (/HYPERLINK/i.test(newInstr)) {
+        const mailtoMatch = newInstr.match(/mailto:([^\s"]+)/i)
         if (mailtoMatch && isEmailMasked(mailtoMatch[1])) {
           newInstr = newInstr.replace(
             /mailto:[^\s"]+/i,
             'mailto:masked@anonymized.invalid'
           )
         }
-        const telMatch = instr.match(/tel:([^\s"]+)/i)
+        const telMatch = newInstr.match(/tel:([^\s"]+)/i)
         if (telMatch) {
           const { masked, maskedValue } = isPhoneMasked(telMatch[1])
           if (masked) {
             newInstr = newInstr.replace(/tel:[^\s"]+/i, `tel:${maskedValue}`)
           }
         }
-        if (newInstr !== instr) {
-          el.textContent = newInstr
-          docModified = true
+      }
+      for (const entity of opts.customEntities) {
+        for (const val of entity.values) {
+          if (!val || val.length === 0) continue
+          const regex = new RegExp(escapeRegex(val), 'gi')
+          if (regex.test(newInstr)) {
+            newInstr = newInstr.replace(regex, entity.label)
+          }
         }
+      }
+      if (newInstr !== instr) {
+        el.textContent = newInstr
+        docModified = true
       }
     }
 

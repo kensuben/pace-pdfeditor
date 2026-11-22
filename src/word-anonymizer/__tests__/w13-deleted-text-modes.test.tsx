@@ -11,7 +11,7 @@ import {
   OOXML_NAMESPACES,
 } from '../core'
 import WordAnonymizerPage from '../WordAnonymizerPage'
-import { createW13FixtureDocx } from './fixtures'
+import { createMockDocx, createW13FixtureDocx } from './fixtures'
 import type { AccountInfo } from '@azure/msal-browser'
 
 // @ts-expect-error global act flag
@@ -313,4 +313,146 @@ describe('W-13: Deleted text handling modes (mask, remove, keep)', () => {
     root.unmount()
     container.remove()
   }, 15000)
+
+  // T-R1: remove mode with w:del inside w:ins
+  it('T-R1: remove mode removes w:del inside w:ins, deletedRunsRemoved >= 1, residual PASS', async () => {
+    const docXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="${OOXML_NAMESPACES.w}">
+  <w:body>
+    <w:p>
+      <w:r><w:t>Văn bản: </w:t></w:r>
+      <w:ins w:id="1" w:author="Author 1">
+        <w:del w:id="2" w:author="Author 1">
+          <w:r><w:delText>Điện thoại 0912 345 678</w:delText></w:r>
+        </w:del>
+      </w:ins>
+    </w:p>
+  </w:body>
+</w:document>`
+    const fixtureBuffer = await createMockDocx({ documentXmlOverride: docXml })
+    const result = await anonymizeDocx(fixtureBuffer, mapping, {
+      deletedTextMode: 'remove',
+    })
+
+    expect(result.report.replacements.deletedRunsRemoved).toBeGreaterThanOrEqual(1)
+
+    const zip = await JSZip.loadAsync(await result.blob.arrayBuffer())
+    const outputXml = await zip.file('word/document.xml')!.async('string')
+    const doc = parseXml(outputXml)
+
+    const delTexts = Array.from(doc.getElementsByTagNameNS(OOXML_NAMESPACES.w, 'delText'))
+    const delCombined = delTexts.map((n) => n.textContent || '').join('')
+    expect(delCombined).not.toContain('0912 345 678')
+    expect(outputXml).not.toContain('0912 345 678')
+
+    const residual = await scanResidual(
+      await result.blob.arrayBuffer(),
+      [{ author: 'Author 1', kind: 'contributor', sources: [] }],
+      ['0912 345 678']
+    )
+    expect(residual.status).toBe('PASS')
+    expect(residual.findings.length).toBe(0)
+  })
+
+  // T-R2: remove mode preserves w:del inside w:pPr / w:rPr
+  it('T-R2: remove mode preserves w:del inside w:pPr/w:rPr without corruption', async () => {
+    const docXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="${OOXML_NAMESPACES.w}">
+  <w:body>
+    <w:p>
+      <w:pPr>
+        <w:rPr>
+          <w:del w:id="1" w:author="Author 1"/>
+        </w:rPr>
+      </w:pPr>
+      <w:r><w:t>Nội dung không đổi</w:t></w:r>
+    </w:p>
+  </w:body>
+</w:document>`
+    const fixtureBuffer = await createMockDocx({ documentXmlOverride: docXml })
+    const result = await anonymizeDocx(fixtureBuffer, mapping, {
+      deletedTextMode: 'remove',
+    })
+
+    const zip = await JSZip.loadAsync(await result.blob.arrayBuffer())
+    const outputXml = await zip.file('word/document.xml')!.async('string')
+    const doc = parseXml(outputXml)
+
+    const dels = Array.from(doc.getElementsByTagNameNS(OOXML_NAMESPACES.w, 'del'))
+    expect(dels.length).toBe(1)
+    expect(outputXml).toContain('Nội dung không đổi')
+
+    const residual = await scanResidual(await result.blob.arrayBuffer(), [
+      { author: 'Author 1', kind: 'contributor', sources: [] },
+    ])
+    expect(residual.status).toBe('PASS')
+  })
+
+  // T-M1: mask mode masks w:delInstrText email, residual PASS
+  it('T-M1: mask mode masks w:delInstrText containing email, residual PASS', async () => {
+    const docXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="${OOXML_NAMESPACES.w}">
+  <w:body>
+    <w:p>
+      <w:del w:id="1" w:author="Author 1">
+        <w:r>
+          <w:delInstrText xml:space="preserve"> HYPERLINK "mailto:lienhe.test@example.com" </w:delInstrText>
+        </w:r>
+      </w:del>
+    </w:p>
+  </w:body>
+</w:document>`
+    const fixtureBuffer = await createMockDocx({ documentXmlOverride: docXml })
+    const result = await anonymizeDocx(fixtureBuffer, mapping, {
+      deletedTextMode: 'mask',
+    })
+
+    const zip = await JSZip.loadAsync(await result.blob.arrayBuffer())
+    const outputXml = await zip.file('word/document.xml')!.async('string')
+    expect(outputXml).not.toContain('lienhe.test@example.com')
+    expect(outputXml).toContain('mailto:masked@anonymized.invalid')
+
+    const residual = await scanResidual(
+      await result.blob.arrayBuffer(),
+      [{ author: 'Author 1', kind: 'contributor', sources: [] }],
+      ['lienhe.test@example.com'],
+      { deletedTextMode: 'mask' }
+    )
+    expect(residual.status).toBe('PASS')
+    expect(residual.findings.length).toBe(0)
+  })
+
+  // T-M2: keep mode preserves w:delInstrText, flags residual category deleted-text, status PASS
+  it('T-M2: keep mode preserves w:delInstrText email, residual reports category deleted-text, status PASS', async () => {
+    const docXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="${OOXML_NAMESPACES.w}">
+  <w:body>
+    <w:p>
+      <w:del w:id="1" w:author="Author 1">
+        <w:r>
+          <w:delInstrText xml:space="preserve"> HYPERLINK "mailto:lienhe.test@example.com" </w:delInstrText>
+        </w:r>
+      </w:del>
+    </w:p>
+  </w:body>
+</w:document>`
+    const fixtureBuffer = await createMockDocx({ documentXmlOverride: docXml })
+    const result = await anonymizeDocx(fixtureBuffer, mapping, {
+      deletedTextMode: 'keep',
+    })
+
+    const zip = await JSZip.loadAsync(await result.blob.arrayBuffer())
+    const outputXml = await zip.file('word/document.xml')!.async('string')
+    expect(outputXml).toContain('lienhe.test@example.com')
+
+    const residual = await scanResidual(
+      await result.blob.arrayBuffer(),
+      [{ author: 'Author 1', kind: 'contributor', sources: [] }],
+      ['lienhe.test@example.com'],
+      { deletedTextMode: 'keep' }
+    )
+    expect(residual.status).toBe('PASS')
+    const delFindings = residual.findings.filter((f) => f.category === 'deleted-text')
+    expect(delFindings.length).toBeGreaterThan(0)
+  })
 })

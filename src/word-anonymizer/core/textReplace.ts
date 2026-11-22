@@ -326,9 +326,9 @@ export function replaceParagraphText(
   }
 
   // 2. Track Changes deleted text stream (w:delText)
-  // Mask mode (default when mode is 'mask' or not explicitly set):
+  // Mask mode (default) and fallback for remaining delText after remove:
   const mode = opts.deletedTextMode ?? 'mask'
-  if (mode === 'mask') {
+  if (mode === 'mask' || mode === 'remove') {
     const delNodes = getDirectParagraphTNodes(p, 'delText')
     if (delNodes.length > 0) {
       if (replaceNodeListText(delNodes, opts, stats)) {

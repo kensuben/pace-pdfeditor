@@ -164,10 +164,11 @@ export async function scanResidual(
       const xmlText = await file.async('string')
       try {
         const doc = parseXml(xmlText)
-        // Collect text from w:t and w:instrText
+        // Collect text from w:t and w:instrText, and deleted text from w:delText and w:delInstrText
         const tEls = Array.from(doc.getElementsByTagNameNS(OOXML_NAMESPACES.w, 't'))
         const instrEls = Array.from(doc.getElementsByTagNameNS(OOXML_NAMESPACES.w, 'instrText'))
         const delTextEls = Array.from(doc.getElementsByTagNameNS(OOXML_NAMESPACES.w, 'delText'))
+        const delInstrEls = Array.from(doc.getElementsByTagNameNS(OOXML_NAMESPACES.w, 'delInstrText'))
 
         const textChunks: string[] = []
         for (const el of [...tEls, ...instrEls]) {
@@ -193,7 +194,7 @@ export async function scanResidual(
         }
 
         const delChunks: string[] = []
-        for (const el of delTextEls) {
+        for (const el of [...delTextEls, ...delInstrEls]) {
           const content = el.textContent || ''
           if (content) delChunks.push(content)
         }
@@ -303,6 +304,9 @@ function determineCategory(
     const delTextEls = Array.from(
       doc.getElementsByTagNameNS(OOXML_NAMESPACES.w, 'delText')
     )
+    const delInstrEls = Array.from(
+      doc.getElementsByTagNameNS(OOXML_NAMESPACES.w, 'delInstrText')
+    )
     const instrEls = Array.from(
       doc.getElementsByTagNameNS(OOXML_NAMESPACES.w, 'instrText')
     )
@@ -313,12 +317,12 @@ function determineCategory(
     }
 
     let delTextCombined = ''
-    for (const el of delTextEls) {
+    for (const el of [...delTextEls, ...delInstrEls]) {
       delTextCombined += ' ' + (el.textContent || '')
     }
 
     // Clear all text elements to see if target appears in XML structure/attributes
-    for (const el of [...tEls, ...delTextEls, ...instrEls]) {
+    for (const el of [...tEls, ...delTextEls, ...delInstrEls, ...instrEls]) {
       el.textContent = ''
     }
 
