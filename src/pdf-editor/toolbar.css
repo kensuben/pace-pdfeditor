@@ -1,0 +1,123 @@
+/* F-15: Toolbar layout, compact buttons, overflow menu, and file-title flex positioning */
+
+@media (min-width: 801px) {
+  .topbar .file-title {
+    position: static;
+    transform: none;
+    flex: 1 1 auto;
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    font-size: 14px;
+    margin: 0 16px;
+    overflow: hidden;
+  }
+
+  .topbar .file-title span {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    min-width: 0;
+  }
+
+  .topbar .file-title small {
+    flex-shrink: 0;
+    color: #92989a;
+    border-left: 1px solid var(--line);
+    padding-left: 8px;
+  }
+}
+
+/* At L5 or very narrow screens, allow horizontal scroll instead of clipping buttons */
+.toolbar {
+  overflow-x: auto;
+}
+
+/* Compact mode action tools */
+.action-tool.compact,
+.ocr-button.compact {
+  min-width: 32px;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  display: inline-grid;
+  place-items: center;
+  border-radius: 7px;
+  font-size: 0;
+}
+
+.action-tool.compact svg,
+.ocr-button.compact svg {
+  width: 17px;
+  height: 17px;
+  margin: 0;
+}
+
+/* Toolbar Overflow Menu */
+.toolbar-overflow-container {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+.toolbar-overflow-btn {
+  font-size: 16px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.toolbar-overflow-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  background: var(--paper, #fff);
+  border: 1px solid var(--line, #dddcd6);
+  border-radius: 8px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.12);
+  min-width: 200px;
+  padding: 6px 0;
+  z-index: 100;
+  display: flex;
+  flex-direction: column;
+}
+
+.toolbar-overflow-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 14px;
+  border: none;
+  background: transparent;
+  color: var(--ink, #242a2e);
+  font-size: 13px;
+  font-weight: 500;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.15s ease;
+  white-space: nowrap;
+}
+
+.toolbar-overflow-item svg {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  color: var(--muted, #778087);
+}
+
+.toolbar-overflow-item:hover:not([disabled]):not([aria-disabled='true']) {
+  background: #f4f3ef;
+}
+
+.toolbar-overflow-item:focus-visible {
+  outline: 2px solid var(--accent, #e85d3f);
+  outline-offset: -2px;
+}
+
+.toolbar-overflow-item:disabled,
+.toolbar-overflow-item[aria-disabled='true'] {
+  opacity: 0.45;
+  cursor: not-allowed;
+}

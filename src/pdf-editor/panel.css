@@ -54,30 +54,34 @@
 
 .properties-grid-2x2 {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
 }
 
 .properties-field {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  white-space: nowrap;
   background: var(--surface, #f8fafc);
   border: 1px solid var(--line, #d8dee7);
   border-radius: 4px;
   padding: 4px 8px;
   box-sizing: border-box;
+  min-width: 0;
+  gap: 4px;
 }
 
 .properties-field label {
+  flex: 0 0 auto;
   font-size: 12px;
   font-weight: 600;
   color: var(--muted, #627087);
-  margin-right: 4px;
+  margin-right: 0;
 }
 
 .properties-field input {
-  width: 50px;
+  flex: 1 1 auto;
+  min-width: 0;
   border: none;
   background: transparent;
   text-align: right;
@@ -93,9 +97,10 @@
 }
 
 .properties-field span.unit {
+  flex: 0 0 auto;
   font-size: 11px;
   color: var(--muted, #627087);
-  margin-left: 2px;
+  margin-left: 0;
 }
 
 .properties-checkbox-row {
@@ -170,8 +175,8 @@
 /* Adjust TextFormatBar inside PropertiesPanel */
 .properties-panel .text-format-bar {
   display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
+  flex-direction: column;
+  gap: 8px;
   padding: 0;
   background: transparent;
   border: none;
@@ -179,21 +184,34 @@
   width: 100%;
 }
 
-.properties-panel .text-format-bar select {
+.properties-panel .format-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+}
+
+.properties-panel .format-row-font select[aria-label='Font chữ'] {
+  width: 100%;
+  flex: 1 1 100%;
   height: 28px;
   font-size: 12px;
 }
 
-.properties-panel .text-format-bar select[aria-label='Font chữ'] {
-  flex: 1 1 130px;
-}
-
-.properties-panel .text-format-bar select.font-size {
-  flex: 0 0 60px;
+.properties-panel .format-row-style select.font-size {
+  flex: 0 0 72px;
+  min-width: 72px;
+  height: 28px;
+  font-size: 12px;
 }
 
 .properties-panel .text-format-bar .format-divider {
   display: none;
+}
+
+/* Floating bottom format bar for screens < 1024px */
+.text-format-bar-floating .format-row {
+  display: contents;
 }
 
 /* Floating bottom format bar for screens < 1024px */
