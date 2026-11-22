@@ -208,4 +208,6 @@ Mức độ: 🔴 Cao · 🟠 Trung bình · 🟡 Thấp. Đây là phát hiện
 | W-14 | Danh sách từ khoá → thay thế tất cả (nguyên từ, không phân biệt hoa thường, tuỳ chọn bỏ dấu), xem trước số lần khớp, kiểm tra sót, không lưu danh sách | W-13 | `docs/planning/antigravity/W-14_keyword-replace-all.md` |
 | W-15 | Gợi ý pháp nhân / người đại diện / chức vụ / số giấy uỷ quyền / số hợp đồng từ nhãn (cả trong chữ đã xoá) → người dùng duyệt → thêm vào entity hoặc từ khoá | W-13, W-14 | `docs/planning/antigravity/W-15_label-based-entity-suggestions.md` |
 
+| F-14 | Sửa lõi phát hiện khi QA W-15b (có từ trước): tab/xuống dòng không phải ranh giới (tên trước tab không được thay; email trước xuống dòng làm hỏng chữ dòng sau); nhãn ở chữ thường không áp cho giá trị trong chữ đã xoá (địa chỉ/MST lộ, residual không báo) | W-14 | `docs/planning/antigravity/F-14_word-stream-separators-and-label-context.md` |
+
 **Rủi ro:** gợi ý theo nhãn có thể nhận nhầm/sót với mẫu hợp đồng khác mẫu PACE → luôn qua bước duyệt; từ khoá do người dùng nhập có thể chứa tên thật → không lưu `localStorage`, không ghi log.
