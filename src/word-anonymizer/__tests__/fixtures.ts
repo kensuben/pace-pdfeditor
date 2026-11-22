@@ -465,3 +465,78 @@ export async function createW15FixtureDocx(options?: { inDeleted?: boolean }): P
     documentXmlOverride: documentXml,
   })
 }
+
+export async function createW15bFixtureMixedDocx(): Promise<ArrayBuffer> {
+  const wNs = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'
+  const documentXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="${wNs}">
+  <w:body>
+    <w:p>
+      <w:r><w:t>BÊN A:</w:t><w:tab/></w:r>
+      <w:del w:id="1" w:author="Author 1" w:date="2026-01-01T00:00:00Z">
+        <w:r><w:delText>CÔNG TY TNHH MẪU THỬ ĐÃ XOÁ</w:delText></w:r>
+      </w:del>
+    </w:p>
+    <w:p>
+      <w:r><w:t>Đại diện:</w:t><w:tab/></w:r>
+      <w:del w:id="2" w:author="Author 1" w:date="2026-01-01T00:00:00Z">
+        <w:r><w:delText>Bà NGUYỄN THỊ TEST XOÁ</w:delText></w:r>
+      </w:del>
+      <w:r><w:tab/><w:t>Chức vụ: </w:t></w:r>
+      <w:del w:id="3" w:author="Author 1" w:date="2026-01-01T00:00:00Z">
+        <w:r><w:delText>Giám đốc tài chính</w:delText></w:r>
+      </w:del>
+    </w:p>
+    <w:p>
+      <w:r><w:t>BÊN B (BÊN MUA):</w:t><w:tab/></w:r>
+      <w:del w:id="4" w:author="Author 1" w:date="2026-01-01T00:00:00Z">
+        <w:r><w:delText>TỔNG CÔNG TY TEST NGOẶC ĐƠN</w:delText></w:r>
+      </w:del>
+    </w:p>
+    <w:p>
+      <w:r><w:t>(Theo Giấy Ủy Quyền số </w:t></w:r>
+      <w:del w:id="5" w:author="Author 1" w:date="2026-01-01T00:00:00Z">
+        <w:r><w:delText>99/2026/UQ-TEST</w:delText></w:r>
+      </w:del>
+      <w:r><w:t> ngày 10/01/2026)</w:t></w:r>
+    </w:p>
+    <w:p>
+      <w:r><w:t>Hợp đồng số: </w:t></w:r>
+      <w:del w:id="6" w:author="Author 1" w:date="2026-01-01T00:00:00Z">
+        <w:r><w:delText>123/2026/HĐ-TEST</w:delText></w:r>
+      </w:del>
+    </w:p>
+  </w:body>
+</w:document>`
+
+  return createMockDocx({
+    documentXmlOverride: documentXml,
+  })
+}
+
+export async function createW15bFixtureTableDocx(): Promise<ArrayBuffer> {
+  const wNs = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'
+  const documentXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="${wNs}">
+  <w:body>
+    <w:tbl>
+      <w:tr>
+        <w:tc><w:p><w:r><w:t>BÊN A:</w:t></w:r></w:p></w:tc>
+        <w:tc><w:p><w:r><w:t>CÔNG TY BẢNG MẪU THỬ</w:t></w:r></w:p></w:tc>
+      </w:tr>
+      <w:tr>
+        <w:tc><w:p><w:r><w:t>Đại diện:</w:t></w:r></w:p></w:tc>
+        <w:tc><w:p><w:r><w:t>Ông TRẦN ĐẠI DIỆN BẢNG</w:t></w:r></w:p></w:tc>
+      </w:tr>
+      <w:tr>
+        <w:tc><w:p><w:r><w:t>Chức vụ:</w:t></w:r></w:p></w:tc>
+        <w:tc><w:p><w:r><w:t>Chủ tịch Hội đồng quản trị</w:t></w:r></w:p></w:tc>
+      </w:tr>
+    </w:tbl>
+  </w:body>
+</w:document>`
+
+  return createMockDocx({
+    documentXmlOverride: documentXml,
+  })
+}

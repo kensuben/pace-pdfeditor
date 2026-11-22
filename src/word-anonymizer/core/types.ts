@@ -87,6 +87,8 @@ export interface LabelSuggestion {
 export interface SuggestParagraph {
   text: string
   source: 'body' | 'deleted'
+  charSources?: ('body' | 'deleted')[]
+  paraId?: string | number
 }
 
 export interface InspectionReport {

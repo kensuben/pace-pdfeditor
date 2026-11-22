@@ -106,11 +106,21 @@ async function scanDeletedText(
   return hits
 }
 
-function extractParagraphStreams(p: Element): { bodyText: string; deletedText: string } {
+const CELL_LABEL_REGEX =
+  /^\s*(?:(?:\d+|[a-zA-Z]|[ivxIVX]+)[.)–—:-]\s*)*(?:(?:bên|ben)\s+(?:[a-d]|mua|bán|ban|thuê|thue|cho\s+thuê|cho\s+thue|giao|nhận|nhan|cung\s+cấp|cung\s+cap|sử\s+dụng|su\s+dung)(?:\s*\([^)]*\))?|(?:người\s+đại\s+diện|nguoi\s+dai\s+dien|đại\s+diện\s+theo\s+pháp\s+luật|dai\s+dien\s+theo\s+phap\s+luat|đại\s+diện\s+bởi|dai\s+dien\s+boi|đại\s+diện|dai\s+dien)|(?:chức|chuc)\s+(?:vụ|vu)|(?:giấy|giay)\s+(?:ủy|uỷ|uy)\s+(?:quyền|quyen)(?:\s*(?:số|so))?|(?:hợp|hop)\s+(?:đồng|dong)(?:\s*(?:số|so))?|(?:số|so)\s+(?:hợp|hop)\s+(?:đồng|dong))\s*[:.-]?\s*$/i
+
+function extractParagraphStreams(p: Element): {
+  bodyText: string
+  deletedText: string
+  originalText: string
+  originalCharSources: ('body' | 'deleted')[]
+} {
   let bodyText = ''
   let deletedText = ''
+  let originalText = ''
+  const originalCharSources: ('body' | 'deleted')[] = []
 
-  const walk = (node: Node, inDel: boolean) => {
+  const walk = (node: Node, inDel: boolean, inIns: boolean) => {
     if (node !== p && node.nodeType === 1 /* Element */) {
       const el = node as Element
       if (el.localName === 'p' && el.namespaceURI === OOXML_NAMESPACES.w) {
@@ -118,35 +128,59 @@ function extractParagraphStreams(p: Element): { bodyText: string; deletedText: s
       }
       if (el.localName === 'del' && el.namespaceURI === OOXML_NAMESPACES.w) {
         for (let i = 0; i < el.childNodes.length; i++) {
-          walk(el.childNodes[i], true)
+          walk(el.childNodes[i], true, inIns)
+        }
+        return
+      }
+      if (el.localName === 'ins' && el.namespaceURI === OOXML_NAMESPACES.w) {
+        for (let i = 0; i < el.childNodes.length; i++) {
+          walk(el.childNodes[i], inDel, true)
         }
         return
       }
       if (el.localName === 'tab' && el.namespaceURI === OOXML_NAMESPACES.w) {
         if (inDel) {
           deletedText += '\t'
+          originalText += '\t'
+          originalCharSources.push('deleted')
         } else {
           bodyText += '\t'
+          if (!inIns) {
+            originalText += '\t'
+            originalCharSources.push('body')
+          }
         }
         return
       }
       if (el.localName === 't' && el.namespaceURI === OOXML_NAMESPACES.w && !inDel) {
-        bodyText += el.textContent || ''
+        const textContent = el.textContent || ''
+        bodyText += textContent
+        if (!inIns) {
+          originalText += textContent
+          for (let i = 0; i < textContent.length; i++) {
+            originalCharSources.push('body')
+          }
+        }
         return
       }
       if (el.localName === 'delText' && el.namespaceURI === OOXML_NAMESPACES.w && inDel) {
-        deletedText += el.textContent || ''
+        const textContent = el.textContent || ''
+        deletedText += textContent
+        originalText += textContent
+        for (let i = 0; i < textContent.length; i++) {
+          originalCharSources.push('deleted')
+        }
         return
       }
     }
 
     for (let i = 0; i < node.childNodes.length; i++) {
-      walk(node.childNodes[i], inDel)
+      walk(node.childNodes[i], inDel, inIns)
     }
   }
 
-  walk(p, false)
-  return { bodyText, deletedText }
+  walk(p, false, false)
+  return { bodyText, deletedText, originalText, originalCharSources }
 }
 
 export async function inspectLoadedDocx(
@@ -462,14 +496,25 @@ export async function inspectLoadedDocx(
         path.startsWith('word/header') ||
         path.startsWith('word/footer')
 
-      for (const p of paragraphs) {
+      for (let pIdx = 0; pIdx < paragraphs.length; pIdx++) {
+        const p = paragraphs[pIdx]
         if (isSuggestPart) {
-          const { bodyText, deletedText } = extractParagraphStreams(p)
-          if (bodyText.trim()) {
-            suggestParagraphs.push({ text: bodyText, source: 'body' })
+          const { bodyText, originalText, originalCharSources } =
+            extractParagraphStreams(p)
+          if (originalText.trim()) {
+            suggestParagraphs.push({
+              text: originalText,
+              source: originalCharSources.includes('deleted') ? 'deleted' : 'body',
+              charSources: originalCharSources,
+              paraId: `${path}#p_${pIdx}`,
+            })
           }
-          if (deletedText.trim()) {
-            suggestParagraphs.push({ text: deletedText, source: 'deleted' })
+          if (bodyText !== originalText && bodyText.trim()) {
+            suggestParagraphs.push({
+              text: bodyText,
+              source: 'body',
+              paraId: `${path}#p_${pIdx}`,
+            })
           }
         }
 
@@ -481,6 +526,89 @@ export async function inspectLoadedDocx(
         const matches = findSensitive(paraText)
         for (const m of matches) {
           addSensitiveFinding(m.kind, m.value, m.normalized)
+        }
+      }
+
+      if (isSuggestPart) {
+        const tables = Array.from(doc.getElementsByTagNameNS(OOXML_NAMESPACES.w, 'tbl'))
+        for (let tIdx = 0; tIdx < tables.length; tIdx++) {
+          const tbl = tables[tIdx]
+          const rows = Array.from(tbl.childNodes).filter(
+            (n) =>
+              n.nodeType === 1 &&
+              (n as Element).localName === 'tr' &&
+              (n as Element).namespaceURI === OOXML_NAMESPACES.w
+          ) as Element[]
+
+          for (let rIdx = 0; rIdx < rows.length; rIdx++) {
+            const row = rows[rIdx]
+            const cells = Array.from(row.childNodes).filter(
+              (n) =>
+                n.nodeType === 1 &&
+                (n as Element).localName === 'tc' &&
+                (n as Element).namespaceURI === OOXML_NAMESPACES.w
+            ) as Element[]
+
+            for (let cIdx = 0; cIdx < cells.length - 1; cIdx++) {
+              const leftCell = cells[cIdx]
+              const rightCell = cells[cIdx + 1]
+
+              const leftParas = Array.from(leftCell.childNodes).filter(
+                (n) =>
+                  n.nodeType === 1 &&
+                  (n as Element).localName === 'p' &&
+                  (n as Element).namespaceURI === OOXML_NAMESPACES.w
+              ) as Element[]
+
+              const leftTexts: string[] = []
+              for (const lp of leftParas) {
+                const { originalText } = extractParagraphStreams(lp)
+                if (originalText.trim()) leftTexts.push(originalText.trim())
+              }
+              const leftCombined = leftTexts.join(' ').trim()
+
+              if (CELL_LABEL_REGEX.test(leftCombined)) {
+                const rightParas = Array.from(rightCell.childNodes).filter(
+                  (n) =>
+                    n.nodeType === 1 &&
+                    (n as Element).localName === 'p' &&
+                    (n as Element).namespaceURI === OOXML_NAMESPACES.w
+                ) as Element[]
+
+                const rightTexts: string[] = []
+                const rightSources: ('body' | 'deleted')[] = []
+                for (let rpIdx = 0; rpIdx < rightParas.length; rpIdx++) {
+                  const { originalText, originalCharSources } = extractParagraphStreams(
+                    rightParas[rpIdx]
+                  )
+                  if (rpIdx > 0 && originalText.trim()) {
+                    rightTexts.push(' ')
+                    rightSources.push('body')
+                  }
+                  rightTexts.push(originalText)
+                  rightSources.push(...originalCharSources)
+                }
+
+                const rightCombined = rightTexts.join('')
+                if (rightCombined.trim()) {
+                  const labelClean = leftCombined.replace(/[:.-]+$/, '').trim()
+                  const prefix = `${labelClean}:\t`
+                  const prefixSources: ('body' | 'deleted')[] = new Array(prefix.length).fill(
+                    'body'
+                  )
+                  const fullText = prefix + rightCombined
+                  const fullSources = prefixSources.concat(rightSources)
+
+                  suggestParagraphs.push({
+                    text: fullText,
+                    source: fullSources.includes('deleted') ? 'deleted' : 'body',
+                    charSources: fullSources,
+                    paraId: `${path}#tbl_${tIdx}_tr_${rIdx}_tc_${cIdx}`,
+                  })
+                }
+              }
+            }
+          }
         }
       }
     }

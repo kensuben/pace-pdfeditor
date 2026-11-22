@@ -11,7 +11,11 @@ import {
   type KeywordRule,
 } from '../core'
 import WordAnonymizerPage from '../WordAnonymizerPage'
-import { createW15FixtureDocx } from './fixtures'
+import {
+  createW15FixtureDocx,
+  createW15bFixtureMixedDocx,
+  createW15bFixtureTableDocx,
+} from './fixtures'
 import type { AccountInfo } from '@azure/msal-browser'
 
 // @ts-expect-error global act flag
@@ -302,5 +306,127 @@ describe('W-15: Label-based Entity & Keyword Suggestions', () => {
 
     // Expect median time to be well below 100ms
     expect(medianTime).toBeLessThan(100)
+  })
+
+  // T1: Gợi ý từ văn bản hỗn hợp (nhãn w:t, giá trị w:delText trong cùng w:p)
+  it('T1: suggests from mixed w:t label and w:delText value in same paragraph with deleted source', async () => {
+    const docxBuf = await createW15bFixtureMixedDocx()
+    const report = await inspectDocx(docxBuf)
+    const suggestions = report.suggestions || []
+
+    // 1. Organization: "CÔNG TY TNHH MẪU THỬ ĐÃ XOÁ" (sources: ['deleted'])
+    const org1 = suggestions.find((s) => s.value === 'CÔNG TY TNHH MẪU THỬ ĐÃ XOÁ')
+    expect(org1).toBeDefined()
+    expect(org1?.kind).toBe('organization')
+    expect(org1?.hint).toBe('party')
+    expect(org1?.sources).toEqual(['deleted'])
+
+    // 2. Representative: "NGUYỄN THỊ TEST XOÁ" (sources: ['deleted'], without "Bà", without "Chức vụ")
+    const rep = suggestions.find((s) => s.value === 'NGUYỄN THỊ TEST XOÁ')
+    expect(rep).toBeDefined()
+    expect(rep?.kind).toBe('representative')
+    expect(rep?.hint).toBe('representative')
+    expect(rep?.sources).toEqual(['deleted'])
+
+    // 3. Position: "Giám đốc tài chính" (sources: ['deleted'])
+    const pos = suggestions.find((s) => s.value === 'Giám đốc tài chính')
+    expect(pos).toBeDefined()
+    expect(pos?.kind).toBe('keyword')
+    expect(pos?.hint).toBe('position')
+    expect(pos?.sources).toEqual(['deleted'])
+
+    // 4. Organization with role in parens: "TỔNG CÔNG TY TEST NGOẶC ĐƠN" (sources: ['deleted'])
+    const org2 = suggestions.find((s) => s.value === 'TỔNG CÔNG TY TEST NGOẶC ĐƠN')
+    expect(org2).toBeDefined()
+    expect(org2?.kind).toBe('organization')
+    expect(org2?.hint).toBe('party')
+    expect(org2?.sources).toEqual(['deleted'])
+
+    // 5. Authorization: "99/2026/UQ-TEST" (sources: ['deleted'])
+    const auth = suggestions.find((s) => s.value === '99/2026/UQ-TEST')
+    expect(auth).toBeDefined()
+    expect(auth?.kind).toBe('keyword')
+    expect(auth?.hint).toBe('authorization')
+    expect(auth?.sources).toEqual(['deleted'])
+
+    // 6. Contract No: "123/2026/HĐ-TEST" (sources: ['deleted'])
+    const contract = suggestions.find((s) => s.value === '123/2026/HĐ-TEST')
+    expect(contract).toBeDefined()
+    expect(contract?.kind).toBe('keyword')
+    expect(contract?.hint).toBe('contractNo')
+    expect(contract?.sources).toEqual(['deleted'])
+  })
+
+  // T2: Gợi ý từ bảng (nhãn ô trái, giá trị ô phải)
+  it('T2: suggests entities and positions from table row label-value cell pairs', async () => {
+    const docxBuf = await createW15bFixtureTableDocx()
+    const report = await inspectDocx(docxBuf)
+    const suggestions = report.suggestions || []
+
+    const org = suggestions.find((s) => s.value === 'CÔNG TY BẢNG MẪU THỬ')
+    expect(org).toBeDefined()
+    expect(org?.kind).toBe('organization')
+    expect(org?.hint).toBe('party')
+
+    const rep = suggestions.find((s) => s.value === 'TRẦN ĐẠI DIỆN BẢNG')
+    expect(rep).toBeDefined()
+    expect(rep?.kind).toBe('representative')
+    expect(rep?.hint).toBe('representative')
+
+    const pos = suggestions.find((s) => s.value === 'Chủ tịch Hội đồng quản trị')
+    expect(pos).toBeDefined()
+    expect(pos?.kind).toBe('keyword')
+    expect(pos?.hint).toBe('position')
+  })
+
+  // T3: Không gợi ý số hợp đồng giả (không có số)
+  it('T3: does not suggest false contract numbers that contain no digits', () => {
+    const paragraphs: SuggestParagraph[] = [
+      { text: 'Hai bên đã ký hợp đồng số lượng lớn hàng hoá.', source: 'body' },
+    ]
+    const suggestions = suggestFromLabels(paragraphs)
+    const contractSuggestions = suggestions.filter((s) => s.hint === 'contractNo')
+    expect(contractSuggestions).toHaveLength(0)
+  })
+
+  // T4: Thắt chặt vị trí Chức vụ
+  it('T4: strictly matches position only at start of line or immediately after tab', () => {
+    // Negative: "chức vụ:" in the middle of a regular sentence
+    const negParas: SuggestParagraph[] = [
+      {
+        text: 'Người lao động làm việc theo hợp đồng, chức vụ: chuyên viên phân tích.',
+        source: 'body',
+      },
+    ]
+    const negSugg = suggestFromLabels(negParas)
+    expect(negSugg.filter((s) => s.hint === 'position')).toHaveLength(0)
+
+    // Positive 1: "1. Chức vụ: Trưởng phòng kế toán" (numbered start of line)
+    const pos1Paras: SuggestParagraph[] = [
+      { text: '1. Chức vụ: Trưởng phòng kế toán', source: 'body' },
+    ]
+    const pos1Sugg = suggestFromLabels(pos1Paras)
+    expect(pos1Sugg.some((s) => s.value === 'Trưởng phòng kế toán' && s.hint === 'position')).toBe(
+      true
+    )
+
+    // Positive 2: "Đại diện: Ông A\tChức vụ: Trưởng phòng kinh doanh" (immediately after tab)
+    const pos2Paras: SuggestParagraph[] = [
+      { text: 'Đại diện: Ông A\tChức vụ: Trưởng phòng kinh doanh', source: 'body' },
+    ]
+    const pos2Sugg = suggestFromLabels(pos2Paras)
+    expect(
+      pos2Sugg.some((s) => s.value === 'Trưởng phòng kinh doanh' && s.hint === 'position')
+    ).toBe(true)
+  })
+
+  // T5: Không gợi ý tên nhãn làm giá trị
+  it('T5: does not suggest contract label names as extracted values', () => {
+    const paragraphs: SuggestParagraph[] = [
+      { text: 'Đại diện:\tChức vụ:', source: 'body' },
+    ]
+    const suggestions = suggestFromLabels(paragraphs)
+    expect(suggestions.some((s) => s.value.toLowerCase().includes('chức vụ'))).toBe(false)
+    expect(suggestions).toHaveLength(0)
   })
 })
