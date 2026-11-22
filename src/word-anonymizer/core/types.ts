@@ -42,6 +42,13 @@ export interface CustomEntity {
   values: string[]
 }
 
+export interface KeywordRule {
+  id: string
+  find: string
+  replace: string
+  ignoreDiacritics?: boolean
+}
+
 export type SensitiveKind =
   | 'email'
   | 'phone'
@@ -98,12 +105,25 @@ export interface AnonymizeOptions {
   maskKinds?: Partial<Record<SensitiveKind, boolean>>
   keepValues?: string[]
   deletedTextMode?: DeletedTextMode
+  keywordRules?: KeywordRule[]
 }
 
 export interface AnonymizeReplacements {
   entities: number
+  keywords: number
   byKind: Record<SensitiveKind, number>
   deletedRunsRemoved: number
+}
+
+export interface KeywordMatchCounts {
+  byRule: Record<string, number>
+  total: number
+  byGroup: {
+    body: number
+    deleted: number
+    comments: number
+    headerFooter: number
+  }
 }
 
 export interface AnonymizeReport {

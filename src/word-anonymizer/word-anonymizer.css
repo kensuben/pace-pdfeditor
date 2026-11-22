@@ -719,3 +719,110 @@
   font-variant-numeric: tabular-nums;
   word-break: break-word;
 }
+
+/* Keyword replace styles */
+.keyword-rules-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.keyword-row {
+  margin-bottom: 8px;
+}
+
+.keyword-inputs {
+  display: flex;
+  gap: 10px;
+  align-items: flex-end;
+  flex-wrap: wrap;
+}
+
+.keyword-input-col {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1;
+  min-width: 150px;
+}
+
+.keyword-input-col label {
+  font-size: 12px;
+  font-weight: 600;
+  color: #4b5563;
+}
+
+.keyword-input-col input {
+  font-family: inherit;
+  font-size: 13px;
+  padding: 6px 10px;
+  border: 1px solid var(--line, #d8dee7);
+  border-radius: 4px;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.keyword-replace-col {
+  max-width: 220px;
+}
+
+.keyword-checkbox-col {
+  display: flex;
+  align-items: center;
+  padding-bottom: 8px;
+}
+
+.keyword-diacritics-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  color: #4b5563;
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+}
+
+.keyword-badge-col {
+  display: flex;
+  align-items: center;
+  padding-bottom: 8px;
+}
+
+.keyword-match-badge {
+  display: inline-block;
+  padding: 3px 8px;
+  background: #f1f5f9;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  font-size: 11px;
+  font-weight: 500;
+  color: #475569;
+  white-space: nowrap;
+}
+
+.keyword-paste-box {
+  background: #f8fafc;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  padding: 12px;
+  margin-bottom: 14px;
+}
+
+.keyword-paste-textarea {
+  font-family: inherit;
+  font-size: 13px;
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid #cbd5e1;
+  border-radius: 4px;
+  box-sizing: border-box;
+  resize: vertical;
+}
+
+.keyword-paste-error {
+  color: #dc2626;
+  font-size: 12px;
+  margin-top: 6px;
+}

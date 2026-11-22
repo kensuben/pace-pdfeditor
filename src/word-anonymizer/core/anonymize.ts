@@ -2,7 +2,7 @@ import { OOXML_NAMESPACES } from './constants'
 import { inspectLoadedDocx } from './inspect'
 import { normalizeString } from './normalize'
 import { maskPhone, normalizePhone } from './sensitive'
-import { replaceTextInXmlDocument } from './textReplace'
+import { replaceKeywordsInString, replaceTextInXmlDocument } from './textReplace'
 import {
   AnonymizeOptions,
   AnonymizeReplacements,
@@ -31,6 +31,7 @@ const DEFAULT_OPTIONS: Required<AnonymizeOptions> = {
   },
   keepValues: [],
   deletedTextMode: 'mask',
+  keywordRules: [],
 }
 
 function findNearestHyperlinkAncestor(node: Node): Element | null {
@@ -121,6 +122,7 @@ export async function anonymizeDocx(
     customEntities: options?.customEntities || [],
     keepValues: options?.keepValues || [],
     deletedTextMode: options?.deletedTextMode || 'mask',
+    keywordRules: options?.keywordRules || [],
   }
   const zip = await loadSafeDocx(input)
   const inspection = await inspectLoadedDocx(zip, opts.customEntities)
@@ -131,6 +133,7 @@ export async function anonymizeDocx(
 
   const replacements: AnonymizeReplacements = {
     entities: 0,
+    keywords: 0,
     byKind: {
       email: 0,
       phone: 0,
@@ -757,6 +760,7 @@ export async function anonymizeDocx(
           maskKinds: opts.maskKinds,
           keepValues: opts.keepValues,
           deletedTextMode: opts.deletedTextMode,
+          keywordRules: opts.keywordRules,
         },
         replacements
       )
@@ -795,6 +799,13 @@ export async function anonymizeDocx(
           if (regex.test(newInstr)) {
             newInstr = newInstr.replace(regex, entity.label)
           }
+        }
+      }
+      if (opts.keywordRules && opts.keywordRules.length > 0) {
+        const kwRes = replaceKeywordsInString(newInstr, opts.keywordRules)
+        if (kwRes.count > 0) {
+          newInstr = kwRes.text
+          replacements.keywords += kwRes.count
         }
       }
       if (newInstr !== instr) {
@@ -836,6 +847,13 @@ export async function anonymizeDocx(
           if (regex.test(newInstr)) {
             newInstr = newInstr.replace(regex, entity.label)
           }
+        }
+      }
+      if (opts.keywordRules && opts.keywordRules.length > 0) {
+        const kwRes = replaceKeywordsInString(newInstr, opts.keywordRules)
+        if (kwRes.count > 0) {
+          newInstr = kwRes.text
+          replacements.keywords += kwRes.count
         }
       }
       if (newInstr !== instr) {

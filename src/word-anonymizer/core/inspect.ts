@@ -2,12 +2,15 @@ import type JSZip from 'jszip'
 import { OOXML_NAMESPACES } from './constants'
 import { normalizeString } from './normalize'
 import { findSensitive, normalizePhone } from './sensitive'
-import { findEntityMatches } from './textReplace'
+import { findEntityMatches, findKeywordMatches } from './textReplace'
 import {
   CustomEntity,
   DeletedTextHit,
+  DeletedTextMode,
   IdentityKind,
   InspectionReport,
+  KeywordMatchCounts,
+  KeywordRule,
   KnownIdentity,
   SensitiveItem,
   SensitiveKind,
@@ -536,4 +539,150 @@ export async function inspectLoadedDocx(
     sensitive,
     deletedTextHits,
   }
+}
+
+export async function countKeywordMatches(
+  input: JSZip | ArrayBuffer,
+  rules: KeywordRule[],
+  deletedTextMode: DeletedTextMode = 'mask'
+): Promise<KeywordMatchCounts> {
+  const isZip = typeof (input as JSZip).file === 'function'
+  const zip = isZip ? (input as JSZip) : await loadSafeDocx(input as ArrayBuffer)
+
+  const counts: KeywordMatchCounts = {
+    byRule: {},
+    total: 0,
+    byGroup: {
+      body: 0,
+      deleted: 0,
+      comments: 0,
+      headerFooter: 0,
+    },
+  }
+
+  for (const r of rules) {
+    counts.byRule[r.id] = 0
+  }
+
+  if (rules.length === 0) {
+    return counts
+  }
+
+  const entries = Object.keys(zip.files).sort()
+  for (const path of entries) {
+    if (!path.startsWith('word/') || !path.endsWith('.xml') || path === 'word/people.xml') {
+      continue
+    }
+    const file = zip.file(path)
+    if (!file) continue
+
+    const xmlText = await file.async('string')
+    if (!xmlText) continue
+
+    const doc = parseXml(xmlText)
+    const paragraphs = Array.from(doc.getElementsByTagNameNS(OOXML_NAMESPACES.w, 'p'))
+
+    const isComment = path === 'word/comments.xml'
+    const isHeaderFooter = path.startsWith('word/header') || path.startsWith('word/footer')
+    const defaultGroup: 'comments' | 'headerFooter' | 'body' = isComment
+      ? 'comments'
+      : isHeaderFooter
+      ? 'headerFooter'
+      : 'body'
+
+    for (const p of paragraphs) {
+      // 1. Regular text stream (w:t)
+      const tNodes = Array.from(p.getElementsByTagNameNS(OOXML_NAMESPACES.w, 't')).filter((tNode) => {
+        let curr = tNode.parentElement
+        while (curr && curr !== p) {
+          if (curr.localName === 'p' && curr.namespaceURI === OOXML_NAMESPACES.w) return false
+          curr = curr.parentElement
+        }
+        return true
+      })
+      if (tNodes.length > 0) {
+        const streamText = tNodes.map((n) => n.textContent || '').join('')
+        if (streamText) {
+          const matches = findKeywordMatches(streamText, rules)
+          for (const m of matches) {
+            if (m.ruleId) {
+              counts.byRule[m.ruleId] = (counts.byRule[m.ruleId] || 0) + 1
+            }
+            counts.byGroup[defaultGroup]++
+            counts.total++
+          }
+        }
+      }
+
+      // 2. Track changes deleted text stream (w:delText)
+      // Only count in deleted text if deletedTextMode is 'mask'
+      if (deletedTextMode === 'mask') {
+        const delNodes = Array.from(p.getElementsByTagNameNS(OOXML_NAMESPACES.w, 'delText')).filter((delNode) => {
+          let curr = delNode.parentElement
+          while (curr && curr !== p) {
+            if (curr.localName === 'p' && curr.namespaceURI === OOXML_NAMESPACES.w) return false
+            curr = curr.parentElement
+          }
+          return true
+        })
+        if (delNodes.length > 0) {
+          const streamText = delNodes.map((n) => n.textContent || '').join('')
+          if (streamText) {
+            const matches = findKeywordMatches(streamText, rules)
+            for (const m of matches) {
+              if (m.ruleId) {
+                counts.byRule[m.ruleId] = (counts.byRule[m.ruleId] || 0) + 1
+              }
+              counts.byGroup.deleted++
+              counts.total++
+            }
+          }
+        }
+      }
+    }
+
+    // Field codes
+    const fldSimples = Array.from(doc.getElementsByTagNameNS(OOXML_NAMESPACES.w, 'fldSimple'))
+    for (const el of fldSimples) {
+      const instr = el.getAttributeNS(OOXML_NAMESPACES.w, 'instr') || ''
+      if (instr) {
+        const matches = findKeywordMatches(instr, rules)
+        for (const m of matches) {
+          if (m.ruleId) counts.byRule[m.ruleId] = (counts.byRule[m.ruleId] || 0) + 1
+          counts.byGroup[defaultGroup]++
+          counts.total++
+        }
+      }
+    }
+
+    const instrTexts = Array.from(doc.getElementsByTagNameNS(OOXML_NAMESPACES.w, 'instrText'))
+    for (const el of instrTexts) {
+      const instr = el.textContent || ''
+      if (instr) {
+        const matches = findKeywordMatches(instr, rules)
+        for (const m of matches) {
+          if (m.ruleId) counts.byRule[m.ruleId] = (counts.byRule[m.ruleId] || 0) + 1
+          counts.byGroup[defaultGroup]++
+          counts.total++
+        }
+      }
+    }
+
+    if (deletedTextMode === 'mask') {
+      const delInstrTexts = Array.from(doc.getElementsByTagNameNS(OOXML_NAMESPACES.w, 'delInstrText'))
+      for (const el of delInstrTexts) {
+        const instr = el.textContent || ''
+        if (instr) {
+          const matches = findKeywordMatches(instr, rules)
+          for (const m of matches) {
+            if (m.ruleId) counts.byRule[m.ruleId] = (counts.byRule[m.ruleId] || 0) + 1
+            counts.byGroup.deleted++
+            counts.total++
+          }
+        }
+      }
+    }
+  }
+
+  return counts
 }
