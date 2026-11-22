@@ -27,6 +27,8 @@ import {
   buildDefaultMapping,
   validateMapping,
   validateEntities,
+  validateKeywordRules,
+  countKeywordMatches,
   inspectDeletedText,
   maskSensitive,
   AnonymizerError,
@@ -41,6 +43,8 @@ import {
   type SensitiveKind,
   type DeletedTextHit,
   type DeletedTextMode,
+  type KeywordRule,
+  type KeywordMatchCounts,
 } from './core'
 
 export interface WordAnonymizerPageProps {
@@ -123,6 +127,11 @@ export default function WordAnonymizerPage({
   const [keepValues, setKeepValues] = useState<string[]>([])
   const [deletedHits, setDeletedHits] = useState<DeletedTextHit[]>([])
   const [options, setOptions] = useState<AnonymizeOptions>(DEFAULT_OPTIONS)
+  const [keywordRules, setKeywordRules] = useState<KeywordRule[]>([])
+  const [keywordCounts, setKeywordCounts] = useState<KeywordMatchCounts | null>(null)
+  const [isPastingKeywords, setIsPastingKeywords] = useState(false)
+  const [pasteKeywordsText, setPasteKeywordsText] = useState('')
+  const [pasteKeywordsError, setPasteKeywordsError] = useState<string | null>(null)
 
   const [anonymizeResult, setAnonymizeResult] = useState<AnonymizeResult | null>(null)
   const [residualReport, setResidualReport] = useState<ResidualReport | null>(null)
@@ -182,6 +191,37 @@ export default function WordAnonymizerPage({
     return validateEntities(entities, mapping, inspection?.identities || [])
   }, [entities, mapping, inspection])
 
+  const keywordValidation = useMemo(() => {
+    return validateKeywordRules(keywordRules, entities, mapping)
+  }, [keywordRules, entities, mapping])
+
+  // Count keyword matches with 400ms debounce
+  useEffect(() => {
+    let cancelled = false
+    const timer = setTimeout(async () => {
+      if (!fileBuffer || keywordRules.length === 0) {
+        if (!cancelled) setKeywordCounts(null)
+        return
+      }
+      try {
+        const counts = await countKeywordMatches(
+          fileBuffer,
+          keywordRules,
+          options.deletedTextMode
+        )
+        if (!cancelled) {
+          setKeywordCounts(counts)
+        }
+      } catch {
+        // Ignore errors during editing
+      }
+    }, 400)
+    return () => {
+      cancelled = true
+      clearTimeout(timer)
+    }
+  }, [fileBuffer, keywordRules, options.deletedTextMode])
+
   const getEntityError = (entity: CustomEntity): string | null => {
     if (!entity.label.trim()) return 'Nhãn thực thể không được để trống.'
     const lower = entity.label.trim().toLowerCase()
@@ -223,6 +263,11 @@ export default function WordAnonymizerPage({
     setKeepValues([])
     setDeletedHits([])
     setOptions(DEFAULT_OPTIONS)
+    setKeywordRules([])
+    setKeywordCounts(null)
+    setIsPastingKeywords(false)
+    setPasteKeywordsText('')
+    setPasteKeywordsError(null)
     setAnonymizeResult(null)
     setResidualReport(null)
     setErrorMessage(null)
@@ -358,6 +403,98 @@ export default function WordAnonymizerPage({
     setEntities((prev) => prev.filter((e) => e.id !== id))
   }
 
+  const handleAddKeywordRule = () => {
+    resetStaleResults()
+    const newRule: KeywordRule = {
+      id: `kw-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      find: '',
+      replace: '',
+      ignoreDiacritics: false,
+    }
+    setKeywordRules((prev) => [...prev, newRule])
+  }
+
+  const handleUpdateKeywordFind = (id: string, find: string) => {
+    resetStaleResults()
+    setKeywordRules((prev) =>
+      prev.map((r) => (r.id === id ? { ...r, find } : r))
+    )
+  }
+
+  const handleUpdateKeywordReplace = (id: string, replace: string) => {
+    resetStaleResults()
+    setKeywordRules((prev) =>
+      prev.map((r) => (r.id === id ? { ...r, replace } : r))
+    )
+  }
+
+  const handleToggleKeywordDiacritics = (id: string) => {
+    resetStaleResults()
+    setKeywordRules((prev) =>
+      prev.map((r) => (r.id === id ? { ...r, ignoreDiacritics: !r.ignoreDiacritics } : r))
+    )
+  }
+
+  const handleRemoveKeywordRule = (id: string) => {
+    resetStaleResults()
+    setKeywordRules((prev) => prev.filter((r) => r.id !== id))
+  }
+
+  const handleApplyPasteKeywords = () => {
+    resetStaleResults()
+    setPasteKeywordsError(null)
+    const lines = pasteKeywordsText.split('\n')
+    const added: KeywordRule[] = []
+    let malformedCount = 0
+
+    for (const rawLine of lines) {
+      const line = rawLine.trim()
+      if (!line) continue
+
+      if (line.includes('=>')) {
+        const parts = line.split('=>')
+        if (parts.length !== 2) {
+          malformedCount++
+          continue
+        }
+        const find = parts[0].trim()
+        const replace = parts[1].trim()
+        if (find.length < 2) {
+          malformedCount++
+          continue
+        }
+        added.push({
+          id: `kw-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+          find,
+          replace,
+          ignoreDiacritics: false,
+        })
+      } else {
+        const find = line.trim()
+        if (find.length < 2) {
+          malformedCount++
+          continue
+        }
+        added.push({
+          id: `kw-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+          find,
+          replace: '',
+          ignoreDiacritics: false,
+        })
+      }
+    }
+
+    if (added.length > 0) {
+      setKeywordRules((prev) => [...prev, ...added])
+    }
+    if (malformedCount > 0) {
+      setPasteKeywordsError(`Có ${malformedCount} dòng sai định dạng (từ khoá phải từ 2 ký tự) không được thêm.`)
+    } else {
+      setIsPastingKeywords(false)
+      setPasteKeywordsText('')
+    }
+  }
+
   const handleToggleMaskKind = (kind: SensitiveKind) => {
     resetStaleResults()
     setMaskKinds((prev) => ({ ...prev, [kind]: !prev[kind] }))
@@ -400,7 +537,14 @@ export default function WordAnonymizerPage({
   }, [inspection])
 
   const handleAnonymize = async () => {
-    if (!fileBuffer || !inspection || !validation.valid || !entityValidation.valid) return
+    if (
+      !fileBuffer ||
+      !inspection ||
+      !validation.valid ||
+      !entityValidation.valid ||
+      !keywordValidation.valid
+    )
+      return
 
     setBusy(true)
     setErrorMessage(null)
@@ -412,6 +556,7 @@ export default function WordAnonymizerPage({
         customEntities: entities,
         maskKinds,
         keepValues,
+        keywordRules,
       }
       const result = await anonymizeDocx(fileBuffer, mapping, anonymizeOpts)
       const outArrayBuffer = await result.blob.arrayBuffer()
@@ -426,6 +571,7 @@ export default function WordAnonymizerPage({
         maskKinds,
         keepValues,
         deletedTextMode: options.deletedTextMode ?? 'mask',
+        keywordRules,
       })
 
       setAnonymizeResult(result)
@@ -446,6 +592,12 @@ export default function WordAnonymizerPage({
           revisionCount: inspection.stats.revisionCount,
           residualStatus: residuals.status,
           entityReplacements: result.report.replacements.entities,
+          ...(keywordRules.length > 0
+            ? {
+                keywordRuleCount: keywordRules.length,
+                keywordReplacementCount: result.report.replacements.keywords || 0,
+              }
+            : {}),
           emailMasked: result.report.replacements.byKind.email || 0,
           phoneMasked: result.report.replacements.byKind.phone || 0,
           nationalIdMasked: result.report.replacements.byKind.nationalId || 0,
@@ -926,6 +1078,139 @@ export default function WordAnonymizerPage({
               </div>
             </div>
 
+            {/* Card: Thay thế từ khoá */}
+            <div className="word-card">
+              <div className="word-card-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px' }}>
+                <div className="word-card-title">
+                  <Tag size={18} />
+                  <span>Thay thế từ khoá ({keywordRules.length})</span>
+                </div>
+                <div style={{ display: 'flex', gap: '8px' }}>
+                  <button
+                    type="button"
+                    className="secondary small"
+                    onClick={handleAddKeywordRule}
+                  >
+                    <Plus size={14} /> Thêm từ khoá
+                  </button>
+                  <button
+                    type="button"
+                    className="secondary small"
+                    onClick={() => {
+                      setIsPastingKeywords((prev) => !prev)
+                      setPasteKeywordsError(null)
+                    }}
+                  >
+                    Dán danh sách
+                  </button>
+                </div>
+              </div>
+
+              <p className="word-card-note">
+                Nhập các từ khoá cần thay thế toàn văn (chức vụ, số giấy uỷ quyền, tên dự án, mã hợp đồng...). Tìm kiếm nguyên từ, không phân biệt hoa thường.
+              </p>
+
+              {/* Paste box */}
+              {isPastingKeywords && (
+                <div className="keyword-paste-box">
+                  <div style={{ fontSize: '13px', fontWeight: 600, marginBottom: '6px' }}>
+                    Dán danh sách từ khoá (mỗi dòng một mục: <code>từ khoá =&gt; thay bằng</code> hoặc chỉ <code>từ khoá</code>)
+                  </div>
+                  <textarea
+                    rows={4}
+                    value={pasteKeywordsText}
+                    onChange={(e) => setPasteKeywordsText(e.target.value)}
+                    placeholder="VD: Giám đốc => Người điều hành&#10;01/2026/UQ-TEST => ****&#10;Dự án Mẫu Thử"
+                    className="keyword-paste-textarea"
+                  />
+                  {pasteKeywordsError && (
+                    <div className="keyword-paste-error">{pasteKeywordsError}</div>
+                  )}
+                  <div style={{ display: 'flex', gap: '8px', marginTop: '8px' }}>
+                    <button
+                      type="button"
+                      className="primary small"
+                      onClick={handleApplyPasteKeywords}
+                    >
+                      Thêm vào danh sách
+                    </button>
+                    <button
+                      type="button"
+                      className="secondary small"
+                      onClick={() => {
+                        setIsPastingKeywords(false)
+                        setPasteKeywordsError(null)
+                      }}
+                    >
+                      Đóng
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* Rules list */}
+              {keywordRules.length === 0 ? (
+                <div className="sensitive-empty-msg" style={{ padding: '8px 0' }}>
+                  Chưa có từ khoá nào. Bấm &quot;Thêm từ khoá&quot; hoặc &quot;Dán danh sách&quot; để thêm.
+                </div>
+              ) : (
+                <div className="keyword-rules-list">
+                  {keywordRules.map((rule) => {
+                    const err = keywordValidation.errors[rule.id]
+                    const matchCount = keywordCounts?.byRule[rule.id] ?? 0
+                    return (
+                      <div key={rule.id} className="keyword-row">
+                        <div className="keyword-inputs">
+                          <div className="keyword-input-col">
+                            <label>Từ khoá:</label>
+                            <input
+                              type="text"
+                              value={rule.find}
+                              onChange={(e) => handleUpdateKeywordFind(rule.id, e.target.value)}
+                              placeholder="Từ khoá tìm kiếm"
+                            />
+                          </div>
+                          <div className="keyword-input-col keyword-replace-col">
+                            <label>Thay bằng:</label>
+                            <input
+                              type="text"
+                              value={rule.replace}
+                              onChange={(e) => handleUpdateKeywordReplace(rule.id, e.target.value)}
+                              placeholder="**** (để trống)"
+                            />
+                          </div>
+                          <div className="keyword-checkbox-col">
+                            <label className="keyword-diacritics-label">
+                              <input
+                                type="checkbox"
+                                checked={Boolean(rule.ignoreDiacritics)}
+                                onChange={() => handleToggleKeywordDiacritics(rule.id)}
+                              />
+                              <span>Bỏ qua dấu</span>
+                            </label>
+                          </div>
+                          <div className="keyword-badge-col">
+                            <span className="keyword-match-badge" title="Số lần xuất hiện trong tài liệu">
+                              {matchCount} lần khớp
+                            </span>
+                          </div>
+                          <button
+                            type="button"
+                            className="danger-icon-btn"
+                            title="Xoá dòng"
+                            onClick={() => handleRemoveKeywordRule(rule.id)}
+                          >
+                            <Trash2 size={16} />
+                          </button>
+                        </div>
+                        {err && <div className="entity-error-msg">{err}</div>}
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+            </div>
+
             {/* Card 2: Thông tin nhạy cảm phát hiện được */}
             <div className="word-card">
               <div className="word-card-header">
@@ -1224,7 +1509,7 @@ export default function WordAnonymizerPage({
                 <button
                   className="primary large"
                   onClick={handleAnonymize}
-                  disabled={busy || !validation.valid || !entityValidation.valid}
+                  disabled={busy || !validation.valid || !entityValidation.valid || !keywordValidation.valid}
                 >
                   <ShieldCheck size={18} /> {busy ? 'Đang xử lý...' : 'Ẩn danh tài liệu'}
                 </button>
@@ -1248,6 +1533,7 @@ export default function WordAnonymizerPage({
                   {anonymizeResult.report.replacements.byKind.taxCode || 0} MST,{' '}
                   {anonymizeResult.report.replacements.byKind.bankAccount || 0} số tài khoản,{' '}
                   {anonymizeResult.report.replacements.byKind.address || 0} địa chỉ
+                  {anonymizeResult.report.replacements.keywords > 0 ? `; thay thế ${anonymizeResult.report.replacements.keywords} từ khoá` : ''}
                 </div>
               </div>
             )}

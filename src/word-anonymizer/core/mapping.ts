@@ -1,5 +1,5 @@
 import { normalizeString } from './normalize'
-import { CustomEntity, IdentityMapping, InspectionReport, KnownIdentity } from './types'
+import { CustomEntity, IdentityMapping, InspectionReport, KeywordRule, KnownIdentity } from './types'
 
 export function buildDefaultMapping(report: InspectionReport): IdentityMapping {
   const mapping: IdentityMapping = {}
@@ -139,4 +139,59 @@ export function validateEntities(
     valid: errors.length === 0,
     errors,
   }
+}
+
+export function validateKeywordRules(
+  rules: KeywordRule[],
+  entities: CustomEntity[] = [],
+  mapping: IdentityMapping = {}
+): { valid: boolean; errors: Record<string, string>; generalErrors: string[] } {
+  const errors: Record<string, string> = {}
+  const generalErrors: string[] = []
+  const seenFinds = new Map<string, string>()
+
+  const protectedLabels = new Set<string>()
+  for (const ent of entities) {
+    if (ent.label) protectedLabels.add(normalizeString(ent.label).toLowerCase())
+  }
+  for (const m of Object.values(mapping)) {
+    if (m.label) protectedLabels.add(normalizeString(m.label).toLowerCase())
+  }
+
+  for (const rule of rules) {
+    const trimmedFind = rule.find.trim()
+    const lowerFind = normalizeString(trimmedFind).toLowerCase()
+
+    // 1. find sau trim < 2 ký tự
+    if (trimmedFind.length < 2) {
+      errors[rule.id] = 'Từ khoá phải có ít nhất 2 ký tự'
+      continue
+    }
+
+    // 2. trùng find (không phân biệt hoa thường)
+    if (seenFinds.has(lowerFind)) {
+      errors[rule.id] = 'Từ khoá bị trùng lặp'
+      const prevId = seenFinds.get(lowerFind)!
+      if (!errors[prevId]) {
+        errors[prevId] = 'Từ khoá bị trùng lặp'
+      }
+      continue
+    }
+    seenFinds.set(lowerFind, rule.id)
+
+    // 3. replace chứa find của chính rule đó
+    if (rule.replace && rule.replace.toLowerCase().includes(lowerFind)) {
+      errors[rule.id] = 'Giá trị thay thế không được chứa từ khoá'
+      continue
+    }
+
+    // 4. find trùng nhãn pháp nhân/người tham gia đang dùng
+    if (protectedLabels.has(lowerFind)) {
+      errors[rule.id] = 'Từ khoá trùng với nhãn pháp nhân hoặc người tham gia đang dùng'
+      continue
+    }
+  }
+
+  const isValid = Object.keys(errors).length === 0 && generalErrors.length === 0
+  return { valid: isValid, errors, generalErrors }
 }

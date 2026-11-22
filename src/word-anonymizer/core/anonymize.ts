@@ -2,13 +2,14 @@ import { OOXML_NAMESPACES } from './constants'
 import { inspectLoadedDocx } from './inspect'
 import { normalizeString } from './normalize'
 import { maskPhone, normalizePhone } from './sensitive'
-import { replaceTextInXmlDocument } from './textReplace'
+import { replaceKeywordsInString, replaceTextInXmlDocument } from './textReplace'
 import {
   AnonymizeOptions,
   AnonymizeReplacements,
   AnonymizeResult,
   CustomEntity,
   IdentityMapping,
+  KeywordRule,
   MappedIdentity,
 } from './types'
 import { parseXml, serializeXml } from './xml'
@@ -31,6 +32,7 @@ const DEFAULT_OPTIONS: Required<AnonymizeOptions> = {
   },
   keepValues: [],
   deletedTextMode: 'mask',
+  keywordRules: [],
 }
 
 function findNearestHyperlinkAncestor(node: Node): Element | null {
@@ -52,12 +54,16 @@ function escapeRegex(str: string): string {
   return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
 
-function replaceEntitiesInMetadataDoc(
+function replaceMetadataDoc(
   doc: Document,
-  entities: CustomEntity[]
-): boolean {
-  if (entities.length === 0) return false
+  entities: CustomEntity[],
+  keywordRules: KeywordRule[] = []
+): { modified: boolean; keywordReplacements: number } {
+  if (entities.length === 0 && keywordRules.length === 0) {
+    return { modified: false, keywordReplacements: 0 }
+  }
   let modified = false
+  let keywordReplacements = 0
 
   const textNodes: Node[] = []
   const walk = (node: Node) => {
@@ -96,13 +102,22 @@ function replaceEntitiesInMetadataDoc(
       }
     }
 
+    if (keywordRules.length > 0) {
+      const kwRes = replaceKeywordsInString(text, keywordRules)
+      if (kwRes.count > 0) {
+        text = kwRes.text
+        keywordReplacements += kwRes.count
+        textChanged = true
+      }
+    }
+
     if (textChanged) {
       tNode.textContent = text
       modified = true
     }
   }
 
-  return modified
+  return { modified, keywordReplacements }
 }
 
 // TODO(verify): Cấu trúc mention w:hyperlink kết hợp mailto: - Word 365 dùng w:hyperlink trỏ rel mailto, cần kiểm tra thêm khi mention nằm trong comment phức tạp hoặc phân tách nhiều w:r/w:t.
@@ -121,6 +136,7 @@ export async function anonymizeDocx(
     customEntities: options?.customEntities || [],
     keepValues: options?.keepValues || [],
     deletedTextMode: options?.deletedTextMode || 'mask',
+    keywordRules: options?.keywordRules || [],
   }
   const zip = await loadSafeDocx(input)
   const inspection = await inspectLoadedDocx(zip, opts.customEntities)
@@ -131,6 +147,7 @@ export async function anonymizeDocx(
 
   const replacements: AnonymizeReplacements = {
     entities: 0,
+    keywords: 0,
     byKind: {
       email: 0,
       phone: 0,
@@ -757,6 +774,7 @@ export async function anonymizeDocx(
           maskKinds: opts.maskKinds,
           keepValues: opts.keepValues,
           deletedTextMode: opts.deletedTextMode,
+          keywordRules: opts.keywordRules,
         },
         replacements
       )
@@ -795,6 +813,13 @@ export async function anonymizeDocx(
           if (regex.test(newInstr)) {
             newInstr = newInstr.replace(regex, entity.label)
           }
+        }
+      }
+      if (opts.keywordRules && opts.keywordRules.length > 0) {
+        const kwRes = replaceKeywordsInString(newInstr, opts.keywordRules)
+        if (kwRes.count > 0) {
+          newInstr = kwRes.text
+          replacements.keywords += kwRes.count
         }
       }
       if (newInstr !== instr) {
@@ -836,6 +861,13 @@ export async function anonymizeDocx(
           if (regex.test(newInstr)) {
             newInstr = newInstr.replace(regex, entity.label)
           }
+        }
+      }
+      if (opts.keywordRules && opts.keywordRules.length > 0) {
+        const kwRes = replaceKeywordsInString(newInstr, opts.keywordRules)
+        if (kwRes.count > 0) {
+          newInstr = kwRes.text
+          replacements.keywords += kwRes.count
         }
       }
       if (newInstr !== instr) {
@@ -896,7 +928,7 @@ export async function anonymizeDocx(
     }
   }
 
-  // 10. Replace entities in docProps metadata (core.xml, app.xml, custom.xml)
+  // 10. Replace entities and keywords in docProps metadata (core.xml, app.xml, custom.xml)
   for (const metaPath of ['docProps/core.xml', 'docProps/app.xml', 'docProps/custom.xml']) {
     const file = zip.file(metaPath)
     if (!file) continue
@@ -904,7 +936,9 @@ export async function anonymizeDocx(
     const xmlText = await file.async('string')
     const doc = parseXml(xmlText)
 
-    if (replaceEntitiesInMetadataDoc(doc, opts.customEntities)) {
+    const metaRes = replaceMetadataDoc(doc, opts.customEntities, opts.keywordRules)
+    if (metaRes.modified) {
+      replacements.keywords += metaRes.keywordReplacements
       zip.file(metaPath, serializeXml(doc))
       if (!modifiedParts.includes(metaPath)) {
         modifiedParts.push(metaPath)

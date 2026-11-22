@@ -354,3 +354,79 @@ export async function createW13FixtureDocx(options: {
     comments,
   })
 }
+
+export interface W14FixtureOptions {
+  deletedTextMode?: 'mask' | 'remove' | 'keep'
+}
+
+export async function createW14FixtureDocx(): Promise<ArrayBuffer> {
+  const wNs = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'
+
+  const documentXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="${wNs}">
+  <w:body>
+    <w:p>
+      <w:r><w:t xml:space="preserve">Theo </w:t></w:r>
+      <w:r><w:t xml:space="preserve">Giấy Ủy </w:t></w:r>
+      <w:r><w:t xml:space="preserve">Quyền số </w:t></w:r>
+      <w:r><w:t xml:space="preserve">01/2026/UQ-TEST</w:t></w:r>
+      <w:r><w:t xml:space="preserve"> ký ngày hôm qua.</w:t></w:r>
+    </w:p>
+    <w:p>
+      <w:r><w:t xml:space="preserve">Chữ đã xoá: </w:t></w:r>
+      <w:del w:id="1" w:author="Author 1" w:date="2026-01-01T00:00:00Z">
+        <w:r><w:delText>Giấy Ủy Quyền số 01/2026/UQ-TEST</w:delText></w:r>
+      </w:del>
+    </w:p>
+  </w:body>
+</w:document>`
+
+  const extraXmlFiles: Record<string, string> = {
+    'word/header1.xml': `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:hdr xmlns:w="${wNs}">
+  <w:p>
+    <w:r><w:t>Header: Giấy Ủy Quyền số 01/2026/UQ-TEST</w:t></w:r>
+  </w:p>
+</w:hdr>`,
+  }
+
+  const comments = [
+    {
+      id: 1,
+      author: 'Author 1',
+      initials: 'A1',
+      text: 'Ghi chú về Giấy Ủy Quyền số 01/2026/UQ-TEST cần xem lại.',
+    },
+  ]
+
+  return createMockDocx({
+    documentXmlOverride: documentXml,
+    extraXmlFiles,
+    comments,
+  })
+}
+
+export async function createW14bFixtureDocx(): Promise<ArrayBuffer> {
+  const documentXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:body>
+    <w:p>
+      <w:r><w:t>Văn bản kiểm thử metadata và từ khoá.</w:t></w:r>
+    </w:p>
+  </w:body>
+</w:document>`
+
+  const coreXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <dc:title>Hợp đồng Dự án Mẫu Thử</dc:title>
+  <dc:subject>Dự án Mẫu Thử</dc:subject>
+  <dc:creator>Test User</dc:creator>
+</cp:coreProperties>`
+
+  return createMockDocx({
+    documentXmlOverride: documentXml,
+    extraXmlFiles: {
+      'docProps/core.xml': coreXml,
+    },
+  })
+}

@@ -2,9 +2,11 @@ import JSZip from 'jszip'
 import { OOXML_NAMESPACES } from './constants'
 import { foldSearchString } from './normalize'
 import { findSensitive, isMaskedValue, normalizePhone } from './sensitive'
+import { findKeywordMatches } from './textReplace'
 import {
   CustomEntity,
   DeletedTextMode,
+  KeywordRule,
   KnownIdentity,
   ResidualCategory,
   ResidualFinding,
@@ -17,6 +19,7 @@ export interface ScanResidualOptions {
   maskKinds?: Partial<Record<SensitiveKind, boolean>>
   keepValues?: string[]
   deletedTextMode?: DeletedTextMode
+  keywordRules?: KeywordRule[]
 }
 
 export async function scanResidual(
@@ -240,6 +243,208 @@ export async function scanResidual(
         }
       } catch {
         // Ignore parse error
+      }
+    }
+  }
+
+  // 4. Scan for residual keywords (findKeywordMatches on output parts)
+  const keywordRules = options.keywordRules || []
+  if (keywordRules.length > 0) {
+    const otherReplacements = keywordRules
+      .map((r) => ({ id: r.id, replace: r.replace ? r.replace.trim() : '****' }))
+      .filter((r) => r.replace.length > 0)
+
+    for (const path of filePaths) {
+      const file = zip.file(path)
+      if (!file) continue
+
+      if (path.startsWith('word/') && path.endsWith('.xml') && path !== 'word/people.xml') {
+        const xmlText = await file.async('string')
+        try {
+          const doc = parseXml(xmlText)
+          const paragraphs = Array.from(doc.getElementsByTagNameNS(OOXML_NAMESPACES.w, 'p'))
+
+          for (const p of paragraphs) {
+            // Check regular text (w:t)
+            const tNodes = Array.from(p.getElementsByTagNameNS(OOXML_NAMESPACES.w, 't')).filter((tNode) => {
+              let curr = tNode.parentElement
+              while (curr && curr !== p) {
+                if (curr.localName === 'p' && curr.namespaceURI === OOXML_NAMESPACES.w) return false
+                curr = curr.parentElement
+              }
+              return true
+            })
+            if (tNodes.length > 0) {
+              const streamText = tNodes.map((n) => n.textContent || '').join('')
+              if (streamText) {
+                const kwMatches = findKeywordMatches(streamText, keywordRules)
+                for (const match of kwMatches) {
+                  const isInsideOtherReplace = otherReplacements.some((rep) => {
+                    if (rep.id === match.ruleId) return false
+                    let searchPos = 0
+                    while ((searchPos = streamText.indexOf(rep.replace, searchPos)) !== -1) {
+                      const repEnd = searchPos + rep.replace.length
+                      if (match.start >= searchPos && match.end <= repEnd) return true
+                      searchPos = repEnd
+                    }
+                    return false
+                  })
+
+                  if (!isInsideOtherReplace) {
+                    findings.push({
+                      part: path,
+                      matchedString: match.matchedText || streamText.slice(match.start, match.end),
+                      count: 1,
+                      category: path === 'word/comments.xml' ? 'comment-text' : 'body-text',
+                    })
+                  }
+                }
+              }
+            }
+
+            // Check deleted text (w:delText)
+            const delNodes = Array.from(p.getElementsByTagNameNS(OOXML_NAMESPACES.w, 'delText')).filter((delNode) => {
+              let curr = delNode.parentElement
+              while (curr && curr !== p) {
+                if (curr.localName === 'p' && curr.namespaceURI === OOXML_NAMESPACES.w) return false
+                curr = curr.parentElement
+              }
+              return true
+            })
+            if (delNodes.length > 0) {
+              const streamText = delNodes.map((n) => n.textContent || '').join('')
+              if (streamText) {
+                const kwMatches = findKeywordMatches(streamText, keywordRules)
+                for (const match of kwMatches) {
+                  const isInsideOtherReplace = otherReplacements.some((rep) => {
+                    if (rep.id === match.ruleId) return false
+                    let searchPos = 0
+                    while ((searchPos = streamText.indexOf(rep.replace, searchPos)) !== -1) {
+                      const repEnd = searchPos + rep.replace.length
+                      if (match.start >= searchPos && match.end <= repEnd) return true
+                      searchPos = repEnd
+                    }
+                    return false
+                  })
+
+                  if (!isInsideOtherReplace) {
+                    findings.push({
+                      part: path,
+                      matchedString: match.matchedText || streamText.slice(match.start, match.end),
+                      count: 1,
+                      category: 'deleted-text',
+                    })
+                  }
+                }
+              }
+            }
+          }
+
+          // Check field codes
+          const instrEls = Array.from(doc.getElementsByTagNameNS(OOXML_NAMESPACES.w, 'instrText'))
+          for (const el of instrEls) {
+            const instr = el.textContent || ''
+            if (instr) {
+              const kwMatches = findKeywordMatches(instr, keywordRules)
+              for (const match of kwMatches) {
+                const isInsideOtherReplace = otherReplacements.some((rep) => {
+                  if (rep.id === match.ruleId) return false
+                  let searchPos = 0
+                  while ((searchPos = instr.indexOf(rep.replace, searchPos)) !== -1) {
+                    const repEnd = searchPos + rep.replace.length
+                    if (match.start >= searchPos && match.end <= repEnd) return true
+                    searchPos = repEnd
+                  }
+                  return false
+                })
+                if (!isInsideOtherReplace) {
+                  findings.push({
+                    part: path,
+                    matchedString: match.matchedText || instr.slice(match.start, match.end),
+                    count: 1,
+                    category: path === 'word/comments.xml' ? 'comment-text' : 'body-text',
+                  })
+                }
+              }
+            }
+          }
+
+          const delInstrEls = Array.from(doc.getElementsByTagNameNS(OOXML_NAMESPACES.w, 'delInstrText'))
+          for (const el of delInstrEls) {
+            const instr = el.textContent || ''
+            if (instr) {
+              const kwMatches = findKeywordMatches(instr, keywordRules)
+              for (const match of kwMatches) {
+                const isInsideOtherReplace = otherReplacements.some((rep) => {
+                  if (rep.id === match.ruleId) return false
+                  let searchPos = 0
+                  while ((searchPos = instr.indexOf(rep.replace, searchPos)) !== -1) {
+                    const repEnd = searchPos + rep.replace.length
+                    if (match.start >= searchPos && match.end <= repEnd) return true
+                    searchPos = repEnd
+                  }
+                  return false
+                })
+                if (!isInsideOtherReplace) {
+                  findings.push({
+                    part: path,
+                    matchedString: match.matchedText || instr.slice(match.start, match.end),
+                    count: 1,
+                    category: 'deleted-text',
+                  })
+                }
+              }
+            }
+          }
+        } catch {
+          // Ignore XML parse errors
+        }
+      } else if (path.startsWith('docProps/') && path.endsWith('.xml')) {
+        const xmlText = await file.async('string')
+        try {
+          const doc = parseXml(xmlText)
+          const textNodes: Node[] = []
+          const walk = (node: Node) => {
+            if (node.nodeType === 3 /* Node.TEXT_NODE */) {
+              textNodes.push(node)
+            } else if (node.nodeType === 1 /* Node.ELEMENT_NODE */) {
+              for (let i = 0; i < node.childNodes.length; i++) {
+                walk(node.childNodes[i])
+              }
+            }
+          }
+          walk(doc.documentElement)
+
+          for (const tNode of textNodes) {
+            const text = (tNode.textContent || '').normalize('NFC')
+            if (text) {
+              const kwMatches = findKeywordMatches(text, keywordRules)
+              for (const match of kwMatches) {
+                const isInsideOtherReplace = otherReplacements.some((rep) => {
+                  if (rep.id === match.ruleId) return false
+                  let searchPos = 0
+                  while ((searchPos = text.indexOf(rep.replace, searchPos)) !== -1) {
+                    const repEnd = searchPos + rep.replace.length
+                    if (match.start >= searchPos && match.end <= repEnd) return true
+                    searchPos = repEnd
+                  }
+                  return false
+                })
+
+                if (!isInsideOtherReplace) {
+                  findings.push({
+                    part: path,
+                    matchedString: match.matchedText || text.slice(match.start, match.end),
+                    count: 1,
+                    category: 'metadata',
+                  })
+                }
+              }
+            }
+          }
+        } catch {
+          // Ignore XML parse errors
+        }
       }
     }
   }

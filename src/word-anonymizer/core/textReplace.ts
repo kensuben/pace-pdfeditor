@@ -5,15 +5,32 @@ import {
   AnonymizeReplacements,
   CustomEntity,
   DeletedTextMode,
+  KeywordRule,
   SensitiveKind,
 } from './types'
 
-interface ReplacementSpan {
+export interface ReplacementSpan {
   start: number
   end: number
   replacementText: string
-  type: 'entity' | 'sensitive'
+  type: 'entity' | 'sensitive' | 'keyword'
   kind?: SensitiveKind
+  ruleId?: string
+  matchedText?: string
+}
+
+const VIETNAMESE_DIACRITICS_MAP: Record<string, string> = {
+  a: '[aàáảãạăằắẳẵặâầấẩẫậ]',
+  d: '[dđ]',
+  e: '[eèéẻẽẹêềếểễệ]',
+  i: '[iìíỉĩị]',
+  o: '[oòóỏõọôồốổỗộơờớởỡợ]',
+  u: '[uùúủũụưừứửữự]',
+  y: '[yỳýỷỹỵ]',
+}
+
+function escapeRegex(str: string): string {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
 
 function getDirectParagraphTNodes(
@@ -148,12 +165,130 @@ export function findEntityMatches(
   return selected
 }
 
+export function findKeywordMatches(
+  text: string,
+  rules: KeywordRule[]
+): ReplacementSpan[] {
+  if (!text || !rules || rules.length === 0) return []
+  const textNormalized = text.normalize('NFC')
+  const spans: ReplacementSpan[] = []
+
+  for (const rule of rules) {
+    const trimmedFind = rule.find.trim().normalize('NFC')
+    if (trimmedFind.length < 2) continue
+
+    const tokens = trimmedFind.split(/\s+/).filter(Boolean)
+    if (tokens.length === 0) continue
+
+    const tokenPatterns = tokens.map((token) => {
+      let pat = ''
+      for (const ch of token) {
+        if (rule.ignoreDiacritics) {
+          const base = ch
+            .normalize('NFD')
+            .replace(/[\u0300-\u036f]/g, '')
+            .replace(/[đĐ]/g, 'd')
+            .toLowerCase()
+          if (VIETNAMESE_DIACRITICS_MAP[base]) {
+            pat += `(?:${VIETNAMESE_DIACRITICS_MAP[base]}[\\u0300-\\u036f]*)`
+          } else {
+            pat += escapeRegex(ch)
+          }
+        } else {
+          pat += escapeRegex(ch)
+        }
+      }
+      return pat
+    })
+
+    const fullPattern = tokenPatterns.join('\\s+')
+    let regex: RegExp
+    try {
+      regex = new RegExp(fullPattern, 'gui')
+    } catch {
+      continue
+    }
+
+    const replacementText =
+      !rule.replace || rule.replace.trim() === '' ? '****' : rule.replace
+
+    let m: RegExpExecArray | null
+    while ((m = regex.exec(textNormalized)) !== null) {
+      const matchStart = m.index
+      const matchEnd = m.index + m[0].length
+
+      if (matchEnd > matchStart) {
+        const firstMatchChar = textNormalized[matchStart]
+        const lastMatchChar = textNormalized[matchEnd - 1]
+        const charBefore = matchStart > 0 ? textNormalized[matchStart - 1] : undefined
+        const charAfter =
+          matchEnd < textNormalized.length ? textNormalized[matchEnd] : undefined
+
+        const validBoundaryBefore = !isWordChar(firstMatchChar) || !isWordChar(charBefore)
+        const validBoundaryAfter = !isWordChar(lastMatchChar) || !isWordChar(charAfter)
+
+        if (validBoundaryBefore && validBoundaryAfter) {
+          spans.push({
+            start: matchStart,
+            end: matchEnd,
+            replacementText,
+            type: 'keyword',
+            ruleId: rule.id,
+            matchedText: m[0],
+          })
+        }
+      }
+
+      regex.lastIndex = matchStart + 1
+    }
+  }
+
+  // Priority: longest match first, then earlier start
+  spans.sort((a, b) => {
+    const lenA = a.end - a.start
+    const lenB = b.end - b.start
+    if (lenB !== lenA) return lenB - lenA
+    return a.start - b.start
+  })
+
+  // Filter overlapping spans: longest wins
+  const selected: ReplacementSpan[] = []
+  for (const span of spans) {
+    const overlaps = selected.some(
+      (s) => Math.max(span.start, s.start) < Math.min(span.end, s.end)
+    )
+    if (!overlaps) {
+      selected.push(span)
+    }
+  }
+
+  selected.sort((a, b) => a.start - b.start)
+  return selected
+}
+
+export function replaceKeywordsInString(
+  text: string,
+  rules: KeywordRule[]
+): { text: string; count: number } {
+  if (!text || !rules || rules.length === 0) return { text, count: 0 }
+  const matches = findKeywordMatches(text, rules)
+  if (matches.length === 0) return { text, count: 0 }
+
+  const sorted = [...matches].sort((a, b) => b.start - a.start)
+  let result = text
+  for (const m of sorted) {
+    result = result.slice(0, m.start) + m.replacementText + result.slice(m.end)
+  }
+  return { text: result, count: matches.length }
+}
+
 export function replaceNodeListText(
   nodes: Element[],
   opts: {
     customEntities?: CustomEntity[]
     maskKinds?: Partial<Record<SensitiveKind, boolean>>
     keepValues?: string[]
+    keywordRules?: KeywordRule[]
   },
   stats: AnonymizeReplacements
 ): boolean {
@@ -162,6 +297,7 @@ export function replaceNodeListText(
   const customEntities = opts.customEntities || []
   const maskKinds = opts.maskKinds || {}
   const keepValues = opts.keepValues || []
+  const keywordRules = opts.keywordRules || []
 
   // NFD safety (Requirement 3):
   // Normalize each node to NFC and write it back so paragraph text and nodes share exact same NFC string.
@@ -189,7 +325,20 @@ export function replaceNodeListText(
     end: s.end,
   }))
 
-  // Step (b): Detect sensitive data (email, phone, CCCD, MST, STK) outside entity ranges
+  // Step (b): Keyword matches (outside entity ranges)
+  const rawKeywordSpans = findKeywordMatches(streamText, keywordRules)
+  const keywordSpans: ReplacementSpan[] = []
+  for (const kSpan of rawKeywordSpans) {
+    const overlapsEntity = occupiedRanges.some(
+      (occ) => Math.max(kSpan.start, occ.start) < Math.min(kSpan.end, occ.end)
+    )
+    if (!overlapsEntity) {
+      keywordSpans.push(kSpan)
+      occupiedRanges.push({ start: kSpan.start, end: kSpan.end })
+    }
+  }
+
+  // Step (c): Detect sensitive data (email, phone, CCCD, MST, STK) outside entity and keyword ranges
   const allSensitive = findSensitive(streamText)
   const specificMatches = allSensitive.filter((s) => s.kind !== 'address')
   const specificSpans: ReplacementSpan[] = []
@@ -198,11 +347,10 @@ export function replaceNodeListText(
     if (!maskKinds[sMatch.kind]) continue
     if (keepValues.includes(sMatch.normalized)) continue
 
-    // Skip if overlaps with any entity span
-    const overlapsEntity = entitySpans.some(
-      (e) => Math.max(sMatch.start, e.start) < Math.min(sMatch.end, e.end)
+    const overlapsOccupied = occupiedRanges.some(
+      (occ) => Math.max(sMatch.start, occ.start) < Math.min(sMatch.end, occ.end)
     )
-    if (overlapsEntity) continue
+    if (overlapsOccupied) continue
 
     const replacementText = maskSensitive(sMatch.kind, sMatch.value, sMatch.normalized)
     specificSpans.push({
@@ -215,7 +363,7 @@ export function replaceNodeListText(
     occupiedRanges.push({ start: sMatch.start, end: sMatch.end })
   }
 
-  // Step (c): Address masking outside entity and step (b) ranges
+  // Step (d): Address masking outside entity, keyword, and step (c) ranges
   const addressMatches = allSensitive.filter((s) => s.kind === 'address')
   const addressSpans: ReplacementSpan[] = []
 
@@ -256,7 +404,7 @@ export function replaceNodeListText(
     }
   }
 
-  const allSpans = [...entitySpans, ...specificSpans, ...addressSpans]
+  const allSpans = [...entitySpans, ...keywordSpans, ...specificSpans, ...addressSpans]
   if (allSpans.length === 0) return false
 
   allSpans.sort((a, b) => a.start - b.start)
@@ -281,6 +429,8 @@ export function replaceNodeListText(
         // Count replacement
         if (span.type === 'entity') {
           stats.entities++
+        } else if (span.type === 'keyword') {
+          stats.keywords++
         } else if (span.kind && span.kind !== 'address') {
           stats.byKind[span.kind]++
         }
@@ -312,6 +462,7 @@ export function replaceParagraphText(
     maskKinds?: Partial<Record<SensitiveKind, boolean>>
     keepValues?: string[]
     deletedTextMode?: DeletedTextMode
+    keywordRules?: KeywordRule[]
   },
   stats: AnonymizeReplacements
 ): boolean {
@@ -326,12 +477,19 @@ export function replaceParagraphText(
   }
 
   // 2. Track Changes deleted text stream (w:delText)
-  // Mask mode (default) and fallback for remaining delText after remove:
   const mode = opts.deletedTextMode ?? 'mask'
-  if (mode === 'mask' || mode === 'remove') {
+  if (mode === 'mask') {
     const delNodes = getDirectParagraphTNodes(p, 'delText')
     if (delNodes.length > 0) {
       if (replaceNodeListText(delNodes, opts, stats)) {
+        paragraphModified = true
+      }
+    }
+  } else if (mode === 'remove') {
+    // Fallback masking if any delText remains after element removal, but NO keyword rules applied
+    const delNodes = getDirectParagraphTNodes(p, 'delText')
+    if (delNodes.length > 0) {
+      if (replaceNodeListText(delNodes, { ...opts, keywordRules: undefined }, stats)) {
         paragraphModified = true
       }
     }
@@ -342,7 +500,7 @@ export function replaceParagraphText(
 
 export function replaceTextInXmlDocument(
   doc: Document,
-  opts: Pick<AnonymizeOptions, 'customEntities' | 'maskKinds' | 'keepValues' | 'deletedTextMode'>,
+  opts: Pick<AnonymizeOptions, 'customEntities' | 'maskKinds' | 'keepValues' | 'deletedTextMode' | 'keywordRules'>,
   stats: AnonymizeReplacements
 ): boolean {
   const paragraphs = Array.from(doc.getElementsByTagNameNS(OOXML_NAMESPACES.w, 'p'))
