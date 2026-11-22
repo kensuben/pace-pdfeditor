@@ -40,6 +40,7 @@ import {
   type EntityKind,
   type SensitiveKind,
   type DeletedTextHit,
+  type DeletedTextMode,
 } from './core'
 
 export interface WordAnonymizerPageProps {
@@ -62,6 +63,7 @@ const DEFAULT_OPTIONS: AnonymizeOptions = {
   scrubDocProps: true,
   customPropsPolicy: 'keep-sensitivity-labels',
   customEntities: [],
+  deletedTextMode: 'mask',
   maskKinds: {
     email: true,
     phone: true,
@@ -423,6 +425,7 @@ export default function WordAnonymizerPage({
       const residuals = await scanResidual(outArrayBuffer, inspection.identities, extraTargets, {
         maskKinds,
         keepValues,
+        deletedTextMode: options.deletedTextMode ?? 'mask',
       })
 
       setAnonymizeResult(result)
@@ -449,6 +452,12 @@ export default function WordAnonymizerPage({
           taxCodeMasked: result.report.replacements.byKind.taxCode || 0,
           bankAccountMasked: result.report.replacements.byKind.bankAccount || 0,
           addressMasked: result.report.replacements.byKind.address || 0,
+          ...(inspection.stats.revisionCount > 0 || deletedHits.length > 0
+            ? {
+                deletedTextMode: options.deletedTextMode ?? 'mask',
+                deletedRunsRemoved: result.report.replacements.deletedRunsRemoved,
+              }
+            : {}),
         },
         'success'
       )
@@ -1102,6 +1111,68 @@ export default function WordAnonymizerPage({
                     <option value="remove-all">Xóa toàn bộ thuộc tính tùy chỉnh (remove-all)</option>
                   </select>
                 </div>
+
+                {/* Track Changes deleted text handling mode */}
+                <div className="word-radio-group" style={{ marginTop: '12px', borderTop: '1px solid var(--border-color, #e2e8f0)', paddingTop: '12px' }}>
+                  <div style={{ fontWeight: 600, marginBottom: '8px' }}>Chữ đã xoá (Track Changes)</div>
+                  <label className="word-option-item" style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', marginBottom: '6px' }}>
+                    <input
+                      type="radio"
+                      name="deletedTextMode"
+                      value="mask"
+                      checked={(options.deletedTextMode ?? 'mask') === 'mask'}
+                      onChange={(e) => {
+                        resetStaleResults()
+                        setOptions((prev) => ({
+                          ...prev,
+                          deletedTextMode: e.target.value as DeletedTextMode,
+                        }))
+                      }}
+                    />
+                    <div className="word-option-label">
+                      <b>Che như chữ thường (khuyến nghị)</b>
+                      <small>Tên pháp nhân, email, SĐT, MST, địa chỉ... trong chữ đã xoá sẽ được che/thay thế như chữ thường</small>
+                    </div>
+                  </label>
+                  <label className="word-option-item" style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', marginBottom: '6px' }}>
+                    <input
+                      type="radio"
+                      name="deletedTextMode"
+                      value="remove"
+                      checked={options.deletedTextMode === 'remove'}
+                      onChange={(e) => {
+                        resetStaleResults()
+                        setOptions((prev) => ({
+                          ...prev,
+                          deletedTextMode: e.target.value as DeletedTextMode,
+                        }))
+                      }}
+                    />
+                    <div className="word-option-label">
+                      <b>Bỏ hẳn phần chữ đã xoá</b>
+                      <small>Xoá bỏ hoàn toàn các đoạn chữ đã xoá khỏi file xuất (tương đương Accept các thay đổi xoá)</small>
+                    </div>
+                  </label>
+                  <label className="word-option-item" style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
+                    <input
+                      type="radio"
+                      name="deletedTextMode"
+                      value="keep"
+                      checked={options.deletedTextMode === 'keep'}
+                      onChange={(e) => {
+                        resetStaleResults()
+                        setOptions((prev) => ({
+                          ...prev,
+                          deletedTextMode: e.target.value as DeletedTextMode,
+                        }))
+                      }}
+                    />
+                    <div className="word-option-label">
+                      <b>Giữ nguyên (chỉ cảnh báo)</b>
+                      <small>Giữ nguyên nội dung chữ đã xoá trong văn bản, không can thiệp</small>
+                    </div>
+                  </label>
+                </div>
               </div>
 
               {configChangedAfterRun && (
@@ -1111,14 +1182,29 @@ export default function WordAnonymizerPage({
                 </div>
               )}
 
-              {/* Deleted text warning */}
+              {/* Deleted text warning / info */}
               {deletedHits.length > 0 && (
-                <div className="word-alert warning" style={{ marginTop: '12px' }}>
-                  <AlertTriangle size={18} />
+                <div
+                  className={`word-alert ${(options.deletedTextMode ?? 'mask') === 'keep' ? 'warning' : 'info'}`}
+                  style={{ marginTop: '12px' }}
+                >
+                  {(options.deletedTextMode ?? 'mask') === 'keep' ? (
+                    <AlertTriangle size={18} />
+                  ) : (
+                    <Info size={18} />
+                  )}
                   <div>
                     <b>Cảnh báo: Phát hiện thông tin trong phần chữ đã xoá (Track Changes)</b>
                     <p style={{ margin: '4px 0 0', fontSize: '13px' }}>
-                      Các nội dung sau nằm trong phần chữ đã xoá và sẽ <strong>KHÔNG</strong> được che hay thay thế:
+                      {(options.deletedTextMode ?? 'mask') === 'keep' && (
+                        <>Các nội dung sau nằm trong phần chữ đã xoá và sẽ <strong>KHÔNG</strong> được che hay thay thế:</>
+                      )}
+                      {(options.deletedTextMode ?? 'mask') === 'mask' && (
+                        <>Các nội dung sau trong chữ đã xoá sẽ được che/thay thế:</>
+                      )}
+                      {options.deletedTextMode === 'remove' && (
+                        <>Phần chữ đã xoá sẽ bị bỏ khỏi file xuất.</>
+                      )}
                     </p>
                     <ul style={{ margin: '6px 0 0 18px', padding: 0 }}>
                       {deletedHits.map((h, idx) => (
@@ -1185,6 +1271,35 @@ export default function WordAnonymizerPage({
                     <p className="residual-desc">
                       Không phát hiện dấu vết danh tính hay email nào còn sót lại trong metadata hoặc các phần bắt buộc.
                     </p>
+                    {residualReport.findings.length > 0 && (
+                      <div style={{ marginTop: '10px' }}>
+                        <p style={{ margin: '0 0 6px', fontSize: '13px', color: 'var(--text-muted, #64748b)' }}>
+                          Thông tin trong chữ đã xoá (theo lựa chọn giữ nguyên chữ đã xoá):
+                        </p>
+                        <div className="word-table-wrapper">
+                          <table className="word-table">
+                            <thead>
+                              <tr>
+                                <th>Vị trí (Part)</th>
+                                <th>Phân loại</th>
+                                <th>Số lượng</th>
+                                <th>Chuỗi khớp</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {residualReport.findings.map((f, idx) => (
+                                <tr key={idx}>
+                                  <td><code>{f.part}</code></td>
+                                  <td><span className="word-source-tag">{f.category}</span></td>
+                                  <td><b>{f.count}</b></td>
+                                  <td><code>{f.matchedString}</code></td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 )}
 

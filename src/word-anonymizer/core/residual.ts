@@ -4,6 +4,7 @@ import { foldSearchString } from './normalize'
 import { findSensitive, isMaskedValue, normalizePhone } from './sensitive'
 import {
   CustomEntity,
+  DeletedTextMode,
   KnownIdentity,
   ResidualCategory,
   ResidualFinding,
@@ -15,6 +16,7 @@ import { parseXml } from './xml'
 export interface ScanResidualOptions {
   maskKinds?: Partial<Record<SensitiveKind, boolean>>
   keepValues?: string[]
+  deletedTextMode?: DeletedTextMode
 }
 
 export async function scanResidual(
@@ -162,9 +164,11 @@ export async function scanResidual(
       const xmlText = await file.async('string')
       try {
         const doc = parseXml(xmlText)
-        // Collect text from w:t and w:instrText, explicitly SKIPPING w:delText
+        // Collect text from w:t and w:instrText, and deleted text from w:delText and w:delInstrText
         const tEls = Array.from(doc.getElementsByTagNameNS(OOXML_NAMESPACES.w, 't'))
         const instrEls = Array.from(doc.getElementsByTagNameNS(OOXML_NAMESPACES.w, 'instrText'))
+        const delTextEls = Array.from(doc.getElementsByTagNameNS(OOXML_NAMESPACES.w, 'delText'))
+        const delInstrEls = Array.from(doc.getElementsByTagNameNS(OOXML_NAMESPACES.w, 'delInstrText'))
 
         const textChunks: string[] = []
         for (const el of [...tEls, ...instrEls]) {
@@ -185,6 +189,29 @@ export async function scanResidual(
               matchedString: sMatch.value,
               count: 1,
               category: path === 'word/comments.xml' ? 'comment-text' : 'body-text',
+            })
+          }
+        }
+
+        const delChunks: string[] = []
+        for (const el of [...delTextEls, ...delInstrEls]) {
+          const content = el.textContent || ''
+          if (content) delChunks.push(content)
+        }
+
+        const combinedDelText = delChunks.join(' ')
+        if (combinedDelText.trim()) {
+          const sensitiveMatches = findSensitive(combinedDelText)
+          for (const sMatch of sensitiveMatches) {
+            if (!maskKinds[sMatch.kind]) continue
+            if (keepValues.includes(sMatch.normalized)) continue
+            if (isMaskedValue(sMatch.kind, sMatch.value)) continue
+
+            findings.push({
+              part: path,
+              matchedString: sMatch.value,
+              count: 1,
+              category: 'deleted-text',
             })
           }
         }
@@ -228,9 +255,16 @@ export async function scanResidual(
     }
   }
 
+  const deletedTextMode = options.deletedTextMode ?? 'mask'
+
   let status: 'PASS' | 'WARN' | 'FAIL' = 'PASS'
-  if (uniqueFindings.length > 0) {
-    const hasMetadata = uniqueFindings.some((f) => f.category === 'metadata')
+  const significantFindings =
+    deletedTextMode === 'keep'
+      ? uniqueFindings.filter((f) => f.category !== 'deleted-text')
+      : uniqueFindings
+
+  if (significantFindings.length > 0) {
+    const hasMetadata = significantFindings.some((f) => f.category === 'metadata')
     status = hasMetadata ? 'FAIL' : 'WARN'
   }
 
@@ -270,6 +304,9 @@ function determineCategory(
     const delTextEls = Array.from(
       doc.getElementsByTagNameNS(OOXML_NAMESPACES.w, 'delText')
     )
+    const delInstrEls = Array.from(
+      doc.getElementsByTagNameNS(OOXML_NAMESPACES.w, 'delInstrText')
+    )
     const instrEls = Array.from(
       doc.getElementsByTagNameNS(OOXML_NAMESPACES.w, 'instrText')
     )
@@ -280,12 +317,12 @@ function determineCategory(
     }
 
     let delTextCombined = ''
-    for (const el of delTextEls) {
+    for (const el of [...delTextEls, ...delInstrEls]) {
       delTextCombined += ' ' + (el.textContent || '')
     }
 
     // Clear all text elements to see if target appears in XML structure/attributes
-    for (const el of [...tEls, ...delTextEls, ...instrEls]) {
+    for (const el of [...tEls, ...delTextEls, ...delInstrEls, ...instrEls]) {
       el.textContent = ''
     }
 

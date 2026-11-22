@@ -86,6 +86,8 @@ export type IdentityMapping = Record<string, MappedIdentity>
 
 export type CustomPropsPolicy = 'keep-sensitivity-labels' | 'keep-all' | 'remove-all'
 
+export type DeletedTextMode = 'mask' | 'remove' | 'keep'
+
 export interface AnonymizeOptions {
   removeDates: boolean
   replaceMentions: boolean
@@ -95,11 +97,13 @@ export interface AnonymizeOptions {
   customEntities?: CustomEntity[]
   maskKinds?: Partial<Record<SensitiveKind, boolean>>
   keepValues?: string[]
+  deletedTextMode?: DeletedTextMode
 }
 
 export interface AnonymizeReplacements {
   entities: number
   byKind: Record<SensitiveKind, number>
+  deletedRunsRemoved: number
 }
 
 export interface AnonymizeReport {

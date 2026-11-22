@@ -151,6 +151,7 @@ describe('Part A: Entities & Sensitive Data Masking Core (W-5a)', () => {
     expect(inspection.deletedTextHits.length).toBeGreaterThan(0)
     expect(inspection.warnings.some((w) => w.includes('Track Changes'))).toBe(true)
 
+    // Variant 1: Default ('mask') mode replaces w:delText, residual PASS
     const result = await anonymizeDocx(input, {}, { customEntities: entities })
     const outZip = await JSZip.loadAsync(result.blob)
 
@@ -160,7 +161,7 @@ describe('Part A: Entities & Sensitive Data Masking Core (W-5a)', () => {
     const outComm = await outZip.file('word/comments.xml')!.async('string')
 
     expect(outDoc).toContain('Hộp thoại: Người đại diện 1')
-    expect(outDoc).toContain('<w:delText>Đã xoá Người Đại Diện Test 01 tại đây</w:delText>') // Untouched!
+    expect(outDoc).toContain('<w:delText>Đã xoá Người đại diện 1 tại đây</w:delText>') // w:delText is masked
     expect(outHdr).toContain('Tiêu đề: Người đại diện 1')
     expect(outFoot).toContain('Ghi chú: Người đại diện 1')
     expect(outComm).toContain('Ý kiến từ Người đại diện 1')
@@ -170,8 +171,22 @@ describe('Part A: Entities & Sensitive Data Masking Core (W-5a)', () => {
       [],
       ['Người Đại Diện Test 01']
     )
-    expect(resReport.status).toBe('WARN')
-    expect(resReport.findings.some((f) => f.category === 'deleted-text')).toBe(true)
+    expect(resReport.status).toBe('PASS')
+
+    // Variant 2: 'keep' mode keeps w:delText intact, findings list 'deleted-text', status remains PASS
+    const resultKeep = await anonymizeDocx(input, {}, { customEntities: entities, deletedTextMode: 'keep' })
+    const outZipKeep = await JSZip.loadAsync(resultKeep.blob)
+    const outDocKeep = await outZipKeep.file('word/document.xml')!.async('string')
+    expect(outDocKeep).toContain('<w:delText>Đã xoá Người Đại Diện Test 01 tại đây</w:delText>') // Untouched!
+
+    const resReportKeep = await scanResidual(
+      await resultKeep.blob.arrayBuffer(),
+      [],
+      ['Người Đại Diện Test 01'],
+      { deletedTextMode: 'keep' }
+    )
+    expect(resReportKeep.findings.some((f) => f.category === 'deleted-text')).toBe(true)
+    expect(resReportKeep.status).toBe('PASS')
   })
 
   // A5: Email in body, rels mailto:, field HYPERLINK

@@ -862,7 +862,8 @@ Trụ sở chính: Địa chỉ: Số 1 Đường Test, P. Bến Nghé, Quận 1
       container.remove()
     })
 
-    // B3: Fixture có chữ đã xoá chứa email -> hiện cảnh báo chữ đã xoá; chạy xong residual WARN (category deleted-text), nút tải không bị khoá
+    // B3: Fixture có chữ đã xoá chứa email -> mặc định ('mask') hiện thông báo "sẽ được che/thay thế", residual PASS, nút tải mở;
+    // chọn radio "Giữ nguyên (chỉ cảnh báo)" -> hiện cảnh báo có chữ "KHÔNG", findings liệt kê 'deleted-text', nút tải mở
     it('B3: deleted text with email shows warning banner; anonymize gives WARN; download not locked', async () => {
       const container = document.createElement('div')
       document.body.appendChild(container)
@@ -901,8 +902,9 @@ Trụ sở chính: Địa chỉ: Số 1 Đường Test, P. Bến Nghé, Quận 1
         await new Promise((r) => setTimeout(r, 150))
       })
 
-      // Verify warning banner for deleted text
+      // Default ('mask') mode: shows warning banner and message "sẽ được che/thay thế"
       expect(container.textContent).toContain('Cảnh báo: Phát hiện thông tin trong phần chữ đã xoá (Track Changes)')
+      expect(container.textContent).toContain('sẽ được che/thay thế')
 
       // Click anonymize
       const anonymizeBtn = Array.from(container.querySelectorAll('button')).find((b) =>
@@ -913,12 +915,36 @@ Trụ sở chính: Địa chỉ: Số 1 Đường Test, P. Bến Nghé, Quận 1
         await new Promise((r) => setTimeout(r, 500))
       })
 
-      // Verify residual report is WARN with category deleted-text
-      expect(container.textContent).toContain('CẢNH BÁO (WARN)')
-      expect(container.textContent).toContain('deleted-text')
+      // In default 'mask' mode: residual PASS, download link active
+      expect(container.textContent).toContain('ĐẠT BẢO MẬT (PASS)')
+      let downloadLink = container.querySelector('a.primary')
+      expect(downloadLink).not.toBeNull()
+      expect(downloadLink?.getAttribute('download')).toBe('document_anonymized.docx')
 
-      // Download button must NOT be locked (should be an active <a> link)
-      const downloadLink = container.querySelector('a.primary')
+      // Select radio "Giữ nguyên (chỉ cảnh báo)"
+      const keepRadio = container.querySelector('input[type="radio"][value="keep"]') as HTMLInputElement
+      expect(keepRadio).not.toBeNull()
+      await act(async () => {
+        keepRadio.click()
+        keepRadio.dispatchEvent(new Event('change', { bubbles: true }))
+        await new Promise((r) => setTimeout(r, 100))
+      })
+
+      // Warning contains "KHÔNG"
+      expect(container.textContent).toContain('KHÔNG')
+
+      // Re-run anonymize in 'keep' mode
+      const reAnonymizeBtn = Array.from(container.querySelectorAll('button')).find((b) =>
+        b.textContent?.includes('Ẩn danh tài liệu')
+      )
+      await act(async () => {
+        reAnonymizeBtn!.click()
+        await new Promise((r) => setTimeout(r, 500))
+      })
+
+      // Findings list 'deleted-text', download link still open
+      expect(container.textContent).toContain('deleted-text')
+      downloadLink = container.querySelector('a.primary')
       expect(downloadLink).not.toBeNull()
       expect(downloadLink?.getAttribute('download')).toBe('document_anonymized.docx')
 
