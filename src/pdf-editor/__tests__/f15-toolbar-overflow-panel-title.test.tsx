@@ -1,9 +1,13 @@
 import { describe, it, expect, vi } from 'vitest'
-import { act } from 'react'
+import { act, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import {
   computeToolbarLayout,
+  nextToolbarLevel,
+  getToolbarLevelConfig,
+  useToolbarLayout,
   ToolbarItemWidths,
+  ToolbarLevel,
 } from '../useToolbarLayout'
 import { ToolbarOverflowMenu } from '../ToolbarOverflowMenu'
 import { PropertiesPanel } from '../PropertiesPanel'
@@ -280,6 +284,196 @@ describe('F-15: Toolbar Layout, Properties Panel, and File Title', () => {
 
       root.unmount()
       container.remove()
+    })
+  })
+
+  describe('F-15b: Toolbar Measurement & Stepping Logic (T1, T2, T3)', () => {
+    describe('T1: nextToolbarLevel stepping and getToolbarLevelConfig', () => {
+      it('steps through string levels L0 -> L1 -> L2 -> L3 -> L4 -> L5 and stops at L5 when overflowing', () => {
+        expect(nextToolbarLevel('L0', true)).toBe('L1')
+        expect(nextToolbarLevel('L1', true)).toBe('L2')
+        expect(nextToolbarLevel('L2', true)).toBe('L3')
+        expect(nextToolbarLevel('L3', true)).toBe('L4')
+        expect(nextToolbarLevel('L4', true)).toBe('L5')
+        expect(nextToolbarLevel('L5', true)).toBe('L5')
+      })
+
+      it('steps through numeric levels 0 -> 1 -> 2 -> 3 -> 4 -> 5 and stops at 5 when overflowing', () => {
+        expect(nextToolbarLevel(0, true)).toBe(1)
+        expect(nextToolbarLevel(1, true)).toBe(2)
+        expect(nextToolbarLevel(2, true)).toBe(3)
+        expect(nextToolbarLevel(3, true)).toBe(4)
+        expect(nextToolbarLevel(4, true)).toBe(5)
+        expect(nextToolbarLevel(5, true)).toBe(5)
+      })
+
+      it('keeps the current level unchanged when overflowing is false', () => {
+        expect(nextToolbarLevel('L0', false)).toBe('L0')
+        expect(nextToolbarLevel('L2', false)).toBe('L2')
+        expect(nextToolbarLevel('L5', false)).toBe('L5')
+        expect(nextToolbarLevel(0, false)).toBe(0)
+        expect(nextToolbarLevel(3, false)).toBe(3)
+        expect(nextToolbarLevel(5, false)).toBe(5)
+      })
+
+      it('configures each level with the expected mode and hidden groups', () => {
+        const l0 = getToolbarLevelConfig(0)
+        expect(l0.mode).toBe('full')
+        expect(l0.hiddenGroups).toEqual([])
+
+        const l1 = getToolbarLevelConfig(1)
+        expect(l1.mode).toBe('compact')
+        expect(l1.hiddenGroups).toEqual([])
+
+        const l2 = getToolbarLevelConfig(2)
+        expect(l2.mode).toBe('compact')
+        expect(l2.hiddenGroups).toEqual(['signOcr'])
+
+        const l3 = getToolbarLevelConfig(3)
+        expect(l3.mode).toBe('compact')
+        expect(l3.hiddenGroups).toEqual(['signOcr', 'boundingBox'])
+
+        const l4 = getToolbarLevelConfig(4)
+        expect(l4.mode).toBe('compact')
+        expect(l4.hiddenGroups).toEqual(['signOcr', 'boundingBox', 'page'])
+
+        const l5 = getToolbarLevelConfig(5)
+        expect(l5.mode).toBe('compact')
+        expect(l5.hiddenGroups).toEqual(['signOcr', 'boundingBox', 'page', 'insert'])
+      })
+    })
+
+    describe('T2: essential controls never hidden across all levels', () => {
+      it('never includes tools, colors, or edit controls in hiddenGroups across levels 0 to 5', () => {
+        const allLevels: ToolbarLevel[] = [0, 1, 2, 3, 4, 5]
+        for (const lvl of allLevels) {
+          const config = getToolbarLevelConfig(lvl)
+          expect(config.hiddenGroups).not.toContain('tools')
+          expect(config.hiddenGroups).not.toContain('colors')
+          expect(config.hiddenGroups).not.toContain('edit')
+          expect(config.hiddenGroups).not.toContain('deleteSelected')
+          expect(config.hiddenGroups).not.toContain('undo')
+          expect(config.hiddenGroups).not.toContain('redo')
+        }
+      })
+    })
+
+    describe('T3: jsdom with simulated scrollWidth/clientWidth (toolbar appears after mount)', () => {
+      function DynamicToolbarHost({
+        initialShow = false,
+        getMockWidths,
+      }: {
+        initialShow?: boolean
+        getMockWidths?: (level: number) => { scrollWidth: number; clientWidth: number }
+      }) {
+        const [show, setShow] = useState(initialShow)
+        const [toolbarEl, setToolbarEl] = useState<HTMLDivElement | null>(null)
+        const layout = useToolbarLayout(toolbarEl, { isDesktop: true })
+
+        if (toolbarEl && getMockWidths) {
+          const { scrollWidth, clientWidth } = getMockWidths(layout.level)
+          Object.defineProperty(toolbarEl, 'scrollWidth', {
+            value: scrollWidth,
+            configurable: true,
+          })
+          Object.defineProperty(toolbarEl, 'clientWidth', {
+            value: clientWidth,
+            configurable: true,
+          })
+        }
+
+        return (
+          <div>
+            <button data-testid="open-pdf" onClick={() => setShow(true)}>
+              Open PDF
+            </button>
+            {show && (
+              <div
+                ref={setToolbarEl}
+                data-testid="toolbar-elem"
+                data-level={layout.level}
+                data-mode={layout.mode}
+                data-hidden={layout.hiddenGroups.join(',')}
+              >
+                Toolbar Items
+              </div>
+            )}
+          </div>
+        )
+      }
+
+      it('detects overflow when toolbar mounts after initial render and steps from L0 to L1', () => {
+        const container = document.createElement('div')
+        document.body.appendChild(container)
+        const root = createRoot(container)
+
+        // Mock: at level 0 scrollWidth = 1143 > clientWidth = 1112 (overflow).
+        // At level 1, compact mode reduces scrollWidth to 1050 <= 1112 (fits).
+        const getMockWidths = (level: number) => ({
+          scrollWidth: level === 0 ? 1143 : 1050,
+          clientWidth: 1112,
+        })
+
+        act(() => {
+          root.render(<DynamicToolbarHost initialShow={false} getMockWidths={getMockWidths} />)
+        })
+
+        // Toolbar not mounted yet
+        expect(container.querySelector('[data-testid="toolbar-elem"]')).toBeNull()
+
+        // User opens PDF -> toolbar mounts
+        const openBtn = container.querySelector('[data-testid="open-pdf"]') as HTMLButtonElement
+        act(() => {
+          openBtn.click()
+        })
+
+        const toolbarEl = container.querySelector('[data-testid="toolbar-elem"]') as HTMLElement
+        expect(toolbarEl).not.toBeNull()
+        // Hook measured 1143 > 1112 at level 0 and stepped up to level 1 (compact mode)
+        expect(toolbarEl.getAttribute('data-level')).toBe('1')
+        expect(toolbarEl.getAttribute('data-mode')).toBe('compact')
+
+        root.unmount()
+        container.remove()
+      })
+
+      it('steps through higher levels if container is narrow until it fits or stops at L5', () => {
+        const container = document.createElement('div')
+        document.body.appendChild(container)
+        const root = createRoot(container)
+
+        // At 1024px: clientWidth = 856.
+        // Level 0: 1143 > 856
+        // Level 1: 946 > 856
+        // Level 2 (hide signOcr): 840 <= 856 (fits!)
+        const getMockWidths = (level: number) => {
+          const widths: Record<number, number> = {
+            0: 1143,
+            1: 946,
+            2: 840,
+            3: 790,
+            4: 660,
+            5: 580,
+          }
+          return {
+            scrollWidth: widths[level] ?? 580,
+            clientWidth: 856,
+          }
+        }
+
+        act(() => {
+          root.render(<DynamicToolbarHost initialShow={true} getMockWidths={getMockWidths} />)
+        })
+
+        const toolbarEl = container.querySelector('[data-testid="toolbar-elem"]') as HTMLElement
+        expect(toolbarEl).not.toBeNull()
+        // Stepped to level 2 (compact + hidden signOcr) which fits 840 <= 856
+        expect(toolbarEl.getAttribute('data-level')).toBe('2')
+        expect(toolbarEl.getAttribute('data-hidden')).toContain('signOcr')
+
+        root.unmount()
+        container.remove()
+      })
     })
   })
 })

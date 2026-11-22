@@ -1,10 +1,15 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useLayoutEffect, useRef, useCallback } from 'react'
 
 export type OverflowGroupId = 'signOcr' | 'boundingBox' | 'page' | 'insert'
+
+export type ToolbarLevel = 0 | 1 | 2 | 3 | 4 | 5
+export type ToolbarLevelName = 'L0' | 'L1' | 'L2' | 'L3' | 'L4' | 'L5'
+export type ToolbarLevelInput = ToolbarLevel | ToolbarLevelName
 
 export interface ToolbarLayoutResult {
   mode: 'full' | 'compact'
   hiddenGroups: OverflowGroupId[]
+  level: ToolbarLevel
 }
 
 export interface ToolbarItemWidths {
@@ -25,6 +30,78 @@ export interface ToolbarItemWidths {
 export interface ComputeToolbarLayoutOptions {
   includeBoundingBox?: boolean
   isDesktop?: boolean
+}
+
+export const TOOLBAR_LEVEL_MAP: Record<
+  ToolbarLevel,
+  { mode: 'full' | 'compact'; hiddenGroups: OverflowGroupId[] }
+> = {
+  0: { mode: 'full', hiddenGroups: [] },
+  1: { mode: 'compact', hiddenGroups: [] },
+  2: { mode: 'compact', hiddenGroups: ['signOcr'] },
+  3: { mode: 'compact', hiddenGroups: ['signOcr', 'boundingBox'] },
+  4: { mode: 'compact', hiddenGroups: ['signOcr', 'boundingBox', 'page'] },
+  5: { mode: 'compact', hiddenGroups: ['signOcr', 'boundingBox', 'page', 'insert'] },
+}
+
+export function parseToolbarLevel(lvl: ToolbarLevelInput): ToolbarLevel {
+  if (typeof lvl === 'string') {
+    const num = parseInt(lvl.replace(/^L/i, ''), 10)
+    return (isNaN(num) ? 0 : Math.min(Math.max(num, 0), 5)) as ToolbarLevel
+  }
+  return Math.min(Math.max(lvl, 0), 5) as ToolbarLevel
+}
+
+export function nextToolbarLevel<T extends ToolbarLevelInput>(
+  level: T,
+  overflowing: boolean
+): T {
+  if (!overflowing) {
+    return level
+  }
+
+  if (typeof level === 'string') {
+    switch (level) {
+      case 'L0':
+        return 'L1' as T
+      case 'L1':
+        return 'L2' as T
+      case 'L2':
+        return 'L3' as T
+      case 'L3':
+        return 'L4' as T
+      case 'L4':
+        return 'L5' as T
+      case 'L5':
+        return 'L5' as T
+      default:
+        return 'L1' as T
+    }
+  }
+
+  const num = Number(level)
+  if (num < 5) {
+    return (num + 1) as T
+  }
+  return 5 as T
+}
+
+export function getToolbarLevelConfig(
+  level: ToolbarLevelInput,
+  opts?: ComputeToolbarLayoutOptions
+): { mode: 'full' | 'compact'; hiddenGroups: OverflowGroupId[] } {
+  const num = parseToolbarLevel(level)
+  const base = TOOLBAR_LEVEL_MAP[num] || TOOLBAR_LEVEL_MAP[0]
+  const hasBoundingBox = opts?.includeBoundingBox ?? (opts?.isDesktop ?? true)
+
+  const hiddenGroups = hasBoundingBox
+    ? base.hiddenGroups
+    : base.hiddenGroups.filter((g) => g !== 'boundingBox')
+
+  return {
+    mode: base.mode,
+    hiddenGroups,
+  }
 }
 
 export const DEFAULT_TOOLBAR_WIDTHS: Required<ToolbarItemWidths> = {
@@ -55,10 +132,8 @@ export function computeToolbarLayout(
   const hasBoundingBox = opts?.includeBoundingBox ?? (opts?.isDesktop ?? true)
   const bbWidth = hasBoundingBox ? w.boundingBox : 0
 
-  // Base fixed items that are NEVER hidden: tools, colors, divider, edit (delete, undo, redo)
   const fixedWidth = w.tools + w.colors + w.divider + w.edit + w.paddingAndGaps
 
-  // 1. Check Full mode: all items visible with full text labels
   const fullWidth =
     fixedWidth + w.insertFull + w.page + w.signOcrFull + bbWidth
 
@@ -66,10 +141,10 @@ export function computeToolbarLayout(
     return {
       mode: 'full',
       hiddenGroups: [],
+      level: 0,
     }
   }
 
-  // 2. Check Compact mode (no overflow): all items visible with icon-only buttons
   const compactWidth =
     fixedWidth + w.insertCompact + w.page + w.signOcrCompact + bbWidth
 
@@ -77,23 +152,20 @@ export function computeToolbarLayout(
     return {
       mode: 'compact',
       hiddenGroups: [],
+      level: 1,
     }
   }
 
-  // 3. Overflow menu: mode is 'compact', groups hide progressively into overflow menu (⋯ button)
-  // Order of hiding: signOcr -> boundingBox -> page -> insert
-
-  // Step 3a: Hide signOcr
   const wHideSignOcr =
     fixedWidth + w.insertCompact + w.page + bbWidth + w.overflowBtn
   if (availableWidth >= wHideSignOcr) {
     return {
       mode: 'compact',
       hiddenGroups: ['signOcr'],
+      level: 2,
     }
   }
 
-  // Step 3b: Hide boundingBox (if present)
   const wHideBB = fixedWidth + w.insertCompact + w.page + w.overflowBtn
   const groupsAfterBB: OverflowGroupId[] = hasBoundingBox
     ? ['signOcr', 'boundingBox']
@@ -102,10 +174,10 @@ export function computeToolbarLayout(
     return {
       mode: 'compact',
       hiddenGroups: groupsAfterBB,
+      level: 3,
     }
   }
 
-  // Step 3c: Hide page ops
   const wHidePage = fixedWidth + w.insertCompact + w.overflowBtn
   const groupsAfterPage: OverflowGroupId[] = hasBoundingBox
     ? ['signOcr', 'boundingBox', 'page']
@@ -114,47 +186,74 @@ export function computeToolbarLayout(
     return {
       mode: 'compact',
       hiddenGroups: groupsAfterPage,
+      level: 4,
     }
   }
 
-  // Step 3d: Hide insert group (all collapsible groups hidden)
-  // Non-collapsible: tools, colors, edit (delete, undo, redo) are NEVER hidden
   const allHidden: OverflowGroupId[] = hasBoundingBox
     ? ['signOcr', 'boundingBox', 'page', 'insert']
     : ['signOcr', 'page', 'insert']
   return {
     mode: 'compact',
     hiddenGroups: allHidden,
+    level: 5,
   }
 }
 
+const useIsomorphicLayoutEffect =
+  typeof window !== 'undefined' ? useLayoutEffect : useEffect
+
 export function useToolbarLayout(
-  toolbarRef: React.RefObject<HTMLElement | null>,
+  target?: React.RefObject<HTMLElement | null> | HTMLElement | null,
   opts?: ComputeToolbarLayoutOptions
-): ToolbarLayoutResult {
-  const includeBoundingBox = opts?.includeBoundingBox
+): ToolbarLayoutResult & {
+  toolbarRef: (node: HTMLElement | null) => void
+} {
+  const [callbackNode, setCallbackNode] = useState<HTMLElement | null>(null)
+  const el =
+    callbackNode ||
+    (target && 'current' in target ? target.current : (target as HTMLElement | null)) ||
+    null
+
+  const [level, setLevel] = useState<ToolbarLevel>(0)
+  const prevWidthRef = useRef<number>(0)
+
   const isDesktop = opts?.isDesktop
+  const includeBoundingBox = opts?.includeBoundingBox
 
-  const [layout, setLayout] = useState<ToolbarLayoutResult>(() =>
-    computeToolbarLayout(
-      DEFAULT_TOOLBAR_WIDTHS,
-      typeof window !== 'undefined' ? window.innerWidth : 1280,
-      { includeBoundingBox, isDesktop }
-    )
-  )
+  const toolbarRefCallback = useCallback((node: HTMLElement | null) => {
+    setCallbackNode(node)
+  }, [])
 
-  useEffect(() => {
-    const el = toolbarRef.current
+  // Check overflow via real measurement (scrollWidth > clientWidth + 1)
+  // useLayoutEffect runs before paint to avoid visual jump
+  useIsomorphicLayoutEffect(() => {
     if (!el) return
 
-    const update = (width: number) => {
-      if (width > 0) {
-        setLayout(
-          computeToolbarLayout(DEFAULT_TOOLBAR_WIDTHS, width, {
-            includeBoundingBox,
-            isDesktop,
-          })
-        )
+    const isOverflowing = el.scrollWidth > el.clientWidth + 1
+
+    if (isOverflowing && level < 5) {
+      setLevel((curr) => nextToolbarLevel(curr, true))
+    }
+  }, [el, level, isDesktop, includeBoundingBox])
+
+  // Attach ResizeObserver when .toolbar actually mounts; disconnect on unmount
+  useEffect(() => {
+    if (!el) return
+
+    prevWidthRef.current = el.clientWidth
+
+    const handleResize = (newWidth: number) => {
+      if (newWidth > prevWidthRef.current + 2) {
+        prevWidthRef.current = newWidth
+        // Container became wider: retry from L0 to show more buttons if possible
+        setLevel(0)
+      } else if (newWidth < prevWidthRef.current - 2) {
+        prevWidthRef.current = newWidth
+        // Container became narrower: step up if overflowing
+        if (el.scrollWidth > el.clientWidth + 1 && level < 5) {
+          setLevel((curr) => nextToolbarLevel(curr, true))
+        }
       }
     }
 
@@ -162,17 +261,24 @@ export function useToolbarLayout(
       const ro = new ResizeObserver((entries) => {
         for (const entry of entries) {
           const w = entry.contentRect.width || el.clientWidth
-          update(w)
+          handleResize(w)
         }
       })
       ro.observe(el)
       return () => ro.disconnect()
     } else {
-      const onResize = () => update(el.clientWidth || window.innerWidth)
+      const onResize = () => handleResize(el.clientWidth)
       window.addEventListener('resize', onResize)
       return () => window.removeEventListener('resize', onResize)
     }
-  }, [toolbarRef, includeBoundingBox, isDesktop])
+  }, [el, level])
 
-  return layout
+  const config = getToolbarLevelConfig(level, { isDesktop, includeBoundingBox })
+
+  return {
+    mode: config.mode,
+    hiddenGroups: config.hiddenGroups,
+    level,
+    toolbarRef: toolbarRefCallback,
+  }
 }

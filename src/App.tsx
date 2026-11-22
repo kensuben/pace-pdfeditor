@@ -123,8 +123,8 @@ function App() {
   const [viewMode, setViewMode] = useState<'pdf' | 'word'>(() => {
     return typeof window !== 'undefined' && window.location.hash === '#/word-anonymizer' ? 'word' : 'pdf'
   })
-  const toolbarRef = useRef<HTMLDivElement>(null)
-  const toolbarLayout = useToolbarLayout(toolbarRef, { isDesktop })
+  const [toolbarEl, setToolbarEl] = useState<HTMLDivElement | null>(null)
+  const toolbarLayout = useToolbarLayout(toolbarEl, { isDesktop })
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
   const menuButtonRef = useRef<HTMLButtonElement>(null)
   const menuDropdownRef = useRef<HTMLDivElement>(null)
@@ -814,7 +814,7 @@ function App() {
       </aside>
       {!sidebar && <button className="show-sidebar" onClick={() => setSidebar(true)}><ChevronRight/></button>}
       <section className="editor">
-        <div ref={toolbarRef} className="toolbar">
+        <div ref={setToolbarEl} className="toolbar">
           <div className="tool-group">
             {([['select',MousePointer2,'Chọn'],['text',Type,'Thêm chữ'],['highlight',Highlighter,'Đánh dấu'],['draw',PenLine,'Vẽ'],['signature',ImageIcon,'Chữ ký']] as const).map(([id,Icon,label]) => <button key={id} className={`tool ${tool===id?'active':''}`} onClick={() => setTool(id)}><Icon/><span>{label}</span></button>)}
           </div>

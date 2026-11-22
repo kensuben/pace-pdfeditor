@@ -30,6 +30,11 @@
   }
 }
 
+/* At L5 or very narrow screens, allow horizontal scroll instead of clipping buttons */
+.toolbar {
+  overflow-x: auto;
+}
+
 /* Compact mode action tools */
 .action-tool.compact,
 .ocr-button.compact {
