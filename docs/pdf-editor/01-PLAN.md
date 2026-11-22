@@ -126,6 +126,7 @@ Nguyên tắc:
 | **F-12** | Xuất đúng trên trang xoay / MediaBox-CropBox lệch gốc (B18, B19) | W-7 | ✅ Đã merge (PR #47) |
 | **W-8b** | Panel thuộc tính, đường gióng/hút cạnh, nút "Hiện khung bao", sửa B21, zoom giữ điểm dưới con trỏ, sidebar ≤ 800px, highlight xuất `Multiply` | W-11 | ✅ Đã merge (PR #51, gồm W-8b2) |
 | **F-15** | Thanh công cụ thu gọn + menu "Thêm" (nút Xoay trang bị đẩy ra ngoài ở 1280px), ô panel không vỡ dòng, tên file không đè nút | W-8b | Prompt: `docs/planning/antigravity/F-15_toolbar-overflow-panel-fields-file-title.md` |
+| **F-15c** | Menu "Thêm thao tác" bị cắt và làm thanh công cụ cuộn dọc ở 1024px (overflow của `.toolbar` + focus không `preventScroll`) | F-15 | Prompt: `docs/planning/antigravity/F-15c_overflow-menu-clipping.md` |
 | **W-9** | Sửa chữ gốc kiểu Acrobat: gom khối đoạn, nhận màu/cỡ/font, editor nhiều dòng, reflow; xuất bằng engine (xoá chữ cũ thật, bỏ hình chữ nhật che) + kiểm tra sót (B1–B6, B14) | W-7 đạt, W-8 | Có thể tách W-9a (nhận khối + editor) / W-9b (xuất bằng engine) |
 | **W-10** | Ảnh có sẵn: nhận, chọn, di chuyển, giãn, xoay, lật, thay, xoá, cắt; ảnh chèn có xoay/cắt/thay (B9) | W-7, W-8 | |
 | **W-11** | Cuộn liên tục có ảo hoá, thumbnail thật, menu zoom + vừa trang/vừa chiều rộng, xoay trang lưu vào file, đặt lại Undo sau thao tác trang (B12, B13, B15) | W-8, F-12, F-13 | ✅ Đã merge (PR #48, gồm W-11b) |
