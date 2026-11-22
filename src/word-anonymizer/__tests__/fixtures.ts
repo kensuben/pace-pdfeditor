@@ -430,3 +430,38 @@ export async function createW14bFixtureDocx(): Promise<ArrayBuffer> {
     },
   })
 }
+
+export async function createW15FixtureDocx(options?: { inDeleted?: boolean }): Promise<ArrayBuffer> {
+  const wNs = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'
+
+  const bodyContent = options?.inDeleted
+    ? `
+    <w:p><w:del w:id="1" w:author="Author 1" w:date="2026-01-01T00:00:00Z"><w:r><w:delText xml:space="preserve">BÊN A: </w:delText><w:tab/><w:delText>KHÁCH HÀNG CÔNG TY TNHH MẪU THỬ</w:delText></w:r></w:del></w:p>
+    <w:p><w:del w:id="2" w:author="Author 1" w:date="2026-01-01T00:00:00Z"><w:r><w:delText xml:space="preserve">Đại diện: </w:delText><w:tab/><w:delText xml:space="preserve">Bà NGƯỜI ĐẠI DIỆN TEST 01 </w:delText><w:tab/><w:delText>Chức vụ: Giám đốc</w:delText></w:r></w:del></w:p>
+    <w:p><w:del w:id="3" w:author="Author 1" w:date="2026-01-01T00:00:00Z"><w:r><w:delText xml:space="preserve">Địa chỉ: </w:delText><w:tab/><w:delText>Số 1 Đường Test, Phường Mẫu, Hà Nội</w:delText></w:r></w:del></w:p>
+    <w:p><w:del w:id="4" w:author="Author 1" w:date="2026-01-01T00:00:00Z"><w:r><w:delText xml:space="preserve">Điện thoại: </w:delText><w:tab/><w:delText>024 0000 0000</w:delText></w:r></w:del></w:p>
+    <w:p><w:del w:id="5" w:author="Author 1" w:date="2026-01-01T00:00:00Z"><w:r><w:delText xml:space="preserve">Mã số thuế: </w:delText><w:tab/><w:delText>0101234567</w:delText></w:r></w:del></w:p>
+    <w:p><w:del w:id="6" w:author="Author 1" w:date="2026-01-01T00:00:00Z"><w:r><w:delText xml:space="preserve">BÊN B: </w:delText><w:tab/><w:delText>VIỆN ĐÀO TẠO MẪU THỬ</w:delText></w:r></w:del></w:p>
+    <w:p><w:del w:id="7" w:author="Author 1" w:date="2026-01-01T00:00:00Z"><w:r><w:delText xml:space="preserve">Đại diện: </w:delText><w:tab/><w:delText xml:space="preserve">Ông NGƯỜI ĐẠI DIỆN TEST 02 </w:delText><w:tab/><w:delText>Chức vụ: Giám đốc điều hành</w:delText></w:r></w:del></w:p>
+    <w:p><w:del w:id="8" w:author="Author 1" w:date="2026-01-01T00:00:00Z"><w:r><w:delText>(Theo Giấy Ủy Quyền số 01/2026/UQ-TEST ngày 05/01/2026)</w:delText></w:r></w:del></w:p>`
+    : `
+    <w:p><w:r><w:t xml:space="preserve">BÊN A: </w:t><w:tab/><w:t>KHÁCH HÀNG CÔNG TY TNHH MẪU THỬ</w:t></w:r></w:p>
+    <w:p><w:r><w:t xml:space="preserve">Đại diện: </w:t><w:tab/><w:t xml:space="preserve">Bà NGƯỜI ĐẠI DIỆN TEST 01 </w:t><w:tab/><w:t>Chức vụ: Giám đốc</w:t></w:r></w:p>
+    <w:p><w:r><w:t xml:space="preserve">Địa chỉ: </w:t><w:tab/><w:t>Số 1 Đường Test, Phường Mẫu, Hà Nội</w:t></w:r></w:p>
+    <w:p><w:r><w:t xml:space="preserve">Điện thoại: </w:t><w:tab/><w:t>024 0000 0000</w:t></w:r></w:p>
+    <w:p><w:r><w:t xml:space="preserve">Mã số thuế: </w:t><w:tab/><w:t>0101234567</w:t></w:r></w:p>
+    <w:p><w:r><w:t xml:space="preserve">BÊN B: </w:t><w:tab/><w:t>VIỆN ĐÀO TẠO MẪU THỬ</w:t></w:r></w:p>
+    <w:p><w:r><w:t xml:space="preserve">Đại diện: </w:t><w:tab/><w:t xml:space="preserve">Ông NGƯỜI ĐẠI DIỆN TEST 02 </w:t><w:tab/><w:t>Chức vụ: Giám đốc điều hành</w:t></w:r></w:p>
+    <w:p><w:r><w:t>(Theo Giấy Ủy Quyền số 01/2026/UQ-TEST ngày 05/01/2026)</w:t></w:r></w:p>`
+
+  const documentXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="${wNs}">
+  <w:body>
+    ${bodyContent}
+  </w:body>
+</w:document>`
+
+  return createMockDocx({
+    documentXmlOverride: documentXml,
+  })
+}

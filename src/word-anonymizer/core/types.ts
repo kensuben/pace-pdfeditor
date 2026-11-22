@@ -73,6 +73,22 @@ export interface DeletedTextHit {
   part?: string
 }
 
+export type SuggestionKind = 'organization' | 'representative' | 'keyword'
+export type SuggestionHint = 'party' | 'representative' | 'position' | 'authorization' | 'contractNo'
+
+export interface LabelSuggestion {
+  kind: SuggestionKind
+  value: string
+  hint: SuggestionHint
+  count: number
+  sources: ('body' | 'deleted')[]
+}
+
+export interface SuggestParagraph {
+  text: string
+  source: 'body' | 'deleted'
+}
+
 export interface InspectionReport {
   identities: KnownIdentity[]
   stats: InspectionStats
@@ -81,6 +97,7 @@ export interface InspectionReport {
   hasEmbeddings: boolean
   sensitive: SensitiveItem[]
   deletedTextHits: DeletedTextHit[]
+  suggestions?: LabelSuggestion[]
 }
 
 export interface MappedIdentity {

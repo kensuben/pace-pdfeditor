@@ -18,6 +18,7 @@ import {
   Building2,
   Plus,
   EyeOff,
+  Sparkles,
 } from 'lucide-react'
 import type { ApiUser } from '../api'
 import {
@@ -45,6 +46,7 @@ import {
   type DeletedTextMode,
   type KeywordRule,
   type KeywordMatchCounts,
+  type LabelSuggestion,
 } from './core'
 
 export interface WordAnonymizerPageProps {
@@ -132,6 +134,14 @@ export default function WordAnonymizerPage({
   const [isPastingKeywords, setIsPastingKeywords] = useState(false)
   const [pasteKeywordsText, setPasteKeywordsText] = useState('')
   const [pasteKeywordsError, setPasteKeywordsError] = useState<string | null>(null)
+
+  const [pendingSuggestions, setPendingSuggestions] = useState<LabelSuggestion[]>([])
+  const [selectedSuggestionKeys, setSelectedSuggestionKeys] = useState<Set<string>>(new Set())
+  const [dismissedSuggestions, setDismissedSuggestions] = useState<boolean>(false)
+  const [suggestionStats, setSuggestionStats] = useState<{ total: number; accepted: number }>({
+    total: 0,
+    accepted: 0,
+  })
 
   const [anonymizeResult, setAnonymizeResult] = useState<AnonymizeResult | null>(null)
   const [residualReport, setResidualReport] = useState<ResidualReport | null>(null)
@@ -268,6 +278,10 @@ export default function WordAnonymizerPage({
     setIsPastingKeywords(false)
     setPasteKeywordsText('')
     setPasteKeywordsError(null)
+    setPendingSuggestions([])
+    setSelectedSuggestionKeys(new Set())
+    setDismissedSuggestions(false)
+    setSuggestionStats({ total: 0, accepted: 0 })
     setAnonymizeResult(null)
     setResidualReport(null)
     setErrorMessage(null)
@@ -297,6 +311,13 @@ export default function WordAnonymizerPage({
       setInspection(report)
       setMapping(initialMapping)
       setDeletedHits(report.deletedTextHits || [])
+      const suggs = report.suggestions || []
+      setPendingSuggestions(suggs)
+      setSelectedSuggestionKeys(
+        new Set(suggs.filter((s) => s.hint !== 'position').map((s) => `${s.kind}|${s.value}`))
+      )
+      setDismissedSuggestions(false)
+      setSuggestionStats({ total: suggs.length, accepted: 0 })
     } catch (err: unknown) {
       let msg = 'Không thể kiểm tra file DOCX này.'
       let errCode = 'UNKNOWN'
@@ -401,6 +422,96 @@ export default function WordAnonymizerPage({
   const handleRemoveEntity = (id: string) => {
     resetStaleResults()
     setEntities((prev) => prev.filter((e) => e.id !== id))
+  }
+
+  const handleToggleSuggestion = (key: string) => {
+    setSelectedSuggestionKeys((prev) => {
+      const next = new Set(prev)
+      if (next.has(key)) {
+        next.delete(key)
+      } else {
+        next.add(key)
+      }
+      return next
+    })
+  }
+
+  const handleAcceptSelectedSuggestions = () => {
+    resetStaleResults()
+    const toAdd = pendingSuggestions.filter((s) =>
+      selectedSuggestionKeys.has(`${s.kind}|${s.value}`)
+    )
+    if (toAdd.length === 0) return
+
+    const currentEntities = [...entities]
+    const currentKeywords = [...keywordRules]
+    let newlyAccepted = 0
+
+    for (const item of toAdd) {
+      if (item.kind === 'organization') {
+        const alreadyExists = currentEntities.some((e) =>
+          e.values.some((v) => v.toLowerCase() === item.value.toLowerCase())
+        )
+        if (!alreadyExists) {
+          const orgCount = currentEntities.filter((e) => e.kind === 'organization').length
+          const label = `Pháp nhân ${String.fromCharCode(65 + orgCount)}`
+          currentEntities.push({
+            id: `org-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+            kind: 'organization',
+            label,
+            values: [item.value],
+          })
+          newlyAccepted++
+        }
+      } else if (item.kind === 'representative') {
+        const alreadyExists = currentEntities.some((e) =>
+          e.values.some((v) => v.toLowerCase() === item.value.toLowerCase())
+        )
+        if (!alreadyExists) {
+          const repCount = currentEntities.filter((e) => e.kind === 'representative').length
+          const label = `Người đại diện ${repCount + 1}`
+          currentEntities.push({
+            id: `rep-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+            kind: 'representative',
+            label,
+            values: [item.value],
+          })
+          newlyAccepted++
+        }
+      } else if (item.kind === 'keyword') {
+        const alreadyExists = currentKeywords.some(
+          (r) => r.find.trim().toLowerCase() === item.value.toLowerCase()
+        )
+        if (!alreadyExists) {
+          let replace = '[Chức vụ]'
+          if (item.hint === 'authorization') {
+            replace = '[Số giấy uỷ quyền]'
+          } else if (item.hint === 'contractNo') {
+            replace = '[Số hợp đồng]'
+          }
+          currentKeywords.push({
+            id: `kw-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+            find: item.value,
+            replace,
+            ignoreDiacritics: false,
+          })
+          newlyAccepted++
+        }
+      }
+    }
+
+    setEntities(currentEntities)
+    setKeywordRules(currentKeywords)
+
+    const remaining = pendingSuggestions.filter(
+      (s) => !selectedSuggestionKeys.has(`${s.kind}|${s.value}`)
+    )
+    setPendingSuggestions(remaining)
+    setSelectedSuggestionKeys(new Set())
+    setSuggestionStats((prev) => ({
+      total: prev.total,
+      accepted: prev.accepted + newlyAccepted,
+    }))
   }
 
   const handleAddKeywordRule = () => {
@@ -608,6 +719,12 @@ export default function WordAnonymizerPage({
             ? {
                 deletedTextMode: options.deletedTextMode ?? 'mask',
                 deletedRunsRemoved: result.report.replacements.deletedRunsRemoved,
+              }
+            : {}),
+          ...(suggestionStats.total > 0
+            ? {
+                suggestionCount: suggestionStats.total,
+                acceptedCount: suggestionStats.accepted,
               }
             : {}),
         },
@@ -974,6 +1091,76 @@ export default function WordAnonymizerPage({
               <p className="word-card-note">
                 Công cụ chỉ thay đúng các tên bạn nhập (không phân biệt hoa/thường, giữ dấu). Hãy nhập đủ các cách viết: tên viết tắt, tên tiếng Anh…
               </p>
+
+              {/* Suggestions block */}
+              {pendingSuggestions.length > 0 && !dismissedSuggestions && (
+                <div className="suggestions-block">
+                  <div className="suggestions-header">
+                    <div className="suggestions-title">
+                      <Sparkles size={16} />
+                      <span>Gợi ý từ nhãn trong tài liệu ({pendingSuggestions.length})</span>
+                    </div>
+                    <div className="suggestions-actions">
+                      <button
+                        type="button"
+                        className="primary small"
+                        onClick={handleAcceptSelectedSuggestions}
+                        disabled={selectedSuggestionKeys.size === 0}
+                      >
+                        Thêm các mục đã chọn
+                      </button>
+                      <button
+                        type="button"
+                        className="secondary small"
+                        onClick={() => setDismissedSuggestions(true)}
+                      >
+                        Bỏ qua tất cả
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="suggestions-list">
+                    {pendingSuggestions.map((sug) => {
+                      const key = `${sug.kind}|${sug.value}`
+                      const isChecked = selectedSuggestionKeys.has(key)
+                      const kindLabel =
+                        sug.hint === 'party'
+                          ? 'Pháp nhân'
+                          : sug.hint === 'representative'
+                          ? 'Người đại diện'
+                          : sug.hint === 'position'
+                          ? 'Chức vụ'
+                          : sug.hint === 'authorization'
+                          ? 'Số giấy uỷ quyền'
+                          : 'Số hợp đồng'
+                      const isDeletedOnly =
+                        sug.sources.length === 1 && sug.sources[0] === 'deleted'
+
+                      return (
+                        <div key={key} className="suggestion-item">
+                          <label className="suggestion-checkbox-label">
+                            <input
+                              type="checkbox"
+                              checked={isChecked}
+                              onChange={() => handleToggleSuggestion(key)}
+                            />
+                            <span className={`suggestion-kind-badge suggestion-kind-${sug.hint}`}>
+                              {kindLabel}
+                            </span>
+                            <span className="suggestion-value">{sug.value}</span>
+                          </label>
+                          <div className="suggestion-meta">
+                            <span className="suggestion-count">{sug.count} lần</span>
+                            {isDeletedOnly && (
+                              <span className="suggestion-deleted-badge">trong chữ đã xoá</span>
+                            )}
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                </div>
+              )}
 
               {/* Group: Pháp nhân */}
               <div className="entity-group">

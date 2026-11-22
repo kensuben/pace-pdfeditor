@@ -2,6 +2,7 @@ import type JSZip from 'jszip'
 import { OOXML_NAMESPACES } from './constants'
 import { normalizeString } from './normalize'
 import { findSensitive, normalizePhone } from './sensitive'
+import { suggestFromLabels } from './entitySuggest'
 import { findEntityMatches, findKeywordMatches } from './textReplace'
 import {
   CustomEntity,
@@ -14,6 +15,7 @@ import {
   KnownIdentity,
   SensitiveItem,
   SensitiveKind,
+  SuggestParagraph,
 } from './types'
 import { parseXml } from './xml'
 import { loadSafeDocx } from './zip'
@@ -102,6 +104,49 @@ async function scanDeletedText(
   }
 
   return hits
+}
+
+function extractParagraphStreams(p: Element): { bodyText: string; deletedText: string } {
+  let bodyText = ''
+  let deletedText = ''
+
+  const walk = (node: Node, inDel: boolean) => {
+    if (node !== p && node.nodeType === 1 /* Element */) {
+      const el = node as Element
+      if (el.localName === 'p' && el.namespaceURI === OOXML_NAMESPACES.w) {
+        return
+      }
+      if (el.localName === 'del' && el.namespaceURI === OOXML_NAMESPACES.w) {
+        for (let i = 0; i < el.childNodes.length; i++) {
+          walk(el.childNodes[i], true)
+        }
+        return
+      }
+      if (el.localName === 'tab' && el.namespaceURI === OOXML_NAMESPACES.w) {
+        if (inDel) {
+          deletedText += '\t'
+        } else {
+          bodyText += '\t'
+        }
+        return
+      }
+      if (el.localName === 't' && el.namespaceURI === OOXML_NAMESPACES.w && !inDel) {
+        bodyText += el.textContent || ''
+        return
+      }
+      if (el.localName === 'delText' && el.namespaceURI === OOXML_NAMESPACES.w && inDel) {
+        deletedText += el.textContent || ''
+        return
+      }
+    }
+
+    for (let i = 0; i < node.childNodes.length; i++) {
+      walk(node.childNodes[i], inDel)
+    }
+  }
+
+  walk(p, false)
+  return { bodyText, deletedText }
 }
 
 export async function inspectLoadedDocx(
@@ -402,6 +447,8 @@ export async function inspectLoadedDocx(
     }
   }
 
+  const suggestParagraphs: SuggestParagraph[] = []
+
   for (const path of entries) {
     if (path.startsWith('word/') && path.endsWith('.xml') && path !== 'word/people.xml') {
       const file = zip.file(path)
@@ -410,7 +457,22 @@ export async function inspectLoadedDocx(
       const doc = parseXml(xmlText)
       const paragraphs = Array.from(doc.getElementsByTagNameNS(OOXML_NAMESPACES.w, 'p'))
 
+      const isSuggestPart =
+        path === 'word/document.xml' ||
+        path.startsWith('word/header') ||
+        path.startsWith('word/footer')
+
       for (const p of paragraphs) {
+        if (isSuggestPart) {
+          const { bodyText, deletedText } = extractParagraphStreams(p)
+          if (bodyText.trim()) {
+            suggestParagraphs.push({ text: bodyText, source: 'body' })
+          }
+          if (deletedText.trim()) {
+            suggestParagraphs.push({ text: deletedText, source: 'deleted' })
+          }
+        }
+
         const tNodes = getDirectParagraphTNodes(p)
         if (tNodes.length === 0) continue
         const paraText = tNodes.map((n) => n.textContent || '').join('')
@@ -525,6 +587,7 @@ export async function inspectLoadedDocx(
 
   const identities = Array.from(identitiesMap.values())
   const sensitive = Array.from(sensitiveMap.values())
+  const suggestions = suggestFromLabels(suggestParagraphs)
 
   return {
     identities,
@@ -538,6 +601,7 @@ export async function inspectLoadedDocx(
     hasEmbeddings,
     sensitive,
     deletedTextHits,
+    suggestions,
   }
 }
 
