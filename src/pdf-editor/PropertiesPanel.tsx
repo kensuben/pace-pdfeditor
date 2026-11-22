@@ -152,63 +152,55 @@ export function PropertiesPanel({
             <div className="properties-grid-2x2">
               <div className="properties-field">
                 <label htmlFor="prop-x">X</label>
-                <div>
-                  <input
-                    id="prop-x"
-                    type="number"
-                    step="0.5"
-                    value={inputX}
-                    onChange={(e) => setInputX(e.target.value)}
-                    onBlur={() => commitPosition('x')}
-                    onKeyDown={handleKeyDown}
-                  />
-                  <span className="unit">pt</span>
-                </div>
+                <input
+                  id="prop-x"
+                  type="number"
+                  step="0.5"
+                  value={inputX}
+                  onChange={(e) => setInputX(e.target.value)}
+                  onBlur={() => commitPosition('x')}
+                  onKeyDown={handleKeyDown}
+                />
+                <span className="unit">pt</span>
               </div>
               <div className="properties-field">
                 <label htmlFor="prop-y">Y</label>
-                <div>
-                  <input
-                    id="prop-y"
-                    type="number"
-                    step="0.5"
-                    value={inputY}
-                    onChange={(e) => setInputY(e.target.value)}
-                    onBlur={() => commitPosition('y')}
-                    onKeyDown={handleKeyDown}
-                  />
-                  <span className="unit">pt</span>
-                </div>
+                <input
+                  id="prop-y"
+                  type="number"
+                  step="0.5"
+                  value={inputY}
+                  onChange={(e) => setInputY(e.target.value)}
+                  onBlur={() => commitPosition('y')}
+                  onKeyDown={handleKeyDown}
+                />
+                <span className="unit">pt</span>
               </div>
               <div className="properties-field">
                 <label htmlFor="prop-w">Rộng</label>
-                <div>
-                  <input
-                    id="prop-w"
-                    type="number"
-                    step="0.5"
-                    value={inputW}
-                    onChange={(e) => setInputW(e.target.value)}
-                    onBlur={() => commitSize('w')}
-                    onKeyDown={handleKeyDown}
-                  />
-                  <span className="unit">pt</span>
-                </div>
+                <input
+                  id="prop-w"
+                  type="number"
+                  step="0.5"
+                  value={inputW}
+                  onChange={(e) => setInputW(e.target.value)}
+                  onBlur={() => commitSize('w')}
+                  onKeyDown={handleKeyDown}
+                />
+                <span className="unit">pt</span>
               </div>
               <div className="properties-field">
                 <label htmlFor="prop-h">Cao</label>
-                <div>
-                  <input
-                    id="prop-h"
-                    type="number"
-                    step="0.5"
-                    value={inputH}
-                    onChange={(e) => setInputH(e.target.value)}
-                    onBlur={() => commitSize('h')}
-                    onKeyDown={handleKeyDown}
-                  />
-                  <span className="unit">pt</span>
-                </div>
+                <input
+                  id="prop-h"
+                  type="number"
+                  step="0.5"
+                  value={inputH}
+                  onChange={(e) => setInputH(e.target.value)}
+                  onBlur={() => commitSize('h')}
+                  onKeyDown={handleKeyDown}
+                />
+                <span className="unit">pt</span>
               </div>
             </div>
 

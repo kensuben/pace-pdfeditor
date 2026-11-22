@@ -17,6 +17,7 @@ import AdminPage from './AdminPage'
 import { apiRequest, authorizeSession, type ApiUser } from './api'
 import WordAnonymizerPage from './word-anonymizer/WordAnonymizerPage'
 import './pdf-editor/viewer.css'
+import './pdf-editor/toolbar.css'
 import {
   clamp, uid, IconButton, TextFormatBar,
   buildEditedPdf, insertPdfPages, movePage, deletePage, rotatePage,
@@ -30,6 +31,8 @@ import {
   PropertiesPanel,
   useDesktopEditor,
   defaultAspectLockedForType,
+  useToolbarLayout,
+  ToolbarOverflowMenu,
 } from './pdf-editor'
 
 // Query version bypasses any previously cached worker response that may have
@@ -120,6 +123,8 @@ function App() {
   const [viewMode, setViewMode] = useState<'pdf' | 'word'>(() => {
     return typeof window !== 'undefined' && window.location.hash === '#/word-anonymizer' ? 'word' : 'pdf'
   })
+  const toolbarRef = useRef<HTMLDivElement>(null)
+  const toolbarLayout = useToolbarLayout(toolbarRef, { isDesktop })
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
   const menuButtonRef = useRef<HTMLButtonElement>(null)
   const menuDropdownRef = useRef<HTMLDivElement>(null)
@@ -653,7 +658,13 @@ function App() {
           Ẩn danh Word
         </button>
       </div>
-      {viewMode === 'pdf' && info && <div className="file-title"><FileText size={17}/><span>{info.name}</span><small>{formatBytes(info.size)}</small></div>}
+      {viewMode === 'pdf' && info && (
+        <div className="file-title" title={info.name}>
+          <FileText size={17} />
+          <span>{info.name}</span>
+          <small>{formatBytes(info.size)}</small>
+        </div>
+      )}
       <div className="top-actions">
         {viewMode === 'pdf' && info && <><button className="secondary desktop-only" onClick={() => fileInput.current?.click()}><Upload size={16}/> Mở file</button><button className="primary desktop-only" onClick={exportPdf} disabled={busy}><Download size={16}/> Xuất PDF</button></>}
         <a href="/huong-dan/" target="_blank" rel="noopener" className="topbar-help-link desktop-only" aria-label="Hướng dẫn sử dụng" title="Hướng dẫn sử dụng"><BookOpen size={16}/><span>Hướng dẫn</span></a>
@@ -803,21 +814,93 @@ function App() {
       </aside>
       {!sidebar && <button className="show-sidebar" onClick={() => setSidebar(true)}><ChevronRight/></button>}
       <section className="editor">
-        <div className="toolbar">
+        <div ref={toolbarRef} className="toolbar">
           <div className="tool-group">
             {([['select',MousePointer2,'Chọn'],['text',Type,'Thêm chữ'],['highlight',Highlighter,'Đánh dấu'],['draw',PenLine,'Vẽ'],['signature',ImageIcon,'Chữ ký']] as const).map(([id,Icon,label]) => <button key={id} className={`tool ${tool===id?'active':''}`} onClick={() => setTool(id)}><Icon/><span>{label}</span></button>)}
           </div>
           <div className="divider"/>
           <div className="colors">{COLORS.map((c) => <button key={c} aria-label={`Color ${c}`} className={color===c?'active':''} style={{background:c}} onClick={() => {setColor(c);if(tool==='text'||selectedText)changeTextStyle({color:c})}}/>)}</div>
           <div className="toolbar-spacer"/>
-          <button className="action-tool" onClick={()=>imageInput.current?.click()}><ImagePlus/>Chèn ảnh</button>
-          <button className="action-tool" onClick={()=>insertPdfInput.current?.click()}><FilePlus2/>Chèn trang</button>
-          <IconButton label="Di chuyển trang lên" onClick={()=>moveCurrentPage(-1)} disabled={page===1}><ArrowUp/></IconButton>
-          <IconButton label="Di chuyển trang xuống" onClick={()=>moveCurrentPage(1)} disabled={page===info.pages}><ArrowDown/></IconButton>
-          <IconButton label="Xóa trang hiện tại" onClick={deleteCurrentPage} disabled={info.pages<=1}><Trash2/></IconButton>
-          <button className="action-tool sign" onClick={()=>setShowDigitalSign(true)}><BadgeCheck/>Ký số</button>
-          <button className={`ocr-button ${ocrBusy?'busy':''}`} onClick={scanCurrentPage} disabled={ocrBusy}><ScanText/>{ocrBusy?`OCR ${ocrProgress}%`:'Scan OCR'}</button>
-          {isDesktop && (
+
+          {!toolbarLayout.hiddenGroups.includes('insert') && (
+            <>
+              <button
+                className={`action-tool ${toolbarLayout.mode === 'compact' ? 'compact' : ''}`}
+                aria-label="Chèn ảnh"
+                title="Chèn ảnh"
+                onClick={() => imageInput.current?.click()}
+              >
+                <ImagePlus />
+                {toolbarLayout.mode === 'full' && 'Chèn ảnh'}
+              </button>
+              <button
+                className={`action-tool ${toolbarLayout.mode === 'compact' ? 'compact' : ''}`}
+                aria-label="Chèn trang"
+                title="Chèn trang"
+                onClick={() => insertPdfInput.current?.click()}
+              >
+                <FilePlus2 />
+                {toolbarLayout.mode === 'full' && 'Chèn trang'}
+              </button>
+            </>
+          )}
+
+          {!toolbarLayout.hiddenGroups.includes('page') && (
+            <>
+              <IconButton label="Di chuyển trang lên" onClick={() => moveCurrentPage(-1)} disabled={page === 1}>
+                <ArrowUp />
+              </IconButton>
+              <IconButton label="Di chuyển trang xuống" onClick={() => moveCurrentPage(1)} disabled={page === info.pages}>
+                <ArrowDown />
+              </IconButton>
+              {(() => {
+                const canRotate = canRotatePage(annotations, page)
+                const rotateLabel = canRotate
+                  ? 'Xoay trang'
+                  : 'Trang có chữ đã sửa, chưa xoay được (sẽ hỗ trợ khi xoá chữ gốc thật)'
+                return (
+                  <span title={rotateLabel}>
+                    <IconButton
+                      label={rotateLabel}
+                      onClick={rotateCurrentPage}
+                      disabled={!canRotate}
+                    >
+                      <RotateCw />
+                    </IconButton>
+                  </span>
+                )
+              })()}
+              <IconButton label="Xóa trang hiện tại" onClick={deleteCurrentPage} disabled={info.pages <= 1}>
+                <Trash2 />
+              </IconButton>
+            </>
+          )}
+
+          {!toolbarLayout.hiddenGroups.includes('signOcr') && (
+            <>
+              <button
+                className={`action-tool sign ${toolbarLayout.mode === 'compact' ? 'compact' : ''}`}
+                aria-label="Ký số"
+                title="Ký số"
+                onClick={() => setShowDigitalSign(true)}
+              >
+                <BadgeCheck />
+                {toolbarLayout.mode === 'full' && 'Ký số'}
+              </button>
+              <button
+                className={`ocr-button ${ocrBusy ? 'busy' : ''} ${toolbarLayout.mode === 'compact' ? 'compact' : ''}`}
+                aria-label={ocrBusy ? `OCR ${ocrProgress}%` : 'Scan OCR'}
+                title={ocrBusy ? `OCR ${ocrProgress}%` : 'Scan OCR'}
+                onClick={scanCurrentPage}
+                disabled={ocrBusy}
+              >
+                <ScanText />
+                {toolbarLayout.mode === 'full' && (ocrBusy ? `OCR ${ocrProgress}%` : 'Scan OCR')}
+              </button>
+            </>
+          )}
+
+          {isDesktop && !toolbarLayout.hiddenGroups.includes('boundingBox') && (
             <IconButton
               label={showBoundingBoxes ? 'Ẩn khung bao' : 'Hiện khung bao'}
               active={showBoundingBoxes}
@@ -826,26 +909,33 @@ function App() {
               <BoxSelect />
             </IconButton>
           )}
+
+          <ToolbarOverflowMenu
+            hiddenGroups={toolbarLayout.hiddenGroups}
+            onInsertImage={() => imageInput.current?.click()}
+            onInsertPage={() => insertPdfInput.current?.click()}
+            page={page}
+            pageCount={info.pages}
+            onMovePage={moveCurrentPage}
+            onRotatePage={rotateCurrentPage}
+            canRotate={canRotatePage(annotations, page)}
+            rotateLabel={
+              canRotatePage(annotations, page)
+                ? 'Xoay trang'
+                : 'Trang có chữ đã sửa, chưa xoay được (sẽ hỗ trợ khi xoá chữ gốc thật)'
+            }
+            onDeletePage={deleteCurrentPage}
+            onSign={() => setShowDigitalSign(true)}
+            onScanOcr={scanCurrentPage}
+            ocrBusy={ocrBusy}
+            ocrProgress={ocrProgress}
+            showBoundingBoxes={showBoundingBoxes}
+            onToggleBoundingBoxes={isDesktop ? toggleBoundingBoxes : undefined}
+          />
+
           <IconButton label="Xóa đối tượng đã chọn" onClick={deleteSelected} disabled={!selectedId}><Trash2/></IconButton>
           <IconButton label="Undo" onClick={() => { setHistoryIndex(i=>Math.max(0,i-1)); log('edit.undo', 'Hoàn tác thay đổi') }} disabled={!historyIndex}><Undo2/></IconButton>
           <IconButton label="Redo" onClick={() => { setHistoryIndex(i=>Math.min(history.length-1,i+1)); log('edit.redo', 'Làm lại thay đổi') }} disabled={historyIndex===history.length-1}><Redo2/></IconButton>
-          {(() => {
-            const canRotate = canRotatePage(annotations, page)
-            const rotateLabel = canRotate
-              ? 'Xoay trang'
-              : 'Trang có chữ đã sửa, chưa xoay được (sẽ hỗ trợ khi xoá chữ gốc thật)'
-            return (
-              <span title={rotateLabel}>
-                <IconButton
-                  label={rotateLabel}
-                  onClick={rotateCurrentPage}
-                  disabled={!canRotate}
-                >
-                  <RotateCw />
-                </IconButton>
-              </span>
-            )
-          })()}
         </div>
         {!isDesktop && (tool === 'text' || selectedText) && (
           <div className="text-format-bar-floating">
