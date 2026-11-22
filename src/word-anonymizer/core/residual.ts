@@ -399,6 +399,52 @@ export async function scanResidual(
         } catch {
           // Ignore XML parse errors
         }
+      } else if (path.startsWith('docProps/') && path.endsWith('.xml')) {
+        const xmlText = await file.async('string')
+        try {
+          const doc = parseXml(xmlText)
+          const textNodes: Node[] = []
+          const walk = (node: Node) => {
+            if (node.nodeType === 3 /* Node.TEXT_NODE */) {
+              textNodes.push(node)
+            } else if (node.nodeType === 1 /* Node.ELEMENT_NODE */) {
+              for (let i = 0; i < node.childNodes.length; i++) {
+                walk(node.childNodes[i])
+              }
+            }
+          }
+          walk(doc.documentElement)
+
+          for (const tNode of textNodes) {
+            const text = (tNode.textContent || '').normalize('NFC')
+            if (text) {
+              const kwMatches = findKeywordMatches(text, keywordRules)
+              for (const match of kwMatches) {
+                const isInsideOtherReplace = otherReplacements.some((rep) => {
+                  if (rep.id === match.ruleId) return false
+                  let searchPos = 0
+                  while ((searchPos = text.indexOf(rep.replace, searchPos)) !== -1) {
+                    const repEnd = searchPos + rep.replace.length
+                    if (match.start >= searchPos && match.end <= repEnd) return true
+                    searchPos = repEnd
+                  }
+                  return false
+                })
+
+                if (!isInsideOtherReplace) {
+                  findings.push({
+                    part: path,
+                    matchedString: match.matchedText || text.slice(match.start, match.end),
+                    count: 1,
+                    category: 'metadata',
+                  })
+                }
+              }
+            }
+          }
+        } catch {
+          // Ignore XML parse errors
+        }
       }
     }
   }

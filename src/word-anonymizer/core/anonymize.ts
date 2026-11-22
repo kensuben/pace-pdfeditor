@@ -9,6 +9,7 @@ import {
   AnonymizeResult,
   CustomEntity,
   IdentityMapping,
+  KeywordRule,
   MappedIdentity,
 } from './types'
 import { parseXml, serializeXml } from './xml'
@@ -53,12 +54,16 @@ function escapeRegex(str: string): string {
   return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
 
-function replaceEntitiesInMetadataDoc(
+function replaceMetadataDoc(
   doc: Document,
-  entities: CustomEntity[]
-): boolean {
-  if (entities.length === 0) return false
+  entities: CustomEntity[],
+  keywordRules: KeywordRule[] = []
+): { modified: boolean; keywordReplacements: number } {
+  if (entities.length === 0 && keywordRules.length === 0) {
+    return { modified: false, keywordReplacements: 0 }
+  }
   let modified = false
+  let keywordReplacements = 0
 
   const textNodes: Node[] = []
   const walk = (node: Node) => {
@@ -97,13 +102,22 @@ function replaceEntitiesInMetadataDoc(
       }
     }
 
+    if (keywordRules.length > 0) {
+      const kwRes = replaceKeywordsInString(text, keywordRules)
+      if (kwRes.count > 0) {
+        text = kwRes.text
+        keywordReplacements += kwRes.count
+        textChanged = true
+      }
+    }
+
     if (textChanged) {
       tNode.textContent = text
       modified = true
     }
   }
 
-  return modified
+  return { modified, keywordReplacements }
 }
 
 // TODO(verify): Cấu trúc mention w:hyperlink kết hợp mailto: - Word 365 dùng w:hyperlink trỏ rel mailto, cần kiểm tra thêm khi mention nằm trong comment phức tạp hoặc phân tách nhiều w:r/w:t.
@@ -914,7 +928,7 @@ export async function anonymizeDocx(
     }
   }
 
-  // 10. Replace entities in docProps metadata (core.xml, app.xml, custom.xml)
+  // 10. Replace entities and keywords in docProps metadata (core.xml, app.xml, custom.xml)
   for (const metaPath of ['docProps/core.xml', 'docProps/app.xml', 'docProps/custom.xml']) {
     const file = zip.file(metaPath)
     if (!file) continue
@@ -922,7 +936,9 @@ export async function anonymizeDocx(
     const xmlText = await file.async('string')
     const doc = parseXml(xmlText)
 
-    if (replaceEntitiesInMetadataDoc(doc, opts.customEntities)) {
+    const metaRes = replaceMetadataDoc(doc, opts.customEntities, opts.keywordRules)
+    if (metaRes.modified) {
+      replacements.keywords += metaRes.keywordReplacements
       zip.file(metaPath, serializeXml(doc))
       if (!modifiedParts.includes(metaPath)) {
         modifiedParts.push(metaPath)

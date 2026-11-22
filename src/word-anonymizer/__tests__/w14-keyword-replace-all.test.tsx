@@ -15,7 +15,7 @@ import {
   OOXML_NAMESPACES,
 } from '../core'
 import WordAnonymizerPage from '../WordAnonymizerPage'
-import { createMockDocx, createW14FixtureDocx } from './fixtures'
+import { createMockDocx, createW14FixtureDocx, createW14bFixtureDocx } from './fixtures'
 import type { AccountInfo } from '@azure/msal-browser'
 
 // @ts-expect-error global act flag
@@ -510,5 +510,70 @@ describe('W-14: User keyword replace-all rules', () => {
     )
     expect(residual.status).toBe('PASS')
     expect(residual.findings.length).toBe(0)
+  })
+
+  // W-14b QA tests
+  it('T1: core.xml dc:title "Hợp đồng Dự án Mẫu Thử", dc:subject "Dự án Mẫu Thử", rule "Dự án Mẫu Thử" -> "[Dự án]" replaces keywords in metadata, increments replacements.keywords, residual PASS', async () => {
+    const fixtureBuffer = await createW14bFixtureDocx()
+    const rules: KeywordRule[] = [
+      {
+        id: 'kw-t1',
+        find: 'Dự án Mẫu Thử',
+        replace: '[Dự án]',
+      },
+    ]
+
+    const result = await anonymizeDocx(fixtureBuffer, {}, { keywordRules: rules })
+    expect(result.report.replacements.keywords).toBe(2)
+
+    const zip = await JSZip.loadAsync(await result.blob.arrayBuffer())
+    const coreXml = await zip.file('docProps/core.xml')?.async('string')
+    expect(coreXml).toBeDefined()
+    expect(coreXml).toContain('<dc:title>Hợp đồng [Dự án]</dc:title>')
+    expect(coreXml).toContain('<dc:subject>[Dự án]</dc:subject>')
+
+    for (const path of Object.keys(zip.files)) {
+      if (path.endsWith('.xml')) {
+        const content = await zip.file(path)!.async('string')
+        expect(content).not.toContain('Dự án Mẫu Thử')
+      }
+    }
+
+    const residual = await scanResidual(await result.blob.arrayBuffer(), [], [], { keywordRules: rules })
+    expect(residual.status).toBe('PASS')
+    expect(residual.findings.length).toBe(0)
+  })
+
+  it('T2: scanResidual on original file with keywordRules flags metadata with status FAIL', async () => {
+    const fixtureBuffer = await createW14bFixtureDocx()
+    const rules: KeywordRule[] = [
+      {
+        id: 'kw-t2',
+        find: 'Dự án Mẫu Thử',
+        replace: '[Dự án]',
+      },
+    ]
+
+    const residual = await scanResidual(fixtureBuffer, [], [], { keywordRules: rules })
+    expect(residual.status).toBe('FAIL')
+    const metaFindings = residual.findings.filter((f) => f.category === 'metadata')
+    expect(metaFindings.length).toBeGreaterThan(0)
+    expect(metaFindings.some((f) => f.part === 'docProps/core.xml' && f.matchedString === 'Dự án Mẫu Thử')).toBe(true)
+  })
+
+  it('T3: countKeywordMatches counts keywords in docProps under byGroup.metadata = 2', async () => {
+    const fixtureBuffer = await createW14bFixtureDocx()
+    const rules: KeywordRule[] = [
+      {
+        id: 'kw-t3',
+        find: 'Dự án Mẫu Thử',
+        replace: '[Dự án]',
+      },
+    ]
+
+    const counts = await countKeywordMatches(fixtureBuffer, rules, 'mask')
+    expect(counts.byGroup.metadata).toBe(2)
+    expect(counts.total).toBe(2)
+    expect(counts.byRule['kw-t3']).toBe(2)
   })
 })

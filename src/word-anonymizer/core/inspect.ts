@@ -557,6 +557,7 @@ export async function countKeywordMatches(
       deleted: 0,
       comments: 0,
       headerFooter: 0,
+      metadata: 0,
     },
   }
 
@@ -570,6 +571,46 @@ export async function countKeywordMatches(
 
   const entries = Object.keys(zip.files).sort()
   for (const path of entries) {
+    if (path.startsWith('docProps/') && path.endsWith('.xml')) {
+      const file = zip.file(path)
+      if (!file) continue
+
+      const xmlText = await file.async('string')
+      if (!xmlText) continue
+
+      try {
+        const doc = parseXml(xmlText)
+        const textNodes: Node[] = []
+        const walk = (node: Node) => {
+          if (node.nodeType === 3 /* Node.TEXT_NODE */) {
+            textNodes.push(node)
+          } else if (node.nodeType === 1 /* Node.ELEMENT_NODE */) {
+            for (let i = 0; i < node.childNodes.length; i++) {
+              walk(node.childNodes[i])
+            }
+          }
+        }
+        walk(doc.documentElement)
+
+        for (const tNode of textNodes) {
+          const text = (tNode.textContent || '').normalize('NFC')
+          if (!text) continue
+
+          const matches = findKeywordMatches(text, rules)
+          for (const m of matches) {
+            if (m.ruleId) {
+              counts.byRule[m.ruleId] = (counts.byRule[m.ruleId] || 0) + 1
+            }
+            counts.byGroup.metadata++
+            counts.total++
+          }
+        }
+      } catch {
+        // Ignore XML parse errors
+      }
+      continue
+    }
+
     if (!path.startsWith('word/') || !path.endsWith('.xml') || path === 'word/people.xml') {
       continue
     }

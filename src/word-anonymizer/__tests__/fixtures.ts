@@ -405,3 +405,28 @@ export async function createW14FixtureDocx(): Promise<ArrayBuffer> {
     comments,
   })
 }
+
+export async function createW14bFixtureDocx(): Promise<ArrayBuffer> {
+  const documentXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:body>
+    <w:p>
+      <w:r><w:t>Văn bản kiểm thử metadata và từ khoá.</w:t></w:r>
+    </w:p>
+  </w:body>
+</w:document>`
+
+  const coreXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <dc:title>Hợp đồng Dự án Mẫu Thử</dc:title>
+  <dc:subject>Dự án Mẫu Thử</dc:subject>
+  <dc:creator>Test User</dc:creator>
+</cp:coreProperties>`
+
+  return createMockDocx({
+    documentXmlOverride: documentXml,
+    extraXmlFiles: {
+      'docProps/core.xml': coreXml,
+    },
+  })
+}

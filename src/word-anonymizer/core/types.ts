@@ -123,6 +123,7 @@ export interface KeywordMatchCounts {
     deleted: number
     comments: number
     headerFooter: number
+    metadata: number
   }
 }
 
