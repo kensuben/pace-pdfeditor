@@ -126,6 +126,17 @@ function isLabelName(str: string): boolean {
   return CONTRACT_LABEL_NAMES.includes(norm)
 }
 
+function isLabelPrefix(str: string): boolean {
+  const norm = str
+    .trim()
+    .toLowerCase()
+    .normalize('NFC')
+    .replace(/^[:;,.\-_()"'“”‘’…\s]+/, '')
+    .replace(/[:;,.\-_()"'“”‘’…\s]+$/, '')
+  if (norm.length < 2) return false
+  return CONTRACT_LABEL_NAMES.some((label) => label.startsWith(norm))
+}
+
 function cleanValue(str: string): string {
   let res = str.trim()
   res = res.replace(/^[:;,.\-_()"'“”‘’…\s]+/, '').replace(/[:;,.\-_()"'“”‘’…\s]+$/, '')
@@ -175,168 +186,213 @@ export function suggestFromLabels(paragraphs: SuggestParagraph[]): LabelSuggesti
   const map = new Map<string, LabelSuggestion>()
   const seenInParagraph = new Set<string>()
 
+  // Group paragraphs by paraKey to allow cross-stream inspection (original vs body) for the same paragraph
+  const paraGroups = new Map<string, SuggestParagraph[]>()
   for (let pIdx = 0; pIdx < paragraphs.length; pIdx++) {
     const p = paragraphs[pIdx]
-    const text = p.text || ''
-    if (!text.trim()) continue
-
     const paraKey = p.paraId !== undefined ? String(p.paraId) : `idx_${pIdx}`
+    const list = paraGroups.get(paraKey)
+    if (list) {
+      list.push(p)
+    } else {
+      paraGroups.set(paraKey, [p])
+    }
+  }
 
-    const registerSuggestion = (item: {
+  for (const [paraKey, groupParas] of paraGroups.entries()) {
+    const rawMatches: Array<{
       kind: 'organization' | 'representative' | 'keyword'
       hint: 'party' | 'representative' | 'position' | 'authorization' | 'contractNo'
       value: string
+      normVal: string
+      stream: 'original' | 'body'
       sources: ('body' | 'deleted')[]
-    }) => {
-      const normVal = item.value.normalize('NFC').toLowerCase()
-      const dedupKey = `${paraKey}|${item.kind}|${item.hint}|${normVal}`
+    }> = []
+
+    for (const p of groupParas) {
+      const text = p.text || ''
+      if (!text.trim()) continue
+
+      const stream: 'original' | 'body' =
+        p.stream ??
+        (p.charSources?.includes('deleted') || p.source === 'deleted' ? 'original' : 'body')
+
+      // 1. Authorization: Giấy (ủy|uỷ) quyền số (anywhere in paragraph, must contain digit)
+      AUTH_REGEX.lastIndex = 0
+      let authMatch: RegExpExecArray | null
+      while ((authMatch = AUTH_REGEX.exec(text)) !== null) {
+        const rawVal = authMatch[1] || ''
+        const cleaned = cleanValue(rawVal)
+        if (isValidValue(cleaned) && /\d/.test(cleaned) && !isLabelName(cleaned)) {
+          const groupOffset = authMatch[0].lastIndexOf(authMatch[1])
+          const groupStart = authMatch.index + (groupOffset >= 0 ? groupOffset : 0)
+          const cleanedOffset = authMatch[1].indexOf(cleaned)
+          const valStart = groupStart + (cleanedOffset >= 0 ? cleanedOffset : 0)
+          const valEnd = valStart + cleaned.length
+          rawMatches.push({
+            kind: 'keyword',
+            hint: 'authorization',
+            value: cleaned,
+            normVal: cleaned.toLowerCase().normalize('NFC'),
+            stream,
+            sources: getOccurrenceSources(p, valStart, valEnd),
+          })
+        }
+      }
+
+      // 2. Contract No: Hợp đồng số / Số hợp đồng: (must contain digit)
+      CONTRACT_REGEX.lastIndex = 0
+      let contractMatch: RegExpExecArray | null
+      while ((contractMatch = CONTRACT_REGEX.exec(text)) !== null) {
+        const rawVal = contractMatch[1] || ''
+        const cleaned = cleanValue(rawVal)
+        if (isValidValue(cleaned) && /\d/.test(cleaned) && !isLabelName(cleaned)) {
+          const groupOffset = contractMatch[0].lastIndexOf(contractMatch[1])
+          const groupStart = contractMatch.index + (groupOffset >= 0 ? groupOffset : 0)
+          const cleanedOffset = contractMatch[1].indexOf(cleaned)
+          const valStart = groupStart + (cleanedOffset >= 0 ? cleanedOffset : 0)
+          const valEnd = valStart + cleaned.length
+          rawMatches.push({
+            kind: 'keyword',
+            hint: 'contractNo',
+            value: cleaned,
+            normVal: cleaned.toLowerCase().normalize('NFC'),
+            stream,
+            sources: getOccurrenceSources(p, valStart, valEnd),
+          })
+        }
+      }
+
+      // 3. Party: Bên A, Bên mua, etc.
+      PARTY_REGEX.lastIndex = 0
+      let partyMatch: RegExpExecArray | null
+      while ((partyMatch = PARTY_REGEX.exec(text)) !== null) {
+        let rawVal = partyMatch[1] || ''
+        // If there's another label like "\tĐại diện:" in the same segment, truncate
+        const stopIdx = rawVal.search(/[\t\r\n]/)
+        if (stopIdx !== -1) {
+          rawVal = rawVal.slice(0, stopIdx)
+        }
+        const trimmed = cleanValue(rawVal)
+        const afterOrgCut = cutOrgPrefix(trimmed)
+        const cleaned = cleanValue(afterOrgCut)
+        if (isValidValue(cleaned) && !isLabelName(cleaned) && !isLabelPrefix(cleaned)) {
+          const groupOffset = partyMatch[0].lastIndexOf(partyMatch[1])
+          const groupStart = partyMatch.index + (groupOffset >= 0 ? groupOffset : 0)
+          const cleanedOffset = partyMatch[1].indexOf(cleaned)
+          const valStart = groupStart + (cleanedOffset >= 0 ? cleanedOffset : 0)
+          const valEnd = valStart + cleaned.length
+          rawMatches.push({
+            kind: 'organization',
+            hint: 'party',
+            value: cleaned,
+            normVal: cleaned.toLowerCase().normalize('NFC'),
+            stream,
+            sources: getOccurrenceSources(p, valStart, valEnd),
+          })
+        }
+      }
+
+      // 4. Representative: Đại diện, Người đại diện, etc.
+      REP_REGEX.lastIndex = 0
+      let repMatch: RegExpExecArray | null
+      while ((repMatch = REP_REGEX.exec(text)) !== null) {
+        let rawVal = repMatch[1] || ''
+        // Up to next "Chức vụ" label / tab / newline
+        const posLabelIdx = rawVal.search(/(?:(?:^|[\s\t])(?:chức|chuc)\s+(?:vụ|vu)\s*[:.-]?|\t)/i)
+        if (posLabelIdx !== -1) {
+          rawVal = rawVal.slice(0, posLabelIdx)
+        }
+        let cleaned = cleanValue(rawVal)
+        // Strip title prefix (Ông, Bà, Mr, Mrs, Ms...)
+        cleaned = cleaned.replace(TITLE_PREFIX_REGEX, '')
+        cleaned = cleanValue(cleaned)
+        if (isValidValue(cleaned) && !isLabelName(cleaned) && !isLabelPrefix(cleaned)) {
+          const groupOffset = repMatch[0].lastIndexOf(repMatch[1])
+          const groupStart = repMatch.index + (groupOffset >= 0 ? groupOffset : 0)
+          const cleanedOffset = repMatch[1].indexOf(cleaned)
+          const valStart = groupStart + (cleanedOffset >= 0 ? cleanedOffset : 0)
+          const valEnd = valStart + cleaned.length
+          rawMatches.push({
+            kind: 'representative',
+            hint: 'representative',
+            value: cleaned,
+            normVal: cleaned.toLowerCase().normalize('NFC'),
+            stream,
+            sources: getOccurrenceSources(p, valStart, valEnd),
+          })
+        }
+      }
+
+      // 5. Position: Chức vụ (only at start of line or immediately after tab)
+      POS_REGEX.lastIndex = 0
+      let posMatch: RegExpExecArray | null
+      while ((posMatch = POS_REGEX.exec(text)) !== null) {
+        let rawVal = posMatch[1] || ''
+        const stopIdx = rawVal.search(/[\t\r\n]/)
+        if (stopIdx !== -1) {
+          rawVal = rawVal.slice(0, stopIdx)
+        }
+        const cleaned = cleanValue(rawVal)
+        if (isValidValue(cleaned) && !isLabelName(cleaned) && !isLabelPrefix(cleaned)) {
+          const groupOffset = posMatch[0].lastIndexOf(posMatch[1])
+          const groupStart = posMatch.index + (groupOffset >= 0 ? groupOffset : 0)
+          const cleanedOffset = posMatch[1].indexOf(cleaned)
+          const valStart = groupStart + (cleanedOffset >= 0 ? cleanedOffset : 0)
+          const valEnd = valStart + cleaned.length
+          rawMatches.push({
+            kind: 'keyword',
+            hint: 'position',
+            value: cleaned,
+            normVal: cleaned.toLowerCase().normalize('NFC'),
+            stream,
+            sources: getOccurrenceSources(p, valStart, valEnd),
+          })
+        }
+      }
+    }
+
+    // Filter out truncated body stream suggestions when the original stream has the full value
+    for (const match of rawMatches) {
+      if (match.stream === 'body') {
+        const isTruncatedPrefixOfOriginal = rawMatches.some(
+          (orig) =>
+            orig.stream === 'original' &&
+            orig.kind === match.kind &&
+            orig.hint === match.hint &&
+            orig.normVal !== match.normVal &&
+            orig.normVal.startsWith(match.normVal)
+        )
+        if (isTruncatedPrefixOfOriginal) {
+          continue
+        }
+      }
+
+      // Register into map and handle deduplication
+      const dedupKey = `${paraKey}|${match.kind}|${match.hint}|${match.normVal}`
       const isFirstInPara = !seenInParagraph.has(dedupKey)
       if (isFirstInPara) {
         seenInParagraph.add(dedupKey)
       }
 
-      const mapKey = `${item.kind}|${item.hint}|${normVal}`
+      const mapKey = `${match.kind}|${match.hint}|${match.normVal}`
       const existing = map.get(mapKey)
       if (existing) {
         if (isFirstInPara) {
           existing.count++
         }
-        for (const src of item.sources) {
+        for (const src of match.sources) {
           if (!existing.sources.includes(src)) {
             existing.sources.push(src)
           }
         }
       } else {
         map.set(mapKey, {
-          kind: item.kind,
-          hint: item.hint,
-          value: item.value,
+          kind: match.kind,
+          hint: match.hint,
+          value: match.value,
           count: 1,
-          sources: [...item.sources],
-        })
-      }
-    }
-
-    // 1. Authorization: Giấy (ủy|uỷ) quyền số (anywhere in paragraph, must contain digit)
-    AUTH_REGEX.lastIndex = 0
-    let authMatch: RegExpExecArray | null
-    while ((authMatch = AUTH_REGEX.exec(text)) !== null) {
-      const rawVal = authMatch[1] || ''
-      const cleaned = cleanValue(rawVal)
-      if (isValidValue(cleaned) && /\d/.test(cleaned) && !isLabelName(cleaned)) {
-        const groupOffset = authMatch[0].lastIndexOf(authMatch[1])
-        const groupStart = authMatch.index + (groupOffset >= 0 ? groupOffset : 0)
-        const cleanedOffset = authMatch[1].indexOf(cleaned)
-        const valStart = groupStart + (cleanedOffset >= 0 ? cleanedOffset : 0)
-        const valEnd = valStart + cleaned.length
-        registerSuggestion({
-          kind: 'keyword',
-          hint: 'authorization',
-          value: cleaned,
-          sources: getOccurrenceSources(p, valStart, valEnd),
-        })
-      }
-    }
-
-    // 2. Contract No: Hợp đồng số / Số hợp đồng: (must contain digit)
-    CONTRACT_REGEX.lastIndex = 0
-    let contractMatch: RegExpExecArray | null
-    while ((contractMatch = CONTRACT_REGEX.exec(text)) !== null) {
-      const rawVal = contractMatch[1] || ''
-      const cleaned = cleanValue(rawVal)
-      if (isValidValue(cleaned) && /\d/.test(cleaned) && !isLabelName(cleaned)) {
-        const groupOffset = contractMatch[0].lastIndexOf(contractMatch[1])
-        const groupStart = contractMatch.index + (groupOffset >= 0 ? groupOffset : 0)
-        const cleanedOffset = contractMatch[1].indexOf(cleaned)
-        const valStart = groupStart + (cleanedOffset >= 0 ? cleanedOffset : 0)
-        const valEnd = valStart + cleaned.length
-        registerSuggestion({
-          kind: 'keyword',
-          hint: 'contractNo',
-          value: cleaned,
-          sources: getOccurrenceSources(p, valStart, valEnd),
-        })
-      }
-    }
-
-    // 3. Party: Bên A, Bên mua, etc.
-    PARTY_REGEX.lastIndex = 0
-    let partyMatch: RegExpExecArray | null
-    while ((partyMatch = PARTY_REGEX.exec(text)) !== null) {
-      let rawVal = partyMatch[1] || ''
-      // If there's another label like "\tĐại diện:" in the same segment, truncate
-      const stopIdx = rawVal.search(/[\t\r\n]/)
-      if (stopIdx !== -1) {
-        rawVal = rawVal.slice(0, stopIdx)
-      }
-      const trimmed = cleanValue(rawVal)
-      const afterOrgCut = cutOrgPrefix(trimmed)
-      const cleaned = cleanValue(afterOrgCut)
-      if (isValidValue(cleaned) && !isLabelName(cleaned)) {
-        const groupOffset = partyMatch[0].lastIndexOf(partyMatch[1])
-        const groupStart = partyMatch.index + (groupOffset >= 0 ? groupOffset : 0)
-        const cleanedOffset = partyMatch[1].indexOf(cleaned)
-        const valStart = groupStart + (cleanedOffset >= 0 ? cleanedOffset : 0)
-        const valEnd = valStart + cleaned.length
-        registerSuggestion({
-          kind: 'organization',
-          hint: 'party',
-          value: cleaned,
-          sources: getOccurrenceSources(p, valStart, valEnd),
-        })
-      }
-    }
-
-    // 4. Representative: Đại diện, Người đại diện, etc.
-    REP_REGEX.lastIndex = 0
-    let repMatch: RegExpExecArray | null
-    while ((repMatch = REP_REGEX.exec(text)) !== null) {
-      let rawVal = repMatch[1] || ''
-      // Up to next "Chức vụ" label / tab / newline
-      const posLabelIdx = rawVal.search(/(?:(?:^|[\s\t])(?:chức|chuc)\s+(?:vụ|vu)\s*[:.-]?|\t)/i)
-      if (posLabelIdx !== -1) {
-        rawVal = rawVal.slice(0, posLabelIdx)
-      }
-      let cleaned = cleanValue(rawVal)
-      // Strip title prefix (Ông, Bà, Mr, Mrs, Ms...)
-      cleaned = cleaned.replace(TITLE_PREFIX_REGEX, '')
-      cleaned = cleanValue(cleaned)
-      if (isValidValue(cleaned) && !isLabelName(cleaned)) {
-        const groupOffset = repMatch[0].lastIndexOf(repMatch[1])
-        const groupStart = repMatch.index + (groupOffset >= 0 ? groupOffset : 0)
-        const cleanedOffset = repMatch[1].indexOf(cleaned)
-        const valStart = groupStart + (cleanedOffset >= 0 ? cleanedOffset : 0)
-        const valEnd = valStart + cleaned.length
-        registerSuggestion({
-          kind: 'representative',
-          hint: 'representative',
-          value: cleaned,
-          sources: getOccurrenceSources(p, valStart, valEnd),
-        })
-      }
-    }
-
-    // 5. Position: Chức vụ (only at start of line or immediately after tab)
-    POS_REGEX.lastIndex = 0
-    let posMatch: RegExpExecArray | null
-    while ((posMatch = POS_REGEX.exec(text)) !== null) {
-      let rawVal = posMatch[1] || ''
-      const stopIdx = rawVal.search(/[\t\r\n]/)
-      if (stopIdx !== -1) {
-        rawVal = rawVal.slice(0, stopIdx)
-      }
-      const cleaned = cleanValue(rawVal)
-      if (isValidValue(cleaned) && !isLabelName(cleaned)) {
-        const groupOffset = posMatch[0].lastIndexOf(posMatch[1])
-        const groupStart = posMatch.index + (groupOffset >= 0 ? groupOffset : 0)
-        const cleanedOffset = posMatch[1].indexOf(cleaned)
-        const valStart = groupStart + (cleanedOffset >= 0 ? cleanedOffset : 0)
-        const valEnd = valStart + cleaned.length
-        registerSuggestion({
-          kind: 'keyword',
-          hint: 'position',
-          value: cleaned,
-          sources: getOccurrenceSources(p, valStart, valEnd),
+          sources: [...match.sources],
         })
       }
     }

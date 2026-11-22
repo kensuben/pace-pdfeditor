@@ -12,6 +12,7 @@ import {
 } from '../core'
 import WordAnonymizerPage from '../WordAnonymizerPage'
 import {
+  createMockDocx,
   createW15FixtureDocx,
   createW15bFixtureMixedDocx,
   createW15bFixtureTableDocx,
@@ -427,6 +428,49 @@ describe('W-15: Label-based Entity & Keyword Suggestions', () => {
     ]
     const suggestions = suggestFromLabels(paragraphs)
     expect(suggestions.some((s) => s.value.toLowerCase().includes('chức vụ'))).toBe(false)
+    expect(suggestions).toHaveLength(0)
+  })
+
+  // W-15c T1: đoạn ở mục 2: "Đại diện: Bà NGƯỜI ĐẠI " (w:t) + <w:del> "DIỆN TEST 05" (w:delText)
+  // -> đúng 1 gợi ý người đại diện "NGƯỜI ĐẠI DIỆN TEST 05", sources có 'deleted'
+  it('W-15c T1: drops truncated body suggestion when value spans current and deleted text', async () => {
+    const wNs = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'
+    const documentXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="${wNs}">
+  <w:body>
+    <w:p>
+      <w:r><w:t xml:space="preserve">Đại diện: Bà NGƯỜI ĐẠI </w:t></w:r>
+      <w:del w:id="1" w:author="Author 1" w:date="2026-01-01T00:00:00Z">
+        <w:r><w:delText>DIỆN TEST 05</w:delText></w:r>
+      </w:del>
+    </w:p>
+  </w:body>
+</w:document>`
+
+    const docxBuf = await createMockDocx({ documentXmlOverride: documentXml })
+    const report = await inspectDocx(docxBuf)
+    const suggestions = report.suggestions || []
+
+    const reps = suggestions.filter((s) => s.kind === 'representative')
+    expect(reps).toHaveLength(1)
+    expect(reps[0].value).toBe('NGƯỜI ĐẠI DIỆN TEST 05')
+    expect(reps[0].sources).toContain('deleted')
+
+    // Ensure truncated prefix "NGƯỜI ĐẠI" is NOT present anywhere
+    expect(suggestions.some((s) => s.value === 'NGƯỜI ĐẠI')).toBe(false)
+  })
+
+  // W-15c T2: Bỏ mọi gợi ý pháp nhân/người đại diện mà giá trị là tiền tố của chính một nhãn ("Người đại", "Đại diện", "Bên"…)
+  it('W-15c T2: drops suggestions whose value is a prefix of contract labels ("Người đại", "Bên", "Đại diện")', () => {
+    const paragraphs: SuggestParagraph[] = [
+      { text: 'Đại diện:\tNgười đại', source: 'body' },
+      { text: 'Bên A:\tBên', source: 'body' },
+      { text: 'Đại diện:\tBà Đại diện', source: 'body' },
+    ]
+    const suggestions = suggestFromLabels(paragraphs)
+    expect(suggestions.some((s) => s.value === 'Người đại')).toBe(false)
+    expect(suggestions.some((s) => s.value === 'Bên')).toBe(false)
+    expect(suggestions.some((s) => s.value === 'Đại diện')).toBe(false)
     expect(suggestions).toHaveLength(0)
   })
 })

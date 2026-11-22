@@ -89,6 +89,7 @@ export interface SuggestParagraph {
   source: 'body' | 'deleted'
   charSources?: ('body' | 'deleted')[]
   paraId?: string | number
+  stream?: 'original' | 'body'
 }
 
 export interface InspectionReport {

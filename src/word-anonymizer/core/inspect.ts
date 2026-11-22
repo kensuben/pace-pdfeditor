@@ -507,6 +507,7 @@ export async function inspectLoadedDocx(
               source: originalCharSources.includes('deleted') ? 'deleted' : 'body',
               charSources: originalCharSources,
               paraId: `${path}#p_${pIdx}`,
+              stream: 'original',
             })
           }
           if (bodyText !== originalText && bodyText.trim()) {
@@ -514,6 +515,7 @@ export async function inspectLoadedDocx(
               text: bodyText,
               source: 'body',
               paraId: `${path}#p_${pIdx}`,
+              stream: 'body',
             })
           }
         }
@@ -604,6 +606,7 @@ export async function inspectLoadedDocx(
                     source: fullSources.includes('deleted') ? 'deleted' : 'body',
                     charSources: fullSources,
                     paraId: `${path}#tbl_${tIdx}_tr_${rIdx}_tc_${cIdx}`,
+                    stream: 'original',
                   })
                 }
               }
