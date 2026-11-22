@@ -540,3 +540,80 @@ export async function createW15bFixtureTableDocx(): Promise<ArrayBuffer> {
     documentXmlOverride: documentXml,
   })
 }
+
+export async function createF14FixtureDocx(): Promise<ArrayBuffer> {
+  const wNs = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'
+  const documentXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="${wNs}">
+  <w:body>
+    <w:p>
+      <w:r><w:t xml:space="preserve">Đại diện: </w:t><w:tab/><w:t>Ông NGƯỜI ĐẠI DIỆN TEST 02</w:t><w:tab/><w:t>Chức vụ: Giám đốc</w:t></w:r>
+    </w:p>
+    <w:p>
+      <w:r><w:t>Liên hệ: lienhe.test@example.com</w:t><w:br/><w:t>Tiếp theo</w:t></w:r>
+    </w:p>
+    <w:p>
+      <w:r><w:t xml:space="preserve">MST: </w:t><w:tab/><w:t>0101234567</w:t><w:tab/><w:t>Điện thoại: 0912 345 678</w:t></w:r>
+    </w:p>
+    <w:p>
+      <w:r><w:t xml:space="preserve">Địa chỉ: </w:t><w:tab/></w:r>
+      <w:del w:id="1" w:author="Author 1" w:date="2026-01-01T00:00:00Z">
+        <w:r><w:delText>Số 1 Đường Test, Hà Nội</w:delText></w:r>
+      </w:del>
+    </w:p>
+    <w:p>
+      <w:r><w:t xml:space="preserve">Mã số thuế: </w:t><w:tab/></w:r>
+      <w:del w:id="2" w:author="Author 1" w:date="2026-01-01T00:00:00Z">
+        <w:r><w:delText>0101234567</w:delText></w:r>
+      </w:del>
+    </w:p>
+    <w:p>
+      <w:r><w:t>Hotline: 091</w:t><w:noBreakHyphen/><w:t>234</w:t><w:softHyphen/><w:t>5678</w:t></w:r>
+    </w:p>
+  </w:body>
+</w:document>`
+
+  return createMockDocx({
+    documentXmlOverride: documentXml,
+  })
+}
+
+export async function createF14SplitEntityDocx(): Promise<ArrayBuffer> {
+  const wNs = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'
+  const documentXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="${wNs}">
+  <w:body>
+    <w:p>
+      <w:r><w:t xml:space="preserve">Đại diện: Bà NGƯỜI ĐẠI </w:t></w:r>
+      <w:del w:id="3" w:author="Author 1" w:date="2026-01-01T00:00:00Z">
+        <w:r><w:delText>DIỆN TEST 05</w:delText></w:r>
+      </w:del>
+    </w:p>
+  </w:body>
+</w:document>`
+
+  return createMockDocx({
+    documentXmlOverride: documentXml,
+  })
+}
+
+export async function createF14BenchmarkDocx(count: number = 2000): Promise<ArrayBuffer> {
+  const wNs = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'
+  const paras: string[] = []
+  for (let i = 0; i < count; i++) {
+    paras.push(`
+    <w:p>
+      <w:r><w:t xml:space="preserve">Mục ${i}: </w:t><w:tab/><w:t>Dữ liệu mẫu số ${i}</w:t><w:tab/><w:t>Ghi chú thêm</w:t><w:tab/><w:t>Kết thúc</w:t></w:r>
+    </w:p>`)
+  }
+  const documentXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="${wNs}">
+  <w:body>
+    ${paras.join('\n')}
+  </w:body>
+</w:document>`
+
+  return createMockDocx({
+    documentXmlOverride: documentXml,
+  })
+}

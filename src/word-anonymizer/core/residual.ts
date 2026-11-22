@@ -2,7 +2,7 @@ import JSZip from 'jszip'
 import { OOXML_NAMESPACES } from './constants'
 import { foldSearchString } from './normalize'
 import { findSensitive, isMaskedValue, normalizePhone } from './sensitive'
-import { findKeywordMatches } from './textReplace'
+import { buildParagraphStream, findKeywordMatches } from './textReplace'
 import {
   CustomEntity,
   DeletedTextMode,
@@ -167,55 +167,94 @@ export async function scanResidual(
       const xmlText = await file.async('string')
       try {
         const doc = parseXml(xmlText)
-        // Collect text from w:t and w:instrText, and deleted text from w:delText and w:delInstrText
-        const tEls = Array.from(doc.getElementsByTagNameNS(OOXML_NAMESPACES.w, 't'))
-        const instrEls = Array.from(doc.getElementsByTagNameNS(OOXML_NAMESPACES.w, 'instrText'))
-        const delTextEls = Array.from(doc.getElementsByTagNameNS(OOXML_NAMESPACES.w, 'delText'))
-        const delInstrEls = Array.from(doc.getElementsByTagNameNS(OOXML_NAMESPACES.w, 'delInstrText'))
+        const paragraphs = Array.from(doc.getElementsByTagNameNS(OOXML_NAMESPACES.w, 'p'))
 
-        const textChunks: string[] = []
-        for (const el of [...tEls, ...instrEls]) {
-          const content = el.textContent || ''
-          if (content) textChunks.push(content)
-        }
+        for (const p of paragraphs) {
+          // 1. Regular stream (w:t) with virtual separators
+          const bodyStream = buildParagraphStream(p, 'body')
+          if (bodyStream.streamText.trim()) {
+            const sensitiveMatches = findSensitive(bodyStream.streamText)
+            for (const sMatch of sensitiveMatches) {
+              if (!maskKinds[sMatch.kind]) continue
+              if (keepValues.includes(sMatch.normalized)) continue
+              if (isMaskedValue(sMatch.kind, sMatch.value)) continue
 
-        const combinedText = textChunks.join(' ')
-        if (combinedText.trim()) {
-          const sensitiveMatches = findSensitive(combinedText)
-          for (const sMatch of sensitiveMatches) {
-            if (!maskKinds[sMatch.kind]) continue
-            if (keepValues.includes(sMatch.normalized)) continue
-            if (isMaskedValue(sMatch.kind, sMatch.value)) continue
+              findings.push({
+                part: path,
+                matchedString: sMatch.value,
+                count: 1,
+                category: path === 'word/comments.xml' ? 'comment-text' : 'body-text',
+              })
+            }
+          }
 
-            findings.push({
-              part: path,
-              matchedString: sMatch.value,
-              count: 1,
-              category: path === 'word/comments.xml' ? 'comment-text' : 'body-text',
-            })
+          // 2. Deleted text stream (w:delText) with original stream context
+          const hasDel = p.getElementsByTagNameNS(OOXML_NAMESPACES.w, 'delText').length > 0
+          if (hasDel) {
+            const origStream = buildParagraphStream(p, 'original')
+            if (origStream.streamText.trim()) {
+              const sensitiveMatches = findSensitive(origStream.streamText)
+              for (const sMatch of sensitiveMatches) {
+                if (!maskKinds[sMatch.kind]) continue
+                if (keepValues.includes(sMatch.normalized)) continue
+
+                // Only report finding if this sensitive match overlaps with w:delText
+                const overlapsDel = origStream.nodeRanges.some(
+                  (r) => r.isDelText && Math.max(sMatch.start, r.start) < Math.min(sMatch.end, r.end)
+                )
+                if (!overlapsDel) continue
+
+                if (isMaskedValue(sMatch.kind, sMatch.value)) continue
+
+                findings.push({
+                  part: path,
+                  matchedString: sMatch.value,
+                  count: 1,
+                  category: 'deleted-text',
+                })
+              }
+            }
           }
         }
 
-        const delChunks: string[] = []
-        for (const el of [...delTextEls, ...delInstrEls]) {
+        // Field codes
+        const instrEls = Array.from(doc.getElementsByTagNameNS(OOXML_NAMESPACES.w, 'instrText'))
+        for (const el of instrEls) {
           const content = el.textContent || ''
-          if (content) delChunks.push(content)
+          if (content.trim()) {
+            const sensitiveMatches = findSensitive(content)
+            for (const sMatch of sensitiveMatches) {
+              if (!maskKinds[sMatch.kind]) continue
+              if (keepValues.includes(sMatch.normalized)) continue
+              if (isMaskedValue(sMatch.kind, sMatch.value)) continue
+
+              findings.push({
+                part: path,
+                matchedString: sMatch.value,
+                count: 1,
+                category: path === 'word/comments.xml' ? 'comment-text' : 'body-text',
+              })
+            }
+          }
         }
 
-        const combinedDelText = delChunks.join(' ')
-        if (combinedDelText.trim()) {
-          const sensitiveMatches = findSensitive(combinedDelText)
-          for (const sMatch of sensitiveMatches) {
-            if (!maskKinds[sMatch.kind]) continue
-            if (keepValues.includes(sMatch.normalized)) continue
-            if (isMaskedValue(sMatch.kind, sMatch.value)) continue
+        const delInstrEls = Array.from(doc.getElementsByTagNameNS(OOXML_NAMESPACES.w, 'delInstrText'))
+        for (const el of delInstrEls) {
+          const content = el.textContent || ''
+          if (content.trim()) {
+            const sensitiveMatches = findSensitive(content)
+            for (const sMatch of sensitiveMatches) {
+              if (!maskKinds[sMatch.kind]) continue
+              if (keepValues.includes(sMatch.normalized)) continue
+              if (isMaskedValue(sMatch.kind, sMatch.value)) continue
 
-            findings.push({
-              part: path,
-              matchedString: sMatch.value,
-              count: 1,
-              category: 'deleted-text',
-            })
+              findings.push({
+                part: path,
+                matchedString: sMatch.value,
+                count: 1,
+                category: 'deleted-text',
+              })
+            }
           }
         }
       } catch {
@@ -265,61 +304,49 @@ export async function scanResidual(
           const paragraphs = Array.from(doc.getElementsByTagNameNS(OOXML_NAMESPACES.w, 'p'))
 
           for (const p of paragraphs) {
-            // Check regular text (w:t)
-            const tNodes = Array.from(p.getElementsByTagNameNS(OOXML_NAMESPACES.w, 't')).filter((tNode) => {
-              let curr = tNode.parentElement
-              while (curr && curr !== p) {
-                if (curr.localName === 'p' && curr.namespaceURI === OOXML_NAMESPACES.w) return false
-                curr = curr.parentElement
-              }
-              return true
-            })
-            if (tNodes.length > 0) {
-              const streamText = tNodes.map((n) => n.textContent || '').join('')
-              if (streamText) {
-                const kwMatches = findKeywordMatches(streamText, keywordRules)
-                for (const match of kwMatches) {
-                  const isInsideOtherReplace = otherReplacements.some((rep) => {
-                    if (rep.id === match.ruleId) return false
-                    let searchPos = 0
-                    while ((searchPos = streamText.indexOf(rep.replace, searchPos)) !== -1) {
-                      const repEnd = searchPos + rep.replace.length
-                      if (match.start >= searchPos && match.end <= repEnd) return true
-                      searchPos = repEnd
-                    }
-                    return false
-                  })
-
-                  if (!isInsideOtherReplace) {
-                    findings.push({
-                      part: path,
-                      matchedString: match.matchedText || streamText.slice(match.start, match.end),
-                      count: 1,
-                      category: path === 'word/comments.xml' ? 'comment-text' : 'body-text',
-                    })
+            // Check regular text (w:t) with virtual separators
+            const bodyStream = buildParagraphStream(p, 'body')
+            if (bodyStream.streamText) {
+              const kwMatches = findKeywordMatches(bodyStream.streamText, keywordRules)
+              for (const match of kwMatches) {
+                const isInsideOtherReplace = otherReplacements.some((rep) => {
+                  if (rep.id === match.ruleId) return false
+                  let searchPos = 0
+                  while ((searchPos = bodyStream.streamText.indexOf(rep.replace, searchPos)) !== -1) {
+                    const repEnd = searchPos + rep.replace.length
+                    if (match.start >= searchPos && match.end <= repEnd) return true
+                    searchPos = repEnd
                   }
+                  return false
+                })
+
+                if (!isInsideOtherReplace) {
+                  findings.push({
+                    part: path,
+                    matchedString: match.matchedText || bodyStream.streamText.slice(match.start, match.end),
+                    count: 1,
+                    category: path === 'word/comments.xml' ? 'comment-text' : 'body-text',
+                  })
                 }
               }
             }
 
-            // Check deleted text (w:delText)
-            const delNodes = Array.from(p.getElementsByTagNameNS(OOXML_NAMESPACES.w, 'delText')).filter((delNode) => {
-              let curr = delNode.parentElement
-              while (curr && curr !== p) {
-                if (curr.localName === 'p' && curr.namespaceURI === OOXML_NAMESPACES.w) return false
-                curr = curr.parentElement
-              }
-              return true
-            })
-            if (delNodes.length > 0) {
-              const streamText = delNodes.map((n) => n.textContent || '').join('')
-              if (streamText) {
-                const kwMatches = findKeywordMatches(streamText, keywordRules)
+            // Check deleted text (w:delText) with original stream context
+            const hasDel = p.getElementsByTagNameNS(OOXML_NAMESPACES.w, 'delText').length > 0
+            if (hasDel) {
+              const origStream = buildParagraphStream(p, 'original')
+              if (origStream.streamText) {
+                const kwMatches = findKeywordMatches(origStream.streamText, keywordRules)
                 for (const match of kwMatches) {
+                  const overlapsDel = origStream.nodeRanges.some(
+                    (r) => r.isDelText && Math.max(match.start, r.start) < Math.min(match.end, r.end)
+                  )
+                  if (!overlapsDel) continue
+
                   const isInsideOtherReplace = otherReplacements.some((rep) => {
                     if (rep.id === match.ruleId) return false
                     let searchPos = 0
-                    while ((searchPos = streamText.indexOf(rep.replace, searchPos)) !== -1) {
+                    while ((searchPos = origStream.streamText.indexOf(rep.replace, searchPos)) !== -1) {
                       const repEnd = searchPos + rep.replace.length
                       if (match.start >= searchPos && match.end <= repEnd) return true
                       searchPos = repEnd
@@ -330,7 +357,7 @@ export async function scanResidual(
                   if (!isInsideOtherReplace) {
                     findings.push({
                       part: path,
-                      matchedString: match.matchedText || streamText.slice(match.start, match.end),
+                      matchedString: match.matchedText || origStream.streamText.slice(match.start, match.end),
                       count: 1,
                       category: 'deleted-text',
                     })
