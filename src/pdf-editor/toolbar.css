@@ -69,9 +69,7 @@
 }
 
 .toolbar-overflow-menu {
-  position: absolute;
-  top: calc(100% + 6px);
-  right: 0;
+  position: fixed;
   background: var(--paper, #fff);
   border: 1px solid var(--line, #dddcd6);
   border-radius: 8px;

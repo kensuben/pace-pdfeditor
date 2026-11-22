@@ -1,4 +1,5 @@
-import { useState, useRef, useEffect, useCallback } from 'react'
+import { useState, useRef, useEffect, useLayoutEffect, useCallback } from 'react'
+import { createPortal } from 'react-dom'
 import {
   ImagePlus,
   FilePlus2,
@@ -29,6 +30,7 @@ export interface ToolbarOverflowMenuProps {
   ocrProgress: number
   showBoundingBoxes?: boolean
   onToggleBoundingBoxes?: () => void
+  portalTarget?: HTMLElement | null
 }
 
 interface MenuItemConfig {
@@ -57,10 +59,20 @@ export function ToolbarOverflowMenu({
   ocrProgress,
   showBoundingBoxes,
   onToggleBoundingBoxes,
+  portalTarget: explicitPortalTarget,
 }: ToolbarOverflowMenuProps) {
   const [isOpen, setIsOpen] = useState(false)
+  const [coords, setCoords] = useState<{ top: number; left: number }>({ top: 0, left: 0 })
+  const [isInsideToolbar, setIsInsideToolbar] = useState(false)
   const triggerRef = useRef<HTMLButtonElement | null>(null)
   const menuRef = useRef<HTMLDivElement | null>(null)
+
+  const triggerCallbackRef = useCallback((node: HTMLButtonElement | null) => {
+    triggerRef.current = node
+    if (node) {
+      setIsInsideToolbar(Boolean(node.closest('.toolbar')))
+    }
+  }, [])
 
   // Build items grouped by hiddenGroups
   const items: MenuItemConfig[] = []
@@ -139,8 +151,76 @@ export function ToolbarOverflowMenu({
 
   const closeMenu = useCallback(() => {
     setIsOpen(false)
-    triggerRef.current?.focus()
+    triggerRef.current?.focus({ preventScroll: true })
   }, [])
+
+  useLayoutEffect(() => {
+    if (!isOpen) return
+
+    const btn = triggerRef.current
+    const menuEl = menuRef.current
+    if (!btn) return
+
+    const btnRect = btn.getBoundingClientRect()
+    const viewportWidth =
+      typeof window !== 'undefined'
+        ? window.innerWidth || document.documentElement.clientWidth || 1024
+        : 1024
+    const viewportHeight =
+      typeof window !== 'undefined'
+        ? window.innerHeight || document.documentElement.clientHeight || 768
+        : 768
+
+    const menuWidth = menuEl?.offsetWidth || menuEl?.getBoundingClientRect().width || 200
+    const menuHeight = menuEl?.offsetHeight || menuEl?.getBoundingClientRect().height || 260
+
+    let left = btnRect.right - menuWidth
+    if (left < 8) {
+      left = 8
+    }
+    if (left + menuWidth > viewportWidth - 8) {
+      left = Math.max(8, viewportWidth - 8 - menuWidth)
+    }
+
+    let top = btnRect.bottom + 6
+    if (top + menuHeight > viewportHeight && btnRect.top - 6 - menuHeight >= 0) {
+      top = btnRect.top - 6 - menuHeight
+    } else if (top + menuHeight > viewportHeight) {
+      if (btnRect.top > viewportHeight - btnRect.bottom) {
+        top = Math.max(8, btnRect.top - 6 - menuHeight)
+      }
+    }
+
+    const nextTop = Math.round(top)
+    const nextLeft = Math.round(left)
+    setCoords({ top: nextTop, left: nextLeft })
+
+    if (menuEl) {
+      menuEl.style.top = `${nextTop}px`
+      menuEl.style.left = `${nextLeft}px`
+    }
+  }, [isOpen])
+
+  // Close on window resize or scroll outside menu (capture phase)
+  useEffect(() => {
+    if (!isOpen) return
+
+    const handleWindowResize = () => {
+      closeMenu()
+    }
+
+    const handleScroll = () => {
+      closeMenu()
+    }
+
+    window.addEventListener('resize', handleWindowResize)
+    window.addEventListener('scroll', handleScroll, true)
+
+    return () => {
+      window.removeEventListener('resize', handleWindowResize)
+      window.removeEventListener('scroll', handleScroll, true)
+    }
+  }, [isOpen, closeMenu])
 
   // Click outside to close
   useEffect(() => {
@@ -161,19 +241,19 @@ export function ToolbarOverflowMenu({
     return () => document.removeEventListener('mousedown', handlePointerDown)
   }, [isOpen])
 
-  // Focus first item on open
+  // Focus first item on open without scrolling
   useEffect(() => {
     if (isOpen && menuRef.current) {
       const firstBtn = menuRef.current.querySelector<HTMLButtonElement>(
         'button[role="menuitem"]:not([disabled])'
       )
       if (firstBtn) {
-        firstBtn.focus()
+        firstBtn.focus({ preventScroll: true })
       } else {
         const anyBtn = menuRef.current.querySelector<HTMLButtonElement>(
           'button[role="menuitem"]'
         )
-        anyBtn?.focus()
+        anyBtn?.focus({ preventScroll: true })
       }
     }
   }, [isOpen])
@@ -191,11 +271,11 @@ export function ToolbarOverflowMenu({
     if (e.key === 'ArrowDown') {
       e.preventDefault()
       const nextIndex = currentIndex < menuItems.length - 1 ? currentIndex + 1 : 0
-      menuItems[nextIndex].focus()
+      menuItems[nextIndex].focus({ preventScroll: true })
     } else if (e.key === 'ArrowUp') {
       e.preventDefault()
       const prevIndex = currentIndex > 0 ? currentIndex - 1 : menuItems.length - 1
-      menuItems[prevIndex].focus()
+      menuItems[prevIndex].focus({ preventScroll: true })
     } else if (e.key === 'Escape') {
       e.preventDefault()
       closeMenu()
@@ -206,10 +286,58 @@ export function ToolbarOverflowMenu({
     return null
   }
 
+  // Determine portal target:
+  // When inside .toolbar, portal to document.body so the toolbar scroll container
+  // never clips the menu and never scrolls when focused.
+  const resolvedPortalTarget =
+    explicitPortalTarget !== undefined
+      ? explicitPortalTarget
+      : isInsideToolbar && typeof document !== 'undefined'
+        ? document.body
+        : null
+
+  const menuElement = (
+    <div
+      ref={menuRef}
+      className="toolbar-overflow-menu"
+      role="menu"
+      aria-label="Thêm thao tác"
+      style={{
+        position: 'fixed',
+        top: `${coords.top}px`,
+        left: `${coords.left}px`,
+      }}
+      onKeyDown={handleKeyDown}
+    >
+      {items.map((item) => {
+        const Icon = item.icon
+        return (
+          <button
+            key={item.id}
+            type="button"
+            role="menuitem"
+            className="toolbar-overflow-item"
+            disabled={item.disabled}
+            aria-disabled={item.disabled ? 'true' : undefined}
+            title={item.title}
+            onClick={() => {
+              if (item.disabled) return
+              item.onClick()
+              closeMenu()
+            }}
+          >
+            <Icon size={16} />
+            <span>{item.label}</span>
+          </button>
+        )
+      })}
+    </div>
+  )
+
   return (
     <div className="toolbar-overflow-container">
       <button
-        ref={triggerRef}
+        ref={triggerCallbackRef}
         type="button"
         className="icon-button toolbar-overflow-btn"
         aria-label="Thêm thao tác"
@@ -221,38 +349,10 @@ export function ToolbarOverflowMenu({
         ⋯
       </button>
 
-      {isOpen && (
-        <div
-          ref={menuRef}
-          className="toolbar-overflow-menu"
-          role="menu"
-          aria-label="Thêm thao tác"
-          onKeyDown={handleKeyDown}
-        >
-          {items.map((item) => {
-            const Icon = item.icon
-            return (
-              <button
-                key={item.id}
-                type="button"
-                role="menuitem"
-                className="toolbar-overflow-item"
-                disabled={item.disabled}
-                aria-disabled={item.disabled ? 'true' : undefined}
-                title={item.title}
-                onClick={() => {
-                  if (item.disabled) return
-                  item.onClick()
-                  closeMenu()
-                }}
-              >
-                <Icon size={16} />
-                <span>{item.label}</span>
-              </button>
-            )
-          })}
-        </div>
-      )}
+      {isOpen &&
+        (resolvedPortalTarget
+          ? createPortal(menuElement, resolvedPortalTarget)
+          : menuElement)}
     </div>
   )
 }
