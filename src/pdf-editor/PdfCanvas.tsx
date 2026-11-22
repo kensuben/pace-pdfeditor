@@ -4,7 +4,7 @@ import type { Annotation, Point, TextRegion, TextStyle, Tool } from '../types'
 import { clamp, uid } from './geometry'
 import { groupTextItemsIntoLines } from './textExtraction'
 import { SelectionFrame } from './selection/SelectionFrame'
-import { moveBy, nudgeDelta } from './selection/geometry'
+import { getBounds, moveBy, nudgeDelta } from './selection/geometry'
 import { useDesktopEditor } from './useDesktopEditor'
 import { annotationFill, draftRect } from './annotationStyle'
 import { globalRenderQueue } from './viewMath'
@@ -27,6 +27,8 @@ export interface PdfCanvasProps {
   onTextRegions: (regions: TextRegion[]) => void
   onEditRegion: (region: TextRegion, text: string) => void
   onEditAnnotation: (annotation: Annotation, text: string) => void
+  showBoundingBoxes?: boolean
+  aspectLocked?: boolean
 }
 
 export function PdfCanvas({
@@ -47,6 +49,8 @@ export function PdfCanvas({
   onTextRegions,
   onEditRegion,
   onEditAnnotation,
+  showBoundingBoxes,
+  aspectLocked,
 }: PdfCanvasProps) {
   const isDesktop = useDesktopEditor()
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -441,6 +445,7 @@ export function PdfCanvas({
                 top: `${display.y * 100}%`,
                 width: `${display.width * 100}%`,
                 height: `${display.height * 100}%`,
+                opacity: display.opacity ?? 1,
               }}
               onPointerDown={(e) => {
                 e.preventDefault()
@@ -511,6 +516,45 @@ export function PdfCanvas({
             </div>
           )
         })}
+        {showBoundingBoxes &&
+          textRegions.map((region) => (
+            <div
+              key={`bbox-reg-${region.id}`}
+              className="bounding-box-region"
+              style={{
+                position: 'absolute',
+                left: `${region.x * 100}%`,
+                top: `${region.y * 100}%`,
+                width: `${region.width * 100}%`,
+                height: `${region.height * 100}%`,
+                border: '1px dashed var(--accent, #0047af)',
+                pointerEvents: 'none',
+                zIndex: 44,
+                boxSizing: 'border-box',
+              }}
+            />
+          ))}
+        {showBoundingBoxes &&
+          annotations.map((a) => {
+            const b = getBounds(a)
+            return (
+              <div
+                key={`bbox-ann-${a.id}`}
+                className="bounding-box-annotation"
+                style={{
+                  position: 'absolute',
+                  left: `${b.x * 100}%`,
+                  top: `${b.y * 100}%`,
+                  width: `${b.width * 100}%`,
+                  height: `${b.height * 100}%`,
+                  border: '1px dashed var(--accent, #0047af)',
+                  pointerEvents: 'none',
+                  zIndex: 44,
+                  boxSizing: 'border-box',
+                }}
+              />
+            )
+          })}
         {selectedAnnotation && !inlineEdit && (
           <SelectionFrame
             annotation={preview && preview.id === selectedAnnotation.id ? preview : selectedAnnotation}
@@ -527,6 +571,8 @@ export function PdfCanvas({
               }
             }}
             onDoubleClick={() => handleAnnotationDoubleClick(selectedAnnotation)}
+            pageAnnotations={annotations}
+            aspectLocked={aspectLocked}
           />
         )}
         {creatingText && (

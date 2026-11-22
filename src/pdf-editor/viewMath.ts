@@ -3,6 +3,8 @@ import { clamp } from './geometry'
 
 export const FIT_PADDING = 32
 
+export const SIDEBAR_OVERLAY_MAX_WIDTH = 800
+
 export type FitMode = 'width' | 'page'
 
 /**
@@ -237,4 +239,49 @@ class RenderQueue {
 }
 
 export const globalRenderQueue = new RenderQueue()
+
+export interface ClientRectLike {
+  left: number
+  top: number
+  width: number
+  height: number
+}
+
+/**
+ * Calculates scroll deltas to keep an anchor point stationary under the pointer during zoom.
+ * @param beforeRect Page bounding client rect before zoom
+ * @param afterRect Page bounding client rect after zoom
+ * @param fx Normalized horizontal offset within page [0, 1]
+ * @param fy Normalized vertical offset within page [0, 1]
+ * @param pointer Client pointer coordinates { x, y }
+ */
+export function anchorScrollDelta(
+  beforeRect: ClientRectLike,
+  afterRect: ClientRectLike,
+  fx: number,
+  fy: number,
+  pointer: { x: number; y: number },
+): { deltaX: number; deltaY: number } {
+  // If fx or fy are omitted/NaN, compute from beforeRect and pointer
+  const validFx = Number.isFinite(fx) ? fx : (pointer.x - beforeRect.left) / (beforeRect.width || 1)
+  const validFy = Number.isFinite(fy) ? fy : (pointer.y - beforeRect.top) / (beforeRect.height || 1)
+
+  const anchorX = afterRect.left + validFx * afterRect.width
+  const anchorY = afterRect.top + validFy * afterRect.height
+
+  const deltaX = anchorX - pointer.x
+  const deltaY = anchorY - pointer.y
+
+  return { deltaX, deltaY }
+}
+
+/**
+ * Determines whether aspect ratio locking should be enabled by default for an annotation type.
+ * Images have aspect ratio locked by default; text and other annotations do not.
+ */
+export function defaultAspectLockedForType(type?: string): boolean {
+  return type === 'image'
+}
+
+
 

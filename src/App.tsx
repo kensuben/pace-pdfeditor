@@ -4,7 +4,7 @@ import {
   Highlighter, Image as ImageIcon, Minus, MousePointer2, PenLine,
   Plus, Redo2, RotateCw, Sparkles, Type, Undo2, Upload, LogIn, LogOut, ScanText,
   ImagePlus, FilePlus2, BadgeCheck, Trash2, ArrowUp, ArrowDown,
-  Settings,
+  Settings, BoxSelect,
 } from 'lucide-react'
 import * as pdfjs from 'pdfjs-dist'
 import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url'
@@ -26,6 +26,10 @@ import {
   PageList, ThumbnailList, ZoomMenu,
   canRotatePage, rotateAnnotationsCw, resetHistoryOnPageOp,
   fitZoom,
+  SIDEBAR_OVERLAY_MAX_WIDTH,
+  PropertiesPanel,
+  useDesktopEditor,
+  defaultAspectLockedForType,
 } from './pdf-editor'
 
 // Query version bypasses any previously cached worker response that may have
@@ -88,6 +92,31 @@ function App() {
   const [showDigitalSign, setShowDigitalSign] = useState(false)
   const [apiUser,setApiUser]=useState<ApiUser|null>(null)
   const [showAdmin,setShowAdmin]=useState(false)
+  const isDesktop = useDesktopEditor()
+  const [showBoundingBoxes, setShowBoundingBoxes] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem('pace_show_bounding_boxes') === 'true'
+    } catch {
+      return false
+    }
+  })
+  const toggleBoundingBoxes = () => {
+    setShowBoundingBoxes((prev) => {
+      const next = !prev
+      try {
+        localStorage.setItem('pace_show_bounding_boxes', String(next))
+      } catch {
+        // Ignore storage write errors in restricted environments
+      }
+      return next
+    })
+  }
+
+  const [aspectLocked, setAspectLocked] = useState<boolean>(false)
+  const [currentPageDimensions, setCurrentPageDimensions] = useState<{ width: number; height: number }>({
+    width: 612,
+    height: 792,
+  })
   const [viewMode, setViewMode] = useState<'pdf' | 'word'>(() => {
     return typeof window !== 'undefined' && window.location.hash === '#/word-anonymizer' ? 'word' : 'pdf'
   })
@@ -206,9 +235,50 @@ function App() {
 
   const selectAnnotation = useCallback((id: string | null) => {
     setSelectedId(id)
-    const selected=annotations.find((a)=>a.id===id&&a.type==='text')
-    if(selected)setTextStyle({fontFamily:selected.fontFamily||'Helvetica',fontSize:selected.fontSize||16,bold:!!selected.bold,italic:!!selected.italic,underline:!!selected.underline,align:selected.align||'left',color:selected.color})
-  },[annotations])
+    const selected = annotations.find((a) => a.id === id)
+    setAspectLocked(defaultAspectLockedForType(selected?.type))
+    if (selected && selected.type === 'text') {
+      setTextStyle({
+        fontFamily: selected.fontFamily || 'Helvetica',
+        fontSize: selected.fontSize || 16,
+        bold: !!selected.bold,
+        italic: !!selected.italic,
+        underline: !!selected.underline,
+        align: selected.align || 'left',
+        color: selected.color,
+      })
+    }
+  }, [annotations])
+
+  // Centralized aspect lock management on selection change / undo / redo
+  const prevSelectedRef = useRef<{ id: string | null; type?: string }>({ id: null, type: undefined })
+
+  useEffect(() => {
+    const selected = annotations.find((a) => a.id === selectedId)
+    const currentType = selected?.type
+    if (selectedId !== prevSelectedRef.current.id || currentType !== prevSelectedRef.current.type) {
+      prevSelectedRef.current = { id: selectedId, type: currentType }
+      setAspectLocked(defaultAspectLockedForType(currentType))
+    }
+  }, [selectedId, annotations])
+
+  const targetPageNumber = useMemo(() => {
+    const sel = annotations.find((a) => a.id === selectedId)
+    return sel ? sel.page : page
+  }, [annotations, selectedId, page])
+
+  useEffect(() => {
+    if (!pdf) return
+    let cancelled = false
+    pdf.getPage(targetPageNumber).then((p) => {
+      if (cancelled) return
+      const vp = p.getViewport({ scale: 1 })
+      setCurrentPageDimensions({ width: vp.width, height: vp.height })
+    }).catch(() => {})
+    return () => {
+      cancelled = true
+    }
+  }, [pdf, targetPageNumber])
 
   const showStatusNotice = useCallback((msg: string) => {
     setStatusNotice(msg)
@@ -279,7 +349,7 @@ function App() {
       setSelectedId(null)
       setTextRegions({})
       setBytesVersion((v) => v + 1)
-      setSidebar(window.innerWidth >= 768)
+      setSidebar(window.innerWidth > SIDEBAR_OVERLAY_MAX_WIDTH)
       log('document.opened', 'Mở tài liệu PDF', { fileExt: 'pdf', fileSize: file.size, pageCount: loaded.numPages }, 'success')
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error)
@@ -371,7 +441,7 @@ function App() {
     )
     const annotation:Annotation={id:uid(),page,type:'image',x:(1-width)/2,y:(1-height)/2,width,height,color:'#000000',opacity:1,imageDataUrl:dataUrl}
     commit([...annotations,annotation],{action:'image.inserted',description:'Chèn hình ảnh',metadata:{page,fileExt:file.type.includes('png')?'png':'jpeg',fileSize:file.size}})
-    setSelectedId(annotation.id)
+    selectAnnotation(annotation.id)
   }
 
   const insertPages = async (file: File) => {
@@ -723,6 +793,9 @@ function App() {
           onSelectPage={(p) => {
             scrollToPage(p)
             setPage(p)
+            if (window.innerWidth <= SIDEBAR_OVERLAY_MAX_WIDTH) {
+              setSidebar(false)
+            }
             log('navigation.page_changed', 'Chuyển trang', { from: page, to: p })
           }}
           bytesVersion={bytesVersion}
@@ -744,6 +817,15 @@ function App() {
           <IconButton label="Xóa trang hiện tại" onClick={deleteCurrentPage} disabled={info.pages<=1}><Trash2/></IconButton>
           <button className="action-tool sign" onClick={()=>setShowDigitalSign(true)}><BadgeCheck/>Ký số</button>
           <button className={`ocr-button ${ocrBusy?'busy':''}`} onClick={scanCurrentPage} disabled={ocrBusy}><ScanText/>{ocrBusy?`OCR ${ocrProgress}%`:'Scan OCR'}</button>
+          {isDesktop && (
+            <IconButton
+              label={showBoundingBoxes ? 'Ẩn khung bao' : 'Hiện khung bao'}
+              active={showBoundingBoxes}
+              onClick={toggleBoundingBoxes}
+            >
+              <BoxSelect />
+            </IconButton>
+          )}
           <IconButton label="Xóa đối tượng đã chọn" onClick={deleteSelected} disabled={!selectedId}><Trash2/></IconButton>
           <IconButton label="Undo" onClick={() => { setHistoryIndex(i=>Math.max(0,i-1)); log('edit.undo', 'Hoàn tác thay đổi') }} disabled={!historyIndex}><Undo2/></IconButton>
           <IconButton label="Redo" onClick={() => { setHistoryIndex(i=>Math.min(history.length-1,i+1)); log('edit.redo', 'Làm lại thay đổi') }} disabled={historyIndex===history.length-1}><Redo2/></IconButton>
@@ -765,78 +847,128 @@ function App() {
             )
           })()}
         </div>
-        {(tool==='text'||selectedText) && <TextFormatBar style={textStyle} onChange={changeTextStyle}/>}
-        <div
-          ref={documentAreaRef}
-          className="document-area has-page-list"
-          onDragOver={(e) => e.preventDefault()}
-          onDrop={(e) => {
-            e.preventDefault()
-            const f = e.dataTransfer.files[0]
-            if (f) openFile(f)
-          }}
-        >
-          <PageList
-            pdf={pdf}
-            pageCount={info.pages}
-            zoom={zoom}
-            annotations={annotations}
-            tool={tool}
-            color={color}
-            textStyle={textStyle}
-            selectedId={selectedId}
-            onSelect={selectAnnotation}
-            onAdd={(a) => {
-              const next = a.type === 'text' ? { ...a, ...textStyle } : a
-              commit([...annotations, next], {
-                action: 'annotation.added',
-                description: 'Thêm annotation',
-                metadata: { type: a.type, page: a.page, color: next.color },
-              })
-              setSelectedId(next.id)
+        {!isDesktop && (tool === 'text' || selectedText) && (
+          <div className="text-format-bar-floating">
+            <TextFormatBar style={textStyle} onChange={changeTextStyle} />
+          </div>
+        )}
+        <div className="editor-body">
+          <div
+            ref={documentAreaRef}
+            className="document-area has-page-list"
+            onDragOver={(e) => e.preventDefault()}
+            onDrop={(e) => {
+              e.preventDefault()
+              const f = e.dataTransfer.files[0]
+              if (f) openFile(f)
             }}
-            onUpdate={(updated) => {
-              commit(
-                annotations.map((annotation) => (annotation.id === updated.id ? updated : annotation)),
-                {
-                  action: 'annotation.moved',
-                  description: 'Di chuyển đối tượng',
-                  metadata: { type: updated.type, page: updated.page },
-                },
-              )
-              setSelectedId(updated.id)
-            }}
-            onResize={(updated) => {
-              commit(
-                annotations.map((annotation) => (annotation.id === updated.id ? updated : annotation)),
-                {
-                  action: 'annotation.resized',
-                  description: 'Thay đổi kích thước đối tượng',
-                  metadata: { type: updated.type, page: updated.page },
-                },
-              )
-              setSelectedId(updated.id)
-            }}
-            onNudge={(updated) => {
-              commit(annotations.map((annotation) => (annotation.id === updated.id ? updated : annotation)))
-              setSelectedId(updated.id)
-            }}
-            textRegions={textRegions}
-            onTextRegions={handleTextRegions}
-            onEditRegion={editTextRegion}
-            onEditAnnotation={editTextAnnotation}
-            currentPage={page}
-            onCurrentPageChange={(p) => setPage(p)}
-            containerRef={scrollContainerRef}
-            onZoomChange={(nextZoom) => {
-              setZoom(nextZoom)
-              debouncedLogZoom(nextZoom)
-            }}
-            onInitialFit={(initialZoom) => {
-              setZoom(initialZoom)
-              log('view.zoom_changed', 'Thay đổi mức zoom ban đầu', { fit: 'width', zoom: Math.round(initialZoom * 100) })
-            }}
-          />
+          >
+            <PageList
+              pdf={pdf}
+              pageCount={info.pages}
+              zoom={zoom}
+              annotations={annotations}
+              tool={tool}
+              color={color}
+              textStyle={textStyle}
+              selectedId={selectedId}
+              onSelect={selectAnnotation}
+              onAdd={(a) => {
+                const next = a.type === 'text' ? { ...a, ...textStyle } : a
+                commit([...annotations, next], {
+                  action: 'annotation.added',
+                  description: 'Thêm annotation',
+                  metadata: { type: a.type, page: a.page, color: next.color },
+                })
+                setSelectedId(next.id)
+              }}
+              onUpdate={(updated) => {
+                commit(
+                  annotations.map((annotation) => (annotation.id === updated.id ? updated : annotation)),
+                  {
+                    action: 'annotation.moved',
+                    description: 'Di chuyển đối tượng',
+                    metadata: { type: updated.type, page: updated.page },
+                  },
+                )
+                setSelectedId(updated.id)
+              }}
+              onResize={(updated) => {
+                commit(
+                  annotations.map((annotation) => (annotation.id === updated.id ? updated : annotation)),
+                  {
+                    action: 'annotation.resized',
+                    description: 'Thay đổi kích thước đối tượng',
+                    metadata: { type: updated.type, page: updated.page },
+                  },
+                )
+                setSelectedId(updated.id)
+              }}
+              onNudge={(updated) => {
+                commit(annotations.map((annotation) => (annotation.id === updated.id ? updated : annotation)))
+                setSelectedId(updated.id)
+              }}
+              textRegions={textRegions}
+              onTextRegions={handleTextRegions}
+              onEditRegion={editTextRegion}
+              onEditAnnotation={editTextAnnotation}
+              currentPage={page}
+              onCurrentPageChange={(p) => setPage(p)}
+              containerRef={scrollContainerRef}
+              onZoomChange={(nextZoom) => {
+                setZoom(nextZoom)
+                debouncedLogZoom(nextZoom)
+              }}
+              onInitialFit={(initialZoom) => {
+                setZoom(initialZoom)
+                log('view.zoom_changed', 'Thay đổi mức zoom ban đầu', { fit: 'width', zoom: Math.round(initialZoom * 100) })
+              }}
+              showBoundingBoxes={showBoundingBoxes}
+              aspectLocked={aspectLocked}
+            />
+          </div>
+          {isDesktop && (
+            <PropertiesPanel
+              selectedAnnotation={annotations.find((a) => a.id === selectedId) || null}
+              pageSizePt={currentPageDimensions}
+              tool={tool}
+              textStyle={textStyle}
+              onTextStyleChange={changeTextStyle}
+              onUpdateAnnotation={(updated, kind) => {
+                if (kind === 'move') {
+                  commit(
+                    annotations.map((a) => (a.id === updated.id ? updated : a)),
+                    {
+                      action: 'annotation.moved',
+                      description: 'Di chuyển đối tượng',
+                      metadata: { type: updated.type, page: updated.page },
+                    },
+                  )
+                } else if (kind === 'resize') {
+                  commit(
+                    annotations.map((a) => (a.id === updated.id ? updated : a)),
+                    {
+                      action: 'annotation.resized',
+                      description: 'Thay đổi kích thước đối tượng',
+                      metadata: { type: updated.type, page: updated.page },
+                    },
+                  )
+                } else {
+                  commit(
+                    annotations.map((a) => (a.id === updated.id ? updated : a)),
+                    {
+                      action: 'annotation.updated',
+                      description: 'Cập nhật đối tượng',
+                      metadata: { type: updated.type, page: updated.page },
+                    },
+                  )
+                }
+                setSelectedId(updated.id)
+              }}
+              aspectLocked={aspectLocked}
+              onToggleAspectLock={setAspectLocked}
+            />
+          )}
         </div>
         <div className="statusbar">
           <div className="page-nav">

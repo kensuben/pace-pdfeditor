@@ -1,6 +1,7 @@
-import React, { useRef } from 'react'
+import React, { useRef, useState } from 'react'
 import type { Annotation } from '../../types'
 import { getBounds, moveBy, resizeFromHandle, type Handle } from './geometry'
+import { computeSnap, type SnapGuide } from './snap'
 import './selection.css'
 
 export interface SelectionFrameProps {
@@ -11,6 +12,8 @@ export interface SelectionFrameProps {
   onPreviewChange: (preview: Annotation | null) => void
   onCommit: (updated: Annotation, kind: 'move' | 'resize') => void
   onDoubleClick?: () => void
+  pageAnnotations?: Annotation[]
+  aspectLocked?: boolean
 }
 
 const HANDLE_LABELS: Record<Handle, string> = {
@@ -34,7 +37,10 @@ export function SelectionFrame({
   onPreviewChange,
   onCommit,
   onDoubleClick,
+  pageAnnotations,
+  aspectLocked,
 }: SelectionFrameProps) {
+  const [guides, setGuides] = useState<SnapGuide[]>([])
   const activeInteraction = useRef<{
     mode: 'move' | 'resize'
     handle?: Handle
@@ -94,33 +100,72 @@ export function SelectionFrame({
     const active = activeInteraction.current
     if (!active) return
 
-    const dx = (e.clientX - active.startClientX) / pageSize.width
-    const dy = (e.clientY - active.startClientY) / pageSize.height
+    const rawDx = (e.clientX - active.startClientX) / pageSize.width
+    const rawDy = (e.clientY - active.startClientY) / pageSize.height
+
+    const thresholdNorm = {
+      x: 4 / pageSize.width,
+      y: 4 / pageSize.height,
+    }
 
     if (active.mode === 'move') {
-      const updated = moveBy(active.originalAnnotation, dx, dy)
-      active.currentAnnotation = updated
-      onPreviewChange(updated)
-    } else if (active.mode === 'resize' && active.handle) {
-      let keepAspect = false
-      if (active.originalAnnotation.type === 'draw' || active.originalAnnotation.type === 'signature') {
-        keepAspect = true
-      } else if (active.originalAnnotation.type === 'image') {
-        keepAspect = !e.shiftKey
+      const moved = moveBy(active.originalAnnotation, rawDx, rawDy)
+      if (isDesktop && !e.altKey) {
+        const candidates = (pageAnnotations || [])
+          .filter((a) => a.id !== active.originalAnnotation.id)
+          .map(getBounds)
+        const snap = computeSnap(getBounds(moved), candidates, thresholdNorm)
+        const snapped = moveBy(moved, snap.dx, snap.dy)
+        active.currentAnnotation = snapped
+        setGuides(snap.guides)
+        onPreviewChange(snapped)
+      } else {
+        setGuides([])
+        active.currentAnnotation = moved
+        onPreviewChange(moved)
       }
+    } else if (active.mode === 'resize' && active.handle) {
+      const isDrawingOrSig =
+        active.originalAnnotation.type === 'draw' || active.originalAnnotation.type === 'signature'
+      const isLocked = aspectLocked ?? (active.originalAnnotation.type === 'image')
+      const keepAspect = isDrawingOrSig ? true : isLocked ? !e.shiftKey : e.shiftKey
 
-      const updated = resizeFromHandle(active.originalAnnotation, active.handle, dx, dy, {
+      const resized = resizeFromHandle(active.originalAnnotation, active.handle, rawDx, rawDy, {
         keepAspect,
         minSize,
       })
-      active.currentAnnotation = updated
-      onPreviewChange(updated)
+
+      if (isDesktop && !e.altKey) {
+        const candidates = (pageAnnotations || [])
+          .filter((a) => a.id !== active.originalAnnotation.id)
+          .map(getBounds)
+        const snap = computeSnap(getBounds(resized), candidates, thresholdNorm)
+        if (snap.dx !== 0 || snap.dy !== 0) {
+          const snapped = resizeFromHandle(active.originalAnnotation, active.handle, rawDx + snap.dx, rawDy + snap.dy, {
+            keepAspect,
+            minSize,
+          })
+          active.currentAnnotation = snapped
+          setGuides(snap.guides)
+          onPreviewChange(snapped)
+        } else {
+          setGuides(snap.guides)
+          active.currentAnnotation = resized
+          onPreviewChange(resized)
+        }
+      } else {
+        setGuides([])
+        active.currentAnnotation = resized
+        onPreviewChange(resized)
+      }
     }
   }
 
   const onPointerUp = (e: React.PointerEvent) => {
     const active = activeInteraction.current
     if (!active) return
+
+    setGuides([])
 
     try {
       e.currentTarget.releasePointerCapture(e.pointerId)
@@ -145,8 +190,20 @@ export function SelectionFrame({
   }
 
   return (
-    <div
-      className={`selection-frame ${isReplacement ? 'not-allowed' : isDesktop ? 'movable' : ''}`}
+    <>
+      {guides.map((g, idx) => (
+        <div
+          key={idx}
+          className={`snap-guide snap-guide-${g.orientation}`}
+          style={
+            g.orientation === 'vertical'
+              ? { left: `${g.position * 100}%` }
+              : { top: `${g.position * 100}%` }
+          }
+        />
+      ))}
+      <div
+        className={`selection-frame ${isReplacement ? 'not-allowed' : isDesktop ? 'movable' : ''}`}
       title={
         isReplacement
           ? 'Chữ thay thế chữ gốc chưa di chuyển được (sẽ hỗ trợ khi xoá chữ gốc thật)'
@@ -180,5 +237,6 @@ export function SelectionFrame({
         />
       ))}
     </div>
+    </>
   )
 }
