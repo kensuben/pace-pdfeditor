@@ -563,9 +563,15 @@ function App() {
           editedPageCount: report.editedPages.length,
           cleanedPageCount: report.cleanedPages.length,
           remainingTextPages: remainingPagesStr,
+          overflowPageCount: report.overflowPages.length,
         },
         'success'
       )
+
+      if (report.overflowPages.length > 0) {
+        const pagesStr = report.overflowPages.join(', ')
+        showStatusNotice(`Trang ${pagesStr}: đoạn đã sửa dài hơn đoạn gốc, chữ có thể đè lên nội dung bên dưới.`)
+      }
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error)
       let reason: 'font_load_failed' | 'missing_glyph' | 'unknown' = 'unknown'

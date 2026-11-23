@@ -1,6 +1,11 @@
 /* Virtualized Continuous Scroll & Viewer Enhancements (W-11) */
 
 /* W-11b: Ensure single scroll container - .document-area must not scroll or have padding when PageList is active */
+.annotation.text.replacement {
+  overflow: visible !important;
+  white-space: pre-wrap;
+}
+
 .document-area:has(.page-list-scroll),
 .document-area.has-page-list {
   overflow: hidden !important;

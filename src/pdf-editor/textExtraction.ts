@@ -292,3 +292,175 @@ export function groupOcrWordsIntoLines(
     return lines
   }, [])
 }
+
+function median(values: number[]): number {
+  if (values.length === 0) return 0
+  const sorted = [...values].sort((a, b) => a - b)
+  const mid = Math.floor(sorted.length / 2)
+  return sorted.length % 2 !== 0 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2
+}
+
+export function groupLinesIntoBlocks(
+  lines: TextRegion[],
+  viewport: { width: number; height: number },
+  pageNumber: number,
+): TextRegion[] {
+  if (lines.length <= 1) return [...lines]
+
+  // (b) Same-row neighbor check:
+  // Không dòng nào có "hàng xóm cùng hàng": không tồn tại dòng khác (trong toàn bộ danh sách)
+  // có tâm dọc lệch <= 0.42 * chiều cao và không giao theo chiều ngang.
+  const hasNeighbor = new Set<string>()
+
+  for (let i = 0; i < lines.length; i++) {
+    const a = lines[i]
+    const centerYA = (a.y + a.height / 2) * viewport.height
+    const hA = a.height * viewport.height
+    const leftA = a.x * viewport.width
+    const rightA = (a.x + a.width) * viewport.width
+
+    for (let j = 0; j < lines.length; j++) {
+      if (i === j) continue
+      const b = lines[j]
+      const centerYB = (b.y + b.height / 2) * viewport.height
+      const hB = b.height * viewport.height
+      const maxH = Math.max(hA, hB)
+      if (Math.abs(centerYA - centerYB) <= 0.42 * maxH) {
+        const leftB = b.x * viewport.width
+        const rightB = (b.x + b.width) * viewport.width
+        const horizontalOverlap = leftA < rightB && rightA > leftB
+        if (!horizontalOverlap) {
+          hasNeighbor.add(a.id)
+          hasNeighbor.add(b.id)
+        }
+      }
+    }
+  }
+
+  // Sort lines top to bottom
+  const sorted = [...lines].sort((a, b) => a.y - b.y || a.x - b.x)
+
+  const canMerge = (p: TextRegion, l: TextRegion, isFirstLine: boolean): boolean => {
+    // (a) cả hai source: 'native', không có rotation
+    if (p.source !== 'native' || l.source !== 'native') return false
+    if (p.rotation !== undefined || l.rotation !== undefined) return false
+
+    // (b) không dòng nào có hàng xóm cùng hàng
+    if (hasNeighbor.has(p.id) || hasNeighbor.has(l.id)) return false
+
+    // (c) cùng fontFamily, bold, italic; cỡ chữ lệch <= 10%
+    if (p.fontFamily !== l.fontFamily) return false
+    if (Boolean(p.bold) !== Boolean(l.bold)) return false
+    if (Boolean(p.italic) !== Boolean(l.italic)) return false
+    const maxFont = Math.max(p.fontSize, l.fontSize)
+    if (Math.abs(p.fontSize - l.fontSize) > 0.10 * maxFont) return false
+
+    const avgFontSize = (p.fontSize + l.fontSize) / 2
+
+    // (d) khoảng cách đường chân chữ (đáy L - đáy P, tính bằng pt) trong [0.9, 1.8] * fontSize
+    const bottomP = (p.y + p.height) * viewport.height
+    const bottomL = (l.y + l.height) * viewport.height
+    const baselineDist = bottomL - bottomP
+    if (baselineDist < 0.9 * avgFontSize || baselineDist > 1.8 * avgFontSize) return false
+
+    // (e) lề trái lệch <= max(2pt, 0.5 * fontSize). Cho phép thụt đầu dòng: nếu P là dòng đầu khối thì P.left - L.left trong [0, 4 * fontSize]
+    const leftP = p.x * viewport.width
+    const leftL = l.x * viewport.width
+    const tol = Math.max(2, 0.5 * avgFontSize)
+    const isLeftAligned = Math.abs(leftL - leftP) <= tol
+    const isIndented = isFirstLine && (leftP - leftL >= -tol) && (leftP - leftL <= 4 * avgFontSize)
+    if (!isLeftAligned && !isIndented) return false
+
+    // (f) phần giao theo chiều ngang >= 50% bề rộng dòng hẹp hơn
+    const rightP = (p.x + p.width) * viewport.width
+    const rightL = (l.x + l.width) * viewport.width
+    const overlapWidth = Math.max(0, Math.min(rightP, rightL) - Math.max(leftP, leftL))
+    const minWidth = Math.min(rightP - leftP, rightL - leftL)
+    if (overlapWidth < 0.5 * minWidth) return false
+
+    return true
+  }
+
+  const blocks: TextRegion[][] = []
+  let currentBlock: TextRegion[] = []
+
+  for (const line of sorted) {
+    if (currentBlock.length === 0) {
+      currentBlock.push(line)
+    } else {
+      const prev = currentBlock[currentBlock.length - 1]
+      const isFirst = currentBlock.length === 1
+      if (canMerge(prev, line, isFirst)) {
+        currentBlock.push(line)
+      } else {
+        blocks.push(currentBlock)
+        currentBlock = [line]
+      }
+    }
+  }
+  if (currentBlock.length > 0) {
+    blocks.push(currentBlock)
+  }
+
+  let blockCounter = 0
+  const result: TextRegion[] = []
+
+  for (const block of blocks) {
+    if (block.length === 1) {
+      result.push(block[0])
+      continue
+    }
+
+    blockCounter++
+    const minX = Math.min(...block.map((l) => l.x))
+    const minY = Math.min(...block.map((l) => l.y))
+    const maxX = Math.max(...block.map((l) => l.x + l.width))
+    const maxY = Math.max(...block.map((l) => l.y + l.height))
+    const blockFontSize = median(block.map((l) => l.fontSize))
+
+    const baselineDeltas: number[] = []
+    for (let i = 1; i < block.length; i++) {
+      const bottomPrev = (block[i - 1].y + block[i - 1].height) * viewport.height
+      const bottomCurr = (block[i].y + block[i].height) * viewport.height
+      baselineDeltas.push(bottomCurr - bottomPrev)
+    }
+    const lineHeight = median(baselineDeltas)
+
+    const blockRightPt = maxX * viewport.width
+    let joinedText = ''
+    for (let i = 0; i < block.length; i++) {
+      const curr = block[i]
+      if (i === 0) {
+        joinedText = curr.text.trimEnd()
+      } else {
+        const prev = block[i - 1]
+        const prevRightPt = (prev.x + prev.width) * viewport.width
+        const isNextListItem = /^([•\-*]|\d+[.)])\s/.test(curr.text.trim())
+        const isFull = !isNextListItem && prevRightPt >= blockRightPt - 2 * blockFontSize
+        joinedText += (isFull ? ' ' : '\n') + curr.text.trimEnd()
+      }
+    }
+
+    const first = block[0]
+    result.push({
+      id: `native-block-${pageNumber}-${blockCounter}`,
+      page: pageNumber,
+      text: joinedText,
+      x: minX,
+      y: minY,
+      width: maxX - minX,
+      height: maxY - minY,
+      fontSize: blockFontSize,
+      fontFamily: first.fontFamily,
+      bold: first.bold,
+      italic: first.italic,
+      color: first.color,
+      align: first.align,
+      source: 'native',
+      lineHeight,
+      lineRects: block.map((l) => ({ x: l.x, y: l.y, width: l.width, height: l.height })),
+    })
+  }
+
+  return result
+}

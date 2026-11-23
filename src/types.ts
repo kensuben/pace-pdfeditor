@@ -23,6 +23,8 @@ export type TextRegion = {
   confidence?: number
   source: 'native' | 'ocr'
   rotation?: number
+  lineHeight?: number
+  lineRects?: Array<{ x: number; y: number; width: number; height: number }>
 }
 
 export type Annotation = {
@@ -52,6 +54,8 @@ export type Annotation = {
   originalText?: string
   originalSource?: 'native' | 'ocr'
   originalRect?: { x: number; y: number; width: number; height: number }
+  lineHeight?: number
+  originalLineRects?: Array<{ x: number; y: number; width: number; height: number }>
 }
 
 export type TextStyle = Pick<Annotation, 'fontFamily' | 'fontSize' | 'bold' | 'italic' | 'underline' | 'align' | 'color'>
