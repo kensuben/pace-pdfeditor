@@ -3,6 +3,7 @@ import type * as pdfjs from 'pdfjs-dist'
 import type { Annotation, Point, TextRegion, TextStyle, Tool } from '../types'
 import { clamp, uid } from './geometry'
 import { groupTextItemsIntoLines } from './textExtraction'
+import { cssFontStack } from './fonts'
 import { SelectionFrame } from './selection/SelectionFrame'
 import { getBounds, moveBy, nudgeDelta } from './selection/geometry'
 import { useDesktopEditor } from './useDesktopEditor'
@@ -253,7 +254,7 @@ export function PdfCanvas({
         opacity: 1,
         text: trimmed,
         fontSize: textStyle?.fontSize || 16,
-        fontFamily: textStyle?.fontFamily || 'Helvetica',
+        fontFamily: textStyle?.fontFamily ?? 'Helvetica',
         bold: textStyle?.bold,
         italic: textStyle?.italic,
         underline: textStyle?.underline,
@@ -374,7 +375,7 @@ export function PdfCanvas({
                   width: `${Math.max(region.width, 0.04) * 100}%`,
                   height: `${Math.max(region.height, 0.018) * 100}%`,
                   fontSize: region.fontSize * zoom,
-                  fontFamily: region.fontFamily || 'Helvetica',
+                  fontFamily: cssFontStack(region.fontFamily),
                   fontWeight: region.bold ? 700 : 400,
                   fontStyle: region.italic ? 'italic' : 'normal',
                   color: region.color || '#000',
@@ -389,8 +390,13 @@ export function PdfCanvas({
             ) : (
               <button
                 key={region.id}
-                className={`text-region ${region.source}`}
-                title={`${region.source === 'ocr' ? 'OCR' : 'PDF'}: ${region.text}`}
+                className={`text-region ${region.source}${region.rotation !== undefined ? ' rotated' : ''}`}
+                aria-disabled={region.rotation !== undefined ? 'true' : undefined}
+                title={
+                  region.rotation !== undefined
+                    ? 'Chữ xoay: chưa hỗ trợ sửa'
+                    : `${region.source === 'ocr' ? 'OCR' : 'PDF'}: ${region.text}`
+                }
                 style={{
                   left: `${region.x * 100}%`,
                   top: `${region.y * 100}%`,
@@ -400,6 +406,7 @@ export function PdfCanvas({
                 onPointerDown={(e) => e.stopPropagation()}
                 onClick={(e) => {
                   e.stopPropagation()
+                  if (region.rotation !== undefined) return
                   setInlineEdit({
                     kind: 'region',
                     id: region.id,
@@ -465,7 +472,7 @@ export function PdfCanvas({
                 width: `${a.width * 100}%`,
                 height: `${a.height * 100}%`,
                 fontSize: (a.fontSize || 16) * zoom,
-                fontFamily: a.fontFamily || 'Helvetica',
+                fontFamily: cssFontStack(a.fontFamily),
                 fontWeight: a.bold ? 700 : 400,
                 fontStyle: a.italic ? 'italic' : 'normal',
                 textDecoration: a.underline ? 'underline' : 'none',
@@ -496,7 +503,7 @@ export function PdfCanvas({
                   opacity: a.opacity,
                   color: a.color,
                   fontSize: (a.fontSize || 16) * zoom,
-                  fontFamily: a.fontFamily || 'Helvetica',
+                  fontFamily: cssFontStack(a.fontFamily),
                   fontWeight: a.bold ? 700 : 400,
                   fontStyle: a.italic ? 'italic' : 'normal',
                   textDecoration: a.underline ? 'underline' : 'none',
@@ -586,7 +593,7 @@ export function PdfCanvas({
               width: `${creatingText.width * 100}%`,
               height: `${creatingText.height * 100}%`,
               fontSize: (textStyle?.fontSize || 16) * zoom,
-              fontFamily: textStyle?.fontFamily || 'Helvetica',
+              fontFamily: cssFontStack(textStyle?.fontFamily),
               fontWeight: textStyle?.bold ? 700 : 400,
               fontStyle: textStyle?.italic ? 'italic' : 'normal',
               textDecoration: textStyle?.underline ? 'underline' : 'none',

@@ -216,3 +216,14 @@
   height: 100%;
 }
 
+/* Rotated text regions (W-9b) */
+.text-region.rotated {
+  cursor: not-allowed;
+  border-color: rgba(220, 38, 38, 0.4);
+}
+.text-region.rotated:hover::after {
+  content: 'Xoay';
+  background: #dc2626;
+}
+
+

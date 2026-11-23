@@ -33,3 +33,43 @@ export function resolveExportFontFamily(
 
   return hasUnicode ? 'Arimo' : 'Helvetica'
 }
+
+export function styleFromBaseFont(name?: string): {
+  family: 'Helvetica' | 'Times Roman' | 'Courier'
+  bold: boolean
+  italic: boolean
+} {
+  const raw = name || ''
+  const clean = raw.replace(/^[A-Z]{6}\+/, '')
+  const l = clean.toLowerCase()
+  let family: 'Helvetica' | 'Times Roman' | 'Courier' = 'Helvetica'
+  if (/courier|mono|consolas/.test(l)) {
+    family = 'Courier'
+  } else if (/times|georgia|garamond|cambria/.test(l)) {
+    family = 'Times Roman'
+  } else if (/serif/.test(l) && !/sans/.test(l)) {
+    family = 'Times Roman'
+  }
+  const bold = /bold|black|heavy|semibold|demi/i.test(clean)
+  const italic = /italic|oblique/i.test(clean)
+  return { family, bold, italic }
+}
+
+export function cssFontStack(family?: string): string {
+  switch (family) {
+    case 'Times Roman':
+      return '"Times New Roman", Times, "Liberation Serif", serif'
+    case 'Courier':
+      return '"Courier New", Courier, "Liberation Mono", monospace'
+    case 'Arimo':
+      return 'Arimo, Arial, sans-serif'
+    case 'Be Vietnam Pro':
+      return '"Be Vietnam Pro", sans-serif'
+    case 'Noto Sans':
+      return '"Noto Sans", sans-serif'
+    case 'Helvetica':
+    default:
+      return 'Helvetica, Arimo, Arial, sans-serif'
+  }
+}
+
