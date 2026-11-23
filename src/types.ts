@@ -22,6 +22,7 @@ export type TextRegion = {
   maskPadBottom?: number
   confidence?: number
   source: 'native' | 'ocr'
+  rotation?: number
 }
 
 export type Annotation = {

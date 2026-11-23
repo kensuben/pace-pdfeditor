@@ -8,6 +8,7 @@ import {
 } from 'lucide-react'
 import * as pdfjs from 'pdfjs-dist'
 import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url'
+import { PDFDocument } from 'pdf-lib'
 import type { Annotation, DocumentInfo, TextRegion, TextStyle, Tool } from './types'
 import type { AccountInfo } from '@azure/msal-browser'
 import { initializeAuth, isMicrosoftAuthConfigured, signInMicrosoft, signOutMicrosoft } from './auth'
@@ -21,6 +22,7 @@ import './pdf-editor/toolbar.css'
 import {
   clamp, uid, IconButton, TextFormatBar,
   buildEditedPdfWithReport, findRemainingOriginalText, formatRemainingTextWarning,
+  probeTextStyles, enrichRegionsWithStyles, getPageView, type TextStyleProbe,
   insertPdfPages, movePage, deletePage, rotatePage,
   remapAnnotationsOnInsert, remapAnnotationsOnMove, remapAnnotationsOnDelete,
   buildReplacementAnnotation, parseOcrTsv, groupOcrWordsIntoLines,
@@ -398,12 +400,84 @@ function App() {
   }, [deleteSelected, history.length, selectedId, zoom, log, handleFitWidth])
 
   const selectedText = useMemo(()=>annotations.find((a)=>a.id===selectedId&&a.type==='text'),[annotations,selectedId])
+  const styleProbeCacheRef = useRef<{
+    bytes: Uint8Array | null
+    doc: PDFDocument | null
+    probes: Map<number, TextStyleProbe[]>
+  }>({
+    bytes: null,
+    doc: null,
+    probes: new Map(),
+  })
+
   const handleTextRegions = useCallback((targetPage: number, regions: TextRegion[]) => {
     setTextRegions((current) => ({
       ...current,
       [targetPage]: [...regions, ...(current[targetPage] || []).filter((x) => x.source === 'ocr')],
     }))
-  }, [])
+
+    if (!bytes) return
+
+    ;(async () => {
+      try {
+        const cache = styleProbeCacheRef.current
+        if (cache.bytes !== bytes) {
+          cache.bytes = bytes
+          cache.doc = null
+          cache.probes.clear()
+        }
+        if (!cache.doc) {
+          cache.doc = await PDFDocument.load(bytes)
+        }
+        let probes = cache.probes.get(targetPage)
+        if (!probes) {
+          const pageIndex = targetPage - 1
+          if (pageIndex < 0 || pageIndex >= cache.doc.getPageCount()) return
+          probes = probeTextStyles(cache.doc, pageIndex)
+          cache.probes.set(targetPage, probes)
+        }
+        const pageIndex = targetPage - 1
+        const pdfPage = cache.doc.getPage(pageIndex)
+        const view = getPageView(pdfPage)
+        const enriched = enrichRegionsWithStyles(regions, probes, view)
+        const enrichedMap = new Map(enriched.map((r) => [r.id, r]))
+
+        setTextRegions((current) => {
+          const pageRegions = current[targetPage]
+          if (!pageRegions) return current
+          let changed = false
+          const nextRegions = pageRegions.map((r) => {
+            if (r.source === 'ocr') return r
+            const updated = enrichedMap.get(r.id)
+            if (
+              updated &&
+              (r.color !== updated.color ||
+                r.fontFamily !== updated.fontFamily ||
+                r.bold !== updated.bold ||
+                r.italic !== updated.italic)
+            ) {
+              changed = true
+              return {
+                ...r,
+                color: updated.color,
+                fontFamily: updated.fontFamily,
+                bold: updated.bold,
+                italic: updated.italic,
+              }
+            }
+            return r
+          })
+          if (!changed) return current
+          return {
+            ...current,
+            [targetPage]: nextRegions,
+          }
+        })
+      } catch (err) {
+        console.warn('probeTextStyles failed:', err)
+      }
+    })()
+  }, [bytes])
 
   const buildPdfBytes = useCallback(async () => {
     if (!bytes) throw new Error('Chưa có tài liệu để xử lý.')
