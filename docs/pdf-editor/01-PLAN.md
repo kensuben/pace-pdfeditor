@@ -57,6 +57,8 @@ Toàn bộ PDF editor nằm trong `src/App.tsx` (878 dòng): component `PdfCanva
 | **B23** | Chữ gốc Be Vietnam Pro sau khi sửa xuất bằng Arimo: `styleFromBaseFont` không nhận `BeVietnamPro` | QA W-9c 2026-11-23: đoạn "Điều 1" PDF mẫu | Sửa ở **F-16** |
 | **B24** | Khung bao nét đứt của vùng đang sửa cắt ngang ô sửa | Ảnh hướng dẫn 26 | Sửa ở **F-16** |
 | **B25** | Chữ tiếng Việt font Times sau khi sửa xuất bằng Arimo (không chân): `resolveExportFontFamily` Times + có dấu → Arimo vì font chuẩn Times-Roman không có tiếng Việt | Đọc code 2026-11-23 | Sửa ở **F-17** |
+| **B26** | Dòng đơn sửa dài hơn chút bị ngắt thành 2 dòng: ngắt theo bề rộng chữ cũ dù bên phải còn trống | QA F-17 2026-11-23: `CÔNG VĂN SỐ 01/2026` | Sửa ở **F-18** |
+| **B27** | Hai dòng "Kính gửi: …" / "Địa chỉ: …" bị gộp thành một khối; chọn hết rồi gõ thì mất dòng kia | QA F-17 2026-11-23 | Sửa ở **F-18** |
 
 ### 2.3 Thư viện hiện có [DK]
 - `pdf-lib` 1.17.1 (MIT): tạo/ghi PDF, nhúng font/ảnh, đối tượng cấp thấp. **Không có bộ phân tích content stream** (chỉ có parser đối tượng: `PDFObjectParser`, `PDFParser`…). Muốn xoá/sửa chữ gốc phải tự viết tokenizer content stream.
@@ -135,7 +137,8 @@ Nguyên tắc:
 | **W-9b** | Nhận đúng font/đậm/nghiêng/màu của chữ có sẵn (đọc content stream), khung đúng cho chữ xoay (chưa cho sửa), font bản xem dùng Arimo thay Helvetica (B3, B14, B17, B22) | W-9a | ✅ Đã merge (PR #66, squash) |
 | **W-9c** | Gom khối đoạn (không gộp ô bảng/biểu mẫu), ô sửa nhiều dòng, tự xuống dòng thay vì thu nhỏ chữ, xoá thật theo từng dòng của khối (B5, B6) | W-9b | ✅ Đã merge (PR #68, squash) |
 | **F-16** | Nhận font Be Vietnam Pro / Arimo từ BaseFont để chữ sửa giữ đúng font; ẩn khung bao của vùng đang sửa (B23, B24) | W-9c | ✅ Đã merge (PR #72, squash) |
-| **F-17** | Đóng gói font Tinos (OFL-1.1, cùng kích thước Times New Roman) để chữ tiếng Việt kiểu Times xuất ra font có chân thay vì Arimo (B25) | F-16 | Prompt: `docs/planning/antigravity/F-17_tinos-vietnamese-serif-export.md` |
+| **F-17** | Đóng gói font Tinos (OFL-1.1, cùng kích thước Times New Roman) để chữ tiếng Việt kiểu Times xuất ra font có chân thay vì Arimo (B25) | F-16 | ✅ Đã merge (PR #74) |
+| **F-18** | Dòng đơn sửa dài hơn kéo sang phải tới chỗ trống trước khi xuống dòng; dòng "Nhãn: giá trị" không bị gộp thành khối (B26, B27) | F-17 | Prompt: `docs/planning/antigravity/F-18_single-line-extend-label-lines.md` |
 | **W-10** | Ảnh có sẵn: nhận, chọn, di chuyển, giãn, xoay, lật, thay, xoá, cắt; ảnh chèn có xoay/cắt/thay (B9) | W-7, W-8 | |
 | **W-11** | Cuộn liên tục có ảo hoá, thumbnail thật, menu zoom + vừa trang/vừa chiều rộng, xoay trang lưu vào file, đặt lại Undo sau thao tác trang (B12, B13, B15) | W-8, F-12, F-13 | ✅ Đã merge (PR #48, gồm W-11b) |
 | W-12a–d | Tìm & thay thế chữ · watermark + header/footer · crop trang · link | W-9 | Đã duyệt (Q-P3) |
