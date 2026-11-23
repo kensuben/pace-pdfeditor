@@ -214,8 +214,25 @@
     </ul>
 
     <h3>Sửa chữ có sẵn trong PDF</h3>
-    <p>Dùng công cụ <b>Chọn</b>, bấm vào một dòng chữ có sẵn (bật <i>Hiện khung bao</i> để thấy rõ các dòng), sửa nội dung rồi <kbd>Enter</kbd>.</p>
-    <div class="note bad"><b>Chữ cũ vẫn còn trong file.</b> Hiện tại công cụ chỉ <b>che</b> chữ cũ bằng nền và viết chữ mới lên trên; người khác vẫn có thể copy hoặc tìm thấy chữ cũ trong file xuất (kể cả công cụ AI). <b>Không dùng tính năng này để xoá thông tin nhạy cảm</b> khỏi PDF. Chữ đã sửa cũng chưa kéo di chuyển được.</div>
+    <p>Dùng công cụ <b>Chọn</b>, bấm vào chữ có sẵn (bật <i>Hiện khung bao</i> để thấy rõ từng vùng), sửa nội dung trong ô hiện ra:</p>
+    <ul>
+      <li><kbd>Enter</kbd> để lưu, <kbd>Shift</kbd> + <kbd>Enter</kbd> để xuống dòng, <kbd>Esc</kbd> để huỷ.</li>
+      <li>Một <b>đoạn văn nhiều dòng</b> được nhận thành một khối: sửa cả đoạn một lần, ô sửa tự giãn khi gõ thêm.</li>
+      <li>Ô trong <b>bảng hoặc biểu mẫu</b> (nhãn | giá trị) vẫn sửa riêng từng ô.</li>
+      <li>Chữ mới giữ <b>font, cỡ, đậm/nghiêng và màu</b> của chữ gốc. Chữ dài hơn sẽ <b>tự xuống dòng</b> với cùng cỡ chữ, không bị thu nhỏ.</li>
+    </ul>
+    <figure>
+      <a class="zoomable" href="img/26-pdf-sua-doan.jpg" target="_blank" rel="noopener" title="Bấm để xem ảnh kích thước đầy đủ"><img src="img/26-pdf-sua-doan.jpg" alt="Đang sửa đoạn Điều 1 trong một ô nhiều dòng; các ô của bảng Bên B có khung riêng" loading="lazy" width="1520" height="616"></a>
+      <figcaption><span class="n">1</span> Ô sửa cả đoạn văn (3 dòng gốc). <span class="n">2</span> Ô trong bảng: mỗi ô là một vùng riêng (tài liệu mẫu, dữ liệu giả).</figcaption>
+    </figure>
+    <div class="note info"><b>Khi xuất PDF, chữ cũ được xoá khỏi file</b> (không chỉ che), nên không còn copy hay tìm thấy được. Một số trường hợp chỉ <b>che</b> được: chữ trong ảnh scan (vùng OCR), chữ nằm chung một lệnh vẽ với chữ cần giữ, hoặc chữ trong khối đặc biệt của PDF. Khi đó, trước khi tải về <b>hoặc gửi đi ký số</b>, hộp cảnh báo liệt kê <b>từng trang</b> còn chữ cũ và lý do; bấm <i>Huỷ</i> (Cancel) để dừng, <i>OK</i> để vẫn tiếp tục.</div>
+    <div class="note warn"><b>Lưu ý:</b>
+      <ul>
+        <li>Thấy hộp cảnh báo thì <b>không dùng file đó để xoá thông tin nhạy cảm</b>: sửa ở file gốc (Word…) rồi xuất lại PDF.</li>
+        <li>Đoạn mới dài hơn đoạn cũ có thể <b>đè lên nội dung bên dưới</b>; thanh trạng thái sẽ nhắc số trang sau khi xuất. Kiểm tra file trước khi gửi.</li>
+        <li>Chữ <b>xoay</b> (chữ dọc, chữ trên trang xoay) chưa sửa được: rê chuột thấy "Chữ xoay: chưa hỗ trợ sửa".</li>
+      </ul>
+    </div>
     <div class="note bad"><b>Nhớ Xuất PDF trước khi đóng tab hoặc tải lại trang.</b> Thay đổi chỉ nằm trong trình duyệt cho tới khi bạn xuất file.</div>
     <div class="note info"><b>Chữ ký nét vẽ ≠ chữ ký số.</b> Công cụ <i>Chữ ký</i> chỉ tạo hình chữ ký hiển thị, không có giá trị như chữ ký số có chứng thư. Văn bản cần ký số hợp lệ phải dùng nút <i>Ký số</i>.</div>
   </section>
@@ -417,7 +434,7 @@
     <details><summary>Xoay hay xoá trang xong muốn quay lại?</summary>
       <p>Thao tác với trang không hoàn tác được bằng Undo. Mở lại file gốc (file trên máy không bị thay đổi) và làm lại các chỉnh sửa.</p></details>
     <details><summary>Sửa chữ có sẵn trong PDF có xoá hẳn chữ cũ không?</summary>
-      <p>Chưa. Chữ cũ chỉ bị che, vẫn copy/tìm thấy được trong file xuất. Không dùng cách này để xoá thông tin nhạy cảm; hãy sửa ở file gốc (Word…) rồi xuất lại PDF.</p></details>
+      <p>Có, trong đa số trường hợp: chữ cũ bị xoá khỏi file xuất. Nếu chỗ nào chỉ che được (ảnh scan, chữ nằm chung lệnh vẽ, khối đặc biệt), hộp cảnh báo sẽ nêu rõ trang trước khi tải về hoặc ký số. Gặp cảnh báo khi cần xoá thông tin nhạy cảm thì sửa ở file gốc (Word…) rồi xuất lại PDF.</p></details>
     <details><summary>Trên điện thoại không thấy nút Đăng xuất?</summary>
       <p>Bấm nút <b>⋯</b> ở góc phải thanh trên cùng, chọn <b>Đăng xuất</b>.</p></details>
     <details><summary>Đăng nhập xong báo "Account is not authorized" hoặc "Tài khoản không được phép sử dụng hệ thống"?</summary>
