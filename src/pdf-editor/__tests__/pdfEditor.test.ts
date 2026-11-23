@@ -244,11 +244,11 @@ describe('PDF Editor Modularized Unit Tests (W-6 & F-11)', () => {
     expect(text).toContain('Customer: Test 02')
   })
 
-  // T7: cùng file ở T6 → pdf.js vẫn trích ra Customer: Hoc vien Test 01. Ghi comment: "W-9 sẽ đảo test này".
-  it('KNOWN ISSUE B1: retains original text in exported PDF when text region is replaced', async () => {
-    // W-9 sẽ đảo test này: hiện tại thay chữ chỉ vẽ hình chữ nhật che đè lên nên chữ gốc vẫn còn trong content stream.
+  // T7: cùng file ở T6 → pdf.js không còn trích ra Customer: Hoc vien Test 01 nhờ content stream engine xoá thật chữ gốc.
+  it('B1: removes original text in exported PDF when text region is replaced', async () => {
+    // W-9 đã đảo test này: thay chữ sử dụng content stream engine để xoá thật chữ gốc khỏi stream, không còn Customer: Hoc vien Test 01.
     const text = await extractTextFromPdf(t6EditedBytes)
-    expect(text).toContain('Customer: Hoc vien Test 01')
+    expect(text).not.toContain('Customer: Hoc vien Test 01')
   })
 
   // T8: highlight + ink (3 điểm) + ảnh PNG 1×1 (data URL hằng số trong test) → xuất không lỗi, số trang không đổi.

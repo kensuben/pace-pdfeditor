@@ -20,7 +20,8 @@ import './pdf-editor/viewer.css'
 import './pdf-editor/toolbar.css'
 import {
   clamp, uid, IconButton, TextFormatBar,
-  buildEditedPdf, insertPdfPages, movePage, deletePage, rotatePage,
+  buildEditedPdfWithReport, findRemainingOriginalText, formatRemainingTextWarning,
+  insertPdfPages, movePage, deletePage, rotatePage,
   remapAnnotationsOnInsert, remapAnnotationsOnMove, remapAnnotationsOnDelete,
   buildReplacementAnnotation, parseOcrTsv, groupOcrWordsIntoLines,
   imageInsertSize,
@@ -404,18 +405,93 @@ function App() {
     }))
   }, [])
 
-  const buildPdfBytes = useCallback(() => {
+  const buildPdfBytes = useCallback(async () => {
     if (!bytes) throw new Error('Chưa có tài liệu để xử lý.')
-    return buildEditedPdf(bytes, annotations)
+    let { bytes: outBytes, report } = await buildEditedPdfWithReport(bytes, annotations)
+
+    const checks = annotations
+      .filter((a) => a.type === 'text' && a.replaceOriginal && a.originalText)
+      .map((a) => ({
+        page: a.page,
+        rect: a.originalRect || { x: a.x, y: a.y, width: a.width, height: a.height },
+        originalText: a.originalText!,
+        newText: a.text || '',
+      }))
+
+    if (checks.length > 0) {
+      const remainingPages = await findRemainingOriginalText(outBytes, checks)
+      const unmaskedResidualPages = remainingPages.filter((p) => !report.maskedPages.includes(p))
+
+      if (unmaskedResidualPages.length > 0) {
+        const rebuild = await buildEditedPdfWithReport(bytes, annotations, {
+          forceMaskPages: unmaskedResidualPages,
+        })
+        outBytes = rebuild.bytes
+        report = rebuild.report
+      }
+
+      for (const p of remainingPages) {
+        const regCount = checks.filter((c) => c.page === p).length
+        report.warnings.push({
+          page: p,
+          reason: 'residual-text',
+          regionCount: regCount,
+        })
+      }
+      report.warnings.sort((a, b) => a.page - b.page)
+    }
+
+    return { bytes: outBytes, report }
   }, [bytes, annotations])
 
   const exportPdf = async () => {
     if (!bytes || !info) return
     setBusy(true)
     try {
-      const out=await buildPdfBytes(), blob = new Blob([out as BlobPart], { type: 'application/pdf' }), url = URL.createObjectURL(blob)
-      const a = document.createElement('a'); a.href=url; a.download=info.name.replace(/\.pdf$/i,'')+'-edited.pdf'; a.click(); URL.revokeObjectURL(url)
-      log('document.exported', 'Xuất tài liệu PDF thành công', { fileExt: 'pdf', annotationCount: annotations.length, pageCount: info.pages }, 'success')
+      const { bytes: out, report } = await buildPdfBytes()
+      if (report.warnings.length > 0) {
+        const confirmMsg = formatRemainingTextWarning(report.warnings)
+        const confirmed = window.confirm(confirmMsg)
+        if (!confirmed) {
+          const pagesStr = Array.from(new Set(report.warnings.map((w) => w.page)))
+            .sort((a, b) => a - b)
+            .join(',')
+          const regionCount = report.warnings.reduce((sum, w) => sum + w.regionCount, 0)
+          log(
+            'document.export_cancelled',
+            'Huỷ xuất tài liệu PDF do còn chữ cũ',
+            { reason: 'remaining_text', pages: pagesStr, regionCount },
+            'warning'
+          )
+          return
+        }
+      }
+
+      const blob = new Blob([out as BlobPart], { type: 'application/pdf' })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = info.name.replace(/\.pdf$/i, '') + '-edited.pdf'
+      a.click()
+      URL.revokeObjectURL(url)
+
+      const remainingPagesStr = Array.from(new Set(report.warnings.map((w) => w.page)))
+        .sort((a, b) => a - b)
+        .join(',')
+
+      log(
+        'document.exported',
+        'Xuất tài liệu PDF thành công',
+        {
+          fileExt: 'pdf',
+          annotationCount: annotations.length,
+          pageCount: info.pages,
+          editedPageCount: report.editedPages.length,
+          cleanedPageCount: report.cleanedPages.length,
+          remainingTextPages: remainingPagesStr,
+        },
+        'success'
+      )
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error)
       let reason: 'font_load_failed' | 'missing_glyph' | 'unknown' = 'unknown'
@@ -578,7 +654,26 @@ function App() {
     if(!info)return
     setBusy(true)
     try{
-      const finalBytes=await buildPdfBytes(),form=new FormData()
+      const { bytes: finalBytes, report } = await buildPdfBytes()
+      if (report.warnings.length > 0) {
+        const confirmMsg = formatRemainingTextWarning(report.warnings)
+        const confirmed = window.confirm(confirmMsg)
+        if (!confirmed) {
+          const pagesStr = Array.from(new Set(report.warnings.map((w) => w.page)))
+            .sort((a, b) => a - b)
+            .join(',')
+          const regionCount = report.warnings.reduce((sum, w) => sum + w.regionCount, 0)
+          log(
+            'signature.digital_cancelled',
+            'Huỷ ký số tài liệu do còn chữ cũ',
+            { reason: 'remaining_text', pages: pagesStr, regionCount },
+            'warning'
+          )
+          return
+        }
+      }
+
+      const form=new FormData()
       form.append('file',new Blob([finalBytes as BlobPart],{type:'application/pdf'}),info.name.replace(/\.pdf$/i,'')+'-final.pdf')
       form.append('mode',mode);form.append('reason','PACE PDF Workspace electronic signature')
       const response=await fetch(`${String(endpoint).replace(/\/$/,'')}/v1/pdf/sign`,{method:'POST',body:form,credentials:'include'})
