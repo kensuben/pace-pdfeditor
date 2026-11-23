@@ -129,8 +129,8 @@ Nguyên tắc:
 | **F-15** | Thanh công cụ thu gọn + menu "Thêm" (nút Xoay trang bị đẩy ra ngoài ở 1280px), ô panel không vỡ dòng, tên file không đè nút | W-8b | Prompt: `docs/planning/antigravity/F-15_toolbar-overflow-panel-fields-file-title.md` |
 | **F-15c** | Menu "Thêm thao tác" bị cắt và làm thanh công cụ cuộn dọc ở 1024px (overflow của `.toolbar` + focus không `preventScroll`) | F-15 | Prompt: `docs/planning/antigravity/F-15c_overflow-menu-clipping.md` |
 | **W-9a** | Xuất PDF bằng engine: xoá thật chữ cũ khi sửa chữ có sẵn, chỉ che khi không xoá được (OCR, lệnh chạm vùng, Form XObject), kiểm tra sót sau xuất, cảnh báo theo trang trước khi tải/ký (B1, Q-P2) | W-7, F-12 | ✅ Đã merge (PR #64, squash) |
-| **W-9b** | Nhận đúng font/đậm/nghiêng/màu của chữ có sẵn (đọc content stream), khung đúng cho chữ xoay (chưa cho sửa), font bản xem dùng Arimo thay Helvetica (B3, B14, B17, B22) | W-9a | Prompt: `docs/planning/antigravity/W-9b_text-recognition-font-color-rotation.md` |
-| **W-9c** | Gom khối đoạn, editor nhiều dòng, tự xuống dòng thay vì thu nhỏ chữ (B5, B6) | W-9b | Viết prompt sau khi W-9b merge |
+| **W-9b** | Nhận đúng font/đậm/nghiêng/màu của chữ có sẵn (đọc content stream), khung đúng cho chữ xoay (chưa cho sửa), font bản xem dùng Arimo thay Helvetica (B3, B14, B17, B22) | W-9a | ✅ Đã merge (PR #66, squash) |
+| **W-9c** | Gom khối đoạn (không gộp ô bảng/biểu mẫu), ô sửa nhiều dòng, tự xuống dòng thay vì thu nhỏ chữ, xoá thật theo từng dòng của khối (B5, B6) | W-9b | Prompt: `docs/planning/antigravity/W-9c_text-blocks-multiline-reflow.md` |
 | **W-10** | Ảnh có sẵn: nhận, chọn, di chuyển, giãn, xoay, lật, thay, xoá, cắt; ảnh chèn có xoay/cắt/thay (B9) | W-7, W-8 | |
 | **W-11** | Cuộn liên tục có ảo hoá, thumbnail thật, menu zoom + vừa trang/vừa chiều rộng, xoay trang lưu vào file, đặt lại Undo sau thao tác trang (B12, B13, B15) | W-8, F-12, F-13 | ✅ Đã merge (PR #48, gồm W-11b) |
 | W-12a–d | Tìm & thay thế chữ · watermark + header/footer · crop trang · link | W-9 | Đã duyệt (Q-P3) |
