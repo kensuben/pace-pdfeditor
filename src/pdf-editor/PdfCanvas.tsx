@@ -558,25 +558,29 @@ export function PdfCanvas({
           )
         })}
         {showBoundingBoxes &&
-          textRegions.map((region) => (
-            <div
-              key={`bbox-reg-${region.id}`}
-              className="bounding-box-region"
-              style={{
-                position: 'absolute',
-                left: `${region.x * 100}%`,
-                top: `${region.y * 100}%`,
-                width: `${region.width * 100}%`,
-                height: `${region.height * 100}%`,
-                border: '1px dashed var(--accent, #0047af)',
-                pointerEvents: 'none',
-                zIndex: 44,
-                boxSizing: 'border-box',
-              }}
-            />
-          ))}
+          textRegions.map((region) => {
+            if (inlineEdit?.kind === 'region' && inlineEdit.id === region.id) return null
+            return (
+              <div
+                key={`bbox-reg-${region.id}`}
+                className="bounding-box-region"
+                style={{
+                  position: 'absolute',
+                  left: `${region.x * 100}%`,
+                  top: `${region.y * 100}%`,
+                  width: `${region.width * 100}%`,
+                  height: `${region.height * 100}%`,
+                  border: '1px dashed var(--accent, #0047af)',
+                  pointerEvents: 'none',
+                  zIndex: 44,
+                  boxSizing: 'border-box',
+                }}
+              />
+            )
+          })}
         {showBoundingBoxes &&
           annotations.map((a) => {
+            if (inlineEdit?.kind === 'annotation' && inlineEdit.id === a.id) return null
             const b = getBounds(a)
             return (
               <div
