@@ -56,6 +56,7 @@ export type Annotation = {
   originalRect?: { x: number; y: number; width: number; height: number }
   lineHeight?: number
   originalLineRects?: Array<{ x: number; y: number; width: number; height: number }>
+  maxWidth?: number
 }
 
 export type TextStyle = Pick<Annotation, 'fontFamily' | 'fontSize' | 'bold' | 'italic' | 'underline' | 'align' | 'color'>

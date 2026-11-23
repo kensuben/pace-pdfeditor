@@ -524,7 +524,7 @@ export function PdfCanvas({
                 {
                   left: `${display.x * 100}%`,
                   top: `${display.y * 100}%`,
-                  width: `${display.width * 100}%`,
+                  width: `${(a.replaceOriginal && !a.originalLineRects && a.maxWidth !== undefined ? Math.max(display.width, a.maxWidth) : display.width) * 100}%`,
                   height: `${display.height * 100}%`,
                   backgroundColor: annotationFill(display),
                   '--replacement-background': a.backgroundColor || '#fff',

@@ -396,7 +396,11 @@ export async function buildEditedPdfWithReport(
         }
 
         const lineHeightPt = a.lineHeight ?? fontSize * 1.2
-        const lines = wrapTextToWidth(value, boxWidth, (s) => font.widthOfTextAtSize(s, fontSize))
+        const wrapWidth =
+          !a.originalLineRects && a.maxWidth !== undefined
+            ? Math.max(boxWidth, a.maxWidth * width)
+            : boxWidth
+        const lines = wrapTextToWidth(value, wrapWidth, (s) => font.widthOfTextAtSize(s, fontSize))
 
         if (lines.length * lineHeightPt > a.height * height + 0.5 * lineHeightPt) {
           overflowPagesSet.add(a.page)
@@ -407,9 +411,9 @@ export async function buildEditedPdfWithReport(
             const textWidth = font.widthOfTextAtSize(value, fontSize)
             const alignOffset =
               a.align === 'center'
-                ? Math.max(0, (boxWidth - textWidth) / 2)
+                ? Math.max(0, (wrapWidth - textWidth) / 2)
                 : a.align === 'right'
-                  ? Math.max(0, boxWidth - textWidth)
+                  ? Math.max(0, wrapWidth - textWidth)
                   : 0
             const uText = (a.x * width + alignOffset) / width
             const vText = (a.y * height + fontSize) / height
@@ -422,13 +426,13 @@ export async function buildEditedPdfWithReport(
               font,
               color: c,
               opacity: a.opacity,
-              maxWidth: boxWidth,
+              maxWidth: wrapWidth,
               rotate: rotDegrees,
             })
 
             if (a.underline) {
               const uLineStart = (a.x * width + alignOffset) / width
-              const uLineEnd = Math.min(a.x * width + alignOffset + textWidth, a.x * width + boxWidth) / width
+              const uLineEnd = Math.min(a.x * width + alignOffset + textWidth, a.x * width + wrapWidth) / width
               const vLine = (a.y * height + fontSize + 1.5) / height
 
               const lineStart = viewToPdf(view, uLineStart, vLine)
@@ -450,9 +454,9 @@ export async function buildEditedPdfWithReport(
             const lineTextWidth = font.widthOfTextAtSize(lineStr, fontSize)
             const lineAlignOffset =
               a.align === 'center'
-                ? Math.max(0, (boxWidth - lineTextWidth) / 2)
+                ? Math.max(0, (wrapWidth - lineTextWidth) / 2)
                 : a.align === 'right'
-                  ? Math.max(0, boxWidth - lineTextWidth)
+                  ? Math.max(0, wrapWidth - lineTextWidth)
                   : 0
 
             const u = (a.x * width + lineAlignOffset) / width
@@ -473,7 +477,7 @@ export async function buildEditedPdfWithReport(
               const uLineStart = (a.x * width + lineAlignOffset) / width
               const uLineEnd = Math.min(
                 a.x * width + lineAlignOffset + lineTextWidth,
-                a.x * width + boxWidth,
+                a.x * width + wrapWidth,
               ) / width
               const vLine = (a.y * height + fontSize + i * lineHeightPt + 1.5) / height
 
