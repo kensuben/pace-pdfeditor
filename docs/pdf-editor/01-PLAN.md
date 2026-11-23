@@ -53,6 +53,7 @@ Toàn bộ PDF editor nằm trong `src/App.tsx` (878 dòng): component `PdfCanva
 | **B19** | Xuất PDF lệch vị trí/kích thước trên trang có MediaBox/CropBox không bắt đầu ở gốc (0,0) | QA 2026-11-20: MediaBox `[100 100 700 500]` → highlight lệch, sai kích thước | Sửa ở **F-12** |
 | **B20** | **Highlight không hiện trên màn hình** (khung `div.annotation.highlight` chỉ có `color`/`opacity`, nền trong suốt); file xuất vẫn có vệt màu. Có từ bản phát hành đầu | QA W-8 (2026-11-20): `backgroundColor` tính được `rgba(0,0,0,0)` trên cả `main` và W-8 | Sửa ở **F-13** |
 | B21 | Chọn chữ làm thanh định dạng hiện ra, đẩy trang xuống 46px; bỏ chọn thì trang nhảy lên | QA W-8: toạ độ chữ 307px → 261px khi bỏ chọn | Xử lý ở W-8b (đưa định dạng vào panel bên phải) |
+| **B22** | Chữ Helvetica bị nhận là Times: regex `/times\|serif/` khớp `sans-serif` của pdf.js (`textExtraction.ts:28`) | QA W-9a 2026-11-23: sửa dòng Helvetica → file xuất dùng Times-Roman | Sửa ở **W-9b** |
 
 ### 2.3 Thư viện hiện có [DK]
 - `pdf-lib` 1.17.1 (MIT): tạo/ghi PDF, nhúng font/ảnh, đối tượng cấp thấp. **Không có bộ phân tích content stream** (chỉ có parser đối tượng: `PDFObjectParser`, `PDFParser`…). Muốn xoá/sửa chữ gốc phải tự viết tokenizer content stream.
@@ -127,8 +128,9 @@ Nguyên tắc:
 | **W-8b** | Panel thuộc tính, đường gióng/hút cạnh, nút "Hiện khung bao", sửa B21, zoom giữ điểm dưới con trỏ, sidebar ≤ 800px, highlight xuất `Multiply` | W-11 | ✅ Đã merge (PR #51, gồm W-8b2) |
 | **F-15** | Thanh công cụ thu gọn + menu "Thêm" (nút Xoay trang bị đẩy ra ngoài ở 1280px), ô panel không vỡ dòng, tên file không đè nút | W-8b | Prompt: `docs/planning/antigravity/F-15_toolbar-overflow-panel-fields-file-title.md` |
 | **F-15c** | Menu "Thêm thao tác" bị cắt và làm thanh công cụ cuộn dọc ở 1024px (overflow của `.toolbar` + focus không `preventScroll`) | F-15 | Prompt: `docs/planning/antigravity/F-15c_overflow-menu-clipping.md` |
-| **W-9a** | Xuất PDF bằng engine: xoá thật chữ cũ khi sửa chữ có sẵn, chỉ che khi không xoá được (OCR, lệnh chạm vùng, Form XObject), kiểm tra sót sau xuất, cảnh báo theo trang trước khi tải/ký (B1, Q-P2) | W-7, F-12 | Prompt: `docs/planning/antigravity/W-9a_export-real-text-removal.md` |
-| **W-9b** | Sửa chữ gốc kiểu Acrobat: gom khối đoạn, nhận màu/cỡ/font, editor nhiều dòng, reflow, bản xem Helvetica bằng Arimo (B2–B6, B14, B17) | W-9a | Viết prompt sau khi W-9a merge |
+| **W-9a** | Xuất PDF bằng engine: xoá thật chữ cũ khi sửa chữ có sẵn, chỉ che khi không xoá được (OCR, lệnh chạm vùng, Form XObject), kiểm tra sót sau xuất, cảnh báo theo trang trước khi tải/ký (B1, Q-P2) | W-7, F-12 | ✅ Đã merge (PR #64, squash) |
+| **W-9b** | Nhận đúng font/đậm/nghiêng/màu của chữ có sẵn (đọc content stream), khung đúng cho chữ xoay (chưa cho sửa), font bản xem dùng Arimo thay Helvetica (B3, B14, B17, B22) | W-9a | Prompt: `docs/planning/antigravity/W-9b_text-recognition-font-color-rotation.md` |
+| **W-9c** | Gom khối đoạn, editor nhiều dòng, tự xuống dòng thay vì thu nhỏ chữ (B5, B6) | W-9b | Viết prompt sau khi W-9b merge |
 | **W-10** | Ảnh có sẵn: nhận, chọn, di chuyển, giãn, xoay, lật, thay, xoá, cắt; ảnh chèn có xoay/cắt/thay (B9) | W-7, W-8 | |
 | **W-11** | Cuộn liên tục có ảo hoá, thumbnail thật, menu zoom + vừa trang/vừa chiều rộng, xoay trang lưu vào file, đặt lại Undo sau thao tác trang (B12, B13, B15) | W-8, F-12, F-13 | ✅ Đã merge (PR #48, gồm W-11b) |
 | W-12a–d | Tìm & thay thế chữ · watermark + header/footer · crop trang · link | W-9 | Đã duyệt (Q-P3) |
