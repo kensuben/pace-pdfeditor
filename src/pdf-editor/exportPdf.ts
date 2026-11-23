@@ -23,6 +23,7 @@ export interface ExportTextReport {
   cleanedPages: number[]
   maskedPages: number[]
   warnings: Array<{ page: number; reason: RemainingTextReason; regionCount: number }>
+  overflowPages: number[]
 }
 
 export interface BuildPdfOptions {
@@ -63,6 +64,88 @@ const defaultLoadImageBytes = async (dataUrl: string): Promise<ArrayBuffer> => {
   return response.arrayBuffer()
 }
 
+export function wrapTextToWidth(
+  text: string,
+  maxWidth: number,
+  measure: (s: string) => number,
+): string[] {
+  if (!text) return ['']
+  const paragraphs = text.split('\n')
+  const result: string[] = []
+
+  for (const para of paragraphs) {
+    if (!para) {
+      result.push('')
+      continue
+    }
+
+    const words = para.split(' ')
+    let currentLine = ''
+
+    const pushWord = (word: string) => {
+      if (!word) {
+        if (currentLine === '') {
+          currentLine = ' '
+        } else {
+          currentLine += ' '
+        }
+        return
+      }
+
+      if (currentLine === '') {
+        if (measure(word) <= maxWidth) {
+          currentLine = word
+        } else {
+          let chunk = ''
+          for (const ch of word) {
+            const next = chunk + ch
+            if (chunk && measure(next) > maxWidth) {
+              result.push(chunk)
+              chunk = ch
+            } else {
+              chunk = next
+            }
+          }
+          currentLine = chunk
+        }
+      } else {
+        const withWord = currentLine + ' ' + word
+        if (measure(withWord) <= maxWidth) {
+          currentLine = withWord
+        } else {
+          result.push(currentLine)
+          currentLine = ''
+          if (measure(word) <= maxWidth) {
+            currentLine = word
+          } else {
+            let chunk = ''
+            for (const ch of word) {
+              const next = chunk + ch
+              if (chunk && measure(next) > maxWidth) {
+                result.push(chunk)
+                chunk = ch
+              } else {
+                chunk = next
+              }
+            }
+            currentLine = chunk
+          }
+        }
+      }
+    }
+
+    for (const w of words) {
+      pushWord(w)
+    }
+
+    if (currentLine !== '') {
+      result.push(currentLine)
+    }
+  }
+
+  return result
+}
+
 export async function buildEditedPdfWithReport(
   bytes: Uint8Array,
   annotations: Annotation[],
@@ -88,6 +171,7 @@ export async function buildEditedPdfWithReport(
   const removalReports = new Map<number, RemovalReport>()
   const pageOcrCounts = new Map<number, number>()
   const warnings: Array<{ page: number; reason: RemainingTextReason; regionCount: number }> = []
+  const overflowPagesSet = new Set<number>()
 
   // (b) For each page with at least 1 annotation with originalSource !== 'ocr':
   for (const pageNumber of editedPages) {
@@ -113,8 +197,6 @@ export async function buildEditedPdfWithReport(
 
         const regions: Rect[] = []
         for (const a of nativeAnns) {
-          const targetRect =
-            a.originalRect || { x: a.x, y: a.y, width: a.width, height: a.height }
           const fontSize = a.fontSize || 16
           const padX =
             a.maskPadX !== undefined ? a.maskPadX * width : Math.max(0.5, fontSize * 0.08)
@@ -125,22 +207,29 @@ export async function buildEditedPdfWithReport(
               ? a.maskPadBottom * height
               : Math.max(0.7, fontSize * 0.12)
 
-          const u0 = (targetRect.x * width - padX) / width
-          const u1 = ((targetRect.x + targetRect.width) * width + padX) / width
-          const v0 = (targetRect.y * height - padTop) / height
-          const v1 = ((targetRect.y + targetRect.height) * height + padBottom) / height
+          const rectsToProcess =
+            a.originalLineRects && a.originalLineRects.length > 0
+              ? a.originalLineRects
+              : [a.originalRect || { x: a.x, y: a.y, width: a.width, height: a.height }]
 
-          const c1 = viewToPdf(view, u0, v0)
-          const c2 = viewToPdf(view, u1, v0)
-          const c3 = viewToPdf(view, u1, v1)
-          const c4 = viewToPdf(view, u0, v1)
+          for (const targetRect of rectsToProcess) {
+            const u0 = (targetRect.x * width - padX) / width
+            const u1 = ((targetRect.x + targetRect.width) * width + padX) / width
+            const v0 = (targetRect.y * height - padTop) / height
+            const v1 = ((targetRect.y + targetRect.height) * height + padBottom) / height
 
-          const rectX = Math.min(c1.x, c2.x, c3.x, c4.x)
-          const rectY = Math.min(c1.y, c2.y, c3.y, c4.y)
-          const rectW = Math.max(c1.x, c2.x, c3.x, c4.x) - rectX
-          const rectH = Math.max(c1.y, c2.y, c3.y, c4.y) - rectY
+            const c1 = viewToPdf(view, u0, v0)
+            const c2 = viewToPdf(view, u1, v0)
+            const c3 = viewToPdf(view, u1, v1)
+            const c4 = viewToPdf(view, u0, v1)
 
-          regions.push({ x: rectX, y: rectY, width: rectW, height: rectH })
+            const rectX = Math.min(c1.x, c2.x, c3.x, c4.x)
+            const rectY = Math.min(c1.y, c2.y, c3.y, c4.y)
+            const rectW = Math.max(c1.x, c2.x, c3.x, c4.x) - rectX
+            const rectH = Math.max(c1.y, c2.y, c3.y, c4.y) - rectY
+
+            regions.push({ x: rectX, y: rectY, width: rectW, height: rectH })
+          }
         }
 
         const rep = removeTextInRegions(doc, pageIndex, regions)
@@ -236,7 +325,7 @@ export async function buildEditedPdfWithReport(
     if (a.type === 'text') {
       const { font, family } = await getFont(a)
       const boxWidth = a.width * width
-      let fontSize = a.fontSize || 16
+      const fontSize = a.fontSize || 16
       const value = a.text || ''
 
       // TODO(verify): getCharacterSet() returns code points array for embedded fonts; standard fonts behavior is WinAnsi
@@ -257,11 +346,6 @@ export async function buildEditedPdfWithReport(
           throw new Error(`MISSING_GLYPH: ${missingChars.join(', ')}`)
         }
       }
-
-      const naturalWidth = font.widthOfTextAtSize(value, fontSize)
-      if (a.replaceOriginal && naturalWidth > boxWidth) fontSize = Math.max(6, fontSize * (boxWidth / naturalWidth))
-      const textWidth = font.widthOfTextAtSize(value, fontSize)
-      const alignOffset = a.align === 'center' ? Math.max(0, (boxWidth - textWidth) / 2) : a.align === 'right' ? Math.max(0, boxWidth - textWidth) : 0
 
       if (a.replaceOriginal) {
         const shouldMask =
@@ -300,38 +384,143 @@ export async function buildEditedPdfWithReport(
             opacity: 1,
           })
         }
-      }
-      if (value) {
-        const uText = (a.x * width + alignOffset) / width
-        const vText = (a.y * height + fontSize) / height
-        const textPos = viewToPdf(view, uText, vText)
 
-        p.drawText(value, {
-          x: textPos.x,
-          y: textPos.y,
-          size: fontSize,
-          font,
-          color: c,
-          opacity: a.opacity,
-          maxWidth: boxWidth,
-          rotate: rotDegrees,
-        })
+        const lineHeightPt = a.lineHeight ?? fontSize * 1.2
+        const lines = wrapTextToWidth(value, boxWidth, (s) => font.widthOfTextAtSize(s, fontSize))
 
-        if (a.underline) {
-          const uLineStart = (a.x * width + alignOffset) / width
-          const uLineEnd = Math.min(a.x * width + alignOffset + textWidth, a.x * width + boxWidth) / width
-          const vLine = (a.y * height + fontSize + 1.5) / height
+        if (lines.length * lineHeightPt > a.height * height + 0.5 * lineHeightPt) {
+          overflowPagesSet.add(a.page)
+        }
 
-          const lineStart = viewToPdf(view, uLineStart, vLine)
-          const lineEnd = viewToPdf(view, uLineEnd, vLine)
+        if (lines.length <= 1) {
+          if (value) {
+            const textWidth = font.widthOfTextAtSize(value, fontSize)
+            const alignOffset =
+              a.align === 'center'
+                ? Math.max(0, (boxWidth - textWidth) / 2)
+                : a.align === 'right'
+                  ? Math.max(0, boxWidth - textWidth)
+                  : 0
+            const uText = (a.x * width + alignOffset) / width
+            const vText = (a.y * height + fontSize) / height
+            const textPos = viewToPdf(view, uText, vText)
 
-          p.drawLine({
-            start: lineStart,
-            end: lineEnd,
+            p.drawText(value, {
+              x: textPos.x,
+              y: textPos.y,
+              size: fontSize,
+              font,
+              color: c,
+              opacity: a.opacity,
+              maxWidth: boxWidth,
+              rotate: rotDegrees,
+            })
+
+            if (a.underline) {
+              const uLineStart = (a.x * width + alignOffset) / width
+              const uLineEnd = Math.min(a.x * width + alignOffset + textWidth, a.x * width + boxWidth) / width
+              const vLine = (a.y * height + fontSize + 1.5) / height
+
+              const lineStart = viewToPdf(view, uLineStart, vLine)
+              const lineEnd = viewToPdf(view, uLineEnd, vLine)
+
+              p.drawLine({
+                start: lineStart,
+                end: lineEnd,
+                color: c,
+                thickness: Math.max(0.6, fontSize / 18),
+                opacity: a.opacity,
+              })
+            }
+          }
+        } else {
+          for (let i = 0; i < lines.length; i++) {
+            const lineStr = lines[i]
+            if (!lineStr) continue
+            const lineTextWidth = font.widthOfTextAtSize(lineStr, fontSize)
+            const lineAlignOffset =
+              a.align === 'center'
+                ? Math.max(0, (boxWidth - lineTextWidth) / 2)
+                : a.align === 'right'
+                  ? Math.max(0, boxWidth - lineTextWidth)
+                  : 0
+
+            const u = (a.x * width + lineAlignOffset) / width
+            const v = (a.y * height + fontSize + i * lineHeightPt) / height
+            const pos = viewToPdf(view, u, v)
+
+            p.drawText(lineStr, {
+              x: pos.x,
+              y: pos.y,
+              size: fontSize,
+              font,
+              color: c,
+              opacity: a.opacity,
+              rotate: rotDegrees,
+            })
+
+            if (a.underline) {
+              const uLineStart = (a.x * width + lineAlignOffset) / width
+              const uLineEnd = Math.min(
+                a.x * width + lineAlignOffset + lineTextWidth,
+                a.x * width + boxWidth,
+              ) / width
+              const vLine = (a.y * height + fontSize + i * lineHeightPt + 1.5) / height
+
+              const lineStart = viewToPdf(view, uLineStart, vLine)
+              const lineEnd = viewToPdf(view, uLineEnd, vLine)
+
+              p.drawLine({
+                start: lineStart,
+                end: lineEnd,
+                color: c,
+                thickness: Math.max(0.6, fontSize / 18),
+                opacity: a.opacity,
+              })
+            }
+          }
+        }
+      } else {
+        const textWidth = font.widthOfTextAtSize(value, fontSize)
+        const alignOffset =
+          a.align === 'center'
+            ? Math.max(0, (boxWidth - textWidth) / 2)
+            : a.align === 'right'
+              ? Math.max(0, boxWidth - textWidth)
+              : 0
+
+        if (value) {
+          const uText = (a.x * width + alignOffset) / width
+          const vText = (a.y * height + fontSize) / height
+          const textPos = viewToPdf(view, uText, vText)
+
+          p.drawText(value, {
+            x: textPos.x,
+            y: textPos.y,
+            size: fontSize,
+            font,
             color: c,
-            thickness: Math.max(0.6, fontSize / 18),
             opacity: a.opacity,
+            maxWidth: boxWidth,
+            rotate: rotDegrees,
           })
+
+          if (a.underline) {
+            const uLineStart = (a.x * width + alignOffset) / width
+            const uLineEnd = Math.min(a.x * width + alignOffset + textWidth, a.x * width + boxWidth) / width
+            const vLine = (a.y * height + fontSize + 1.5) / height
+
+            const lineStart = viewToPdf(view, uLineStart, vLine)
+            const lineEnd = viewToPdf(view, uLineEnd, vLine)
+
+            p.drawLine({
+              start: lineStart,
+              end: lineEnd,
+              color: c,
+              thickness: Math.max(0.6, fontSize / 18),
+              opacity: a.opacity,
+            })
+          }
         }
       }
     } else if (a.type === 'image' && a.imageDataUrl) {
@@ -389,6 +578,7 @@ export async function buildEditedPdfWithReport(
       cleanedPages,
       maskedPages,
       warnings,
+      overflowPages: Array.from(overflowPagesSet).sort((a, b) => a - b),
     },
   }
 }

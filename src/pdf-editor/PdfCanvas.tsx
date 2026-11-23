@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import type * as pdfjs from 'pdfjs-dist'
 import type { Annotation, Point, TextRegion, TextStyle, Tool } from '../types'
 import { clamp, uid } from './geometry'
-import { groupTextItemsIntoLines } from './textExtraction'
+import { groupTextItemsIntoLines, groupLinesIntoBlocks } from './textExtraction'
 import { cssFontStack } from './fonts'
 import { SelectionFrame } from './selection/SelectionFrame'
 import { getBounds, moveBy, nudgeDelta } from './selection/geometry'
@@ -130,7 +130,8 @@ export function PdfCanvas({
       const viewport = page.getViewport({ scale: 1 })
       const content = await page.getTextContent()
       if (cancelled) return
-      const regions = groupTextItemsIntoLines(content.items, content.styles, viewport, pageNumber)
+      const rawLines = groupTextItemsIntoLines(content.items, content.styles, viewport, pageNumber)
+      const regions = groupLinesIntoBlocks(rawLines, viewport, pageNumber)
       onTextRegionsRef.current(regions)
     })().catch(console.error)
     return () => {
@@ -366,15 +367,25 @@ export function PdfCanvas({
             inlineEdit?.kind === 'region' && inlineEdit.id === region.id ? (
               <textarea
                 key={region.id}
+                ref={(el) => {
+                  if (el) {
+                    el.style.height = 'auto'
+                    const minH = Math.max(region.height * size.height, 0.018 * size.height)
+                    el.style.height = `${Math.max(el.scrollHeight, minH)}px`
+                  }
+                }}
                 autoFocus
                 className="inline-text-editor"
+                title="Enter: lưu · Shift+Enter: xuống dòng · Esc: huỷ"
                 value={inlineEdit.value}
                 style={{
                   left: `${region.x * 100}%`,
                   top: `${region.y * 100}%`,
                   width: `${Math.max(region.width, 0.04) * 100}%`,
-                  height: `${Math.max(region.height, 0.018) * 100}%`,
+                  minHeight: `${Math.max(region.height, 0.018) * 100}%`,
                   fontSize: region.fontSize * zoom,
+                  lineHeight: region.lineHeight ? `${region.lineHeight * zoom}px` : undefined,
+                  whiteSpace: 'pre-wrap',
                   fontFamily: cssFontStack(region.fontFamily),
                   fontWeight: region.bold ? 700 : 400,
                   fontStyle: region.italic ? 'italic' : 'normal',
@@ -382,7 +393,12 @@ export function PdfCanvas({
                   textAlign: region.align || 'left',
                   backgroundColor: inlineEdit.backgroundColor || '#fff',
                 }}
-                onChange={(e) => setInlineEdit({ ...inlineEdit, value: e.target.value })}
+                onChange={(e) => {
+                  setInlineEdit({ ...inlineEdit, value: e.target.value })
+                  e.target.style.height = 'auto'
+                  const minH = Math.max(region.height * size.height, 0.018 * size.height)
+                  e.target.style.height = `${Math.max(e.target.scrollHeight, minH)}px`
+                }}
                 onKeyDown={editorKeyDown}
                 onBlur={() => finishInlineEdit(true)}
                 onPointerDown={(e) => e.stopPropagation()}
@@ -463,15 +479,25 @@ export function PdfCanvas({
           ) : inlineEdit?.kind === 'annotation' && inlineEdit.id === a.id ? (
             <textarea
               key={a.id}
+              ref={(el) => {
+                if (el) {
+                  el.style.height = 'auto'
+                  const minH = a.height * size.height
+                  el.style.height = `${Math.max(el.scrollHeight, minH)}px`
+                }
+              }}
               autoFocus
               className="inline-text-editor annotation-editor"
+              title="Enter: lưu · Shift+Enter: xuống dòng · Esc: huỷ"
               value={inlineEdit.value}
               style={{
                 left: `${a.x * 100}%`,
                 top: `${a.y * 100}%`,
                 width: `${a.width * 100}%`,
-                height: `${a.height * 100}%`,
+                minHeight: `${a.height * 100}%`,
                 fontSize: (a.fontSize || 16) * zoom,
+                lineHeight: a.lineHeight ? `${a.lineHeight * zoom}px` : undefined,
+                whiteSpace: 'pre-wrap',
                 fontFamily: cssFontStack(a.fontFamily),
                 fontWeight: a.bold ? 700 : 400,
                 fontStyle: a.italic ? 'italic' : 'normal',
@@ -480,7 +506,12 @@ export function PdfCanvas({
                 textAlign: a.align || 'left',
                 backgroundColor: inlineEdit.backgroundColor || '#fff',
               }}
-              onChange={(e) => setInlineEdit({ ...inlineEdit, value: e.target.value })}
+              onChange={(e) => {
+                setInlineEdit({ ...inlineEdit, value: e.target.value })
+                e.target.style.height = 'auto'
+                const minH = a.height * size.height
+                e.target.style.height = `${Math.max(e.target.scrollHeight, minH)}px`
+              }}
               onKeyDown={editorKeyDown}
               onBlur={() => finishInlineEdit(true)}
               onPointerDown={(e) => e.stopPropagation()}
@@ -503,6 +534,9 @@ export function PdfCanvas({
                   opacity: a.opacity,
                   color: a.color,
                   fontSize: (a.fontSize || 16) * zoom,
+                  lineHeight: a.replaceOriginal && a.lineHeight ? `${a.lineHeight * zoom}px` : undefined,
+                  whiteSpace: a.replaceOriginal ? 'pre-wrap' : undefined,
+                  overflow: a.replaceOriginal ? 'visible' : undefined,
                   fontFamily: cssFontStack(a.fontFamily),
                   fontWeight: a.bold ? 700 : 400,
                   fontStyle: a.italic ? 'italic' : 'normal',

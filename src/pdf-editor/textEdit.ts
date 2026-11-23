@@ -38,5 +38,7 @@ export function buildReplacementAnnotation(
     originalText: region.text,
     originalSource: region.source,
     originalRect: { x: region.x, y: region.y, width: region.width, height: region.height },
+    lineHeight: region.lineHeight,
+    originalLineRects: region.lineRects,
   }
 }
