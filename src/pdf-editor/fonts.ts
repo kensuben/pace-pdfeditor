@@ -35,21 +35,27 @@ export function resolveExportFontFamily(
 }
 
 export function styleFromBaseFont(name?: string): {
-  family: 'Helvetica' | 'Times Roman' | 'Courier'
+  family: 'Helvetica' | 'Times Roman' | 'Courier' | 'Be Vietnam Pro' | 'Arimo'
   bold: boolean
   italic: boolean
 } {
   const raw = name || ''
-  const clean = raw.replace(/^[A-Z]{6}\+/, '')
-  const l = clean.toLowerCase()
-  let family: 'Helvetica' | 'Times Roman' | 'Courier' = 'Helvetica'
-  if (/courier|mono|consolas/.test(l)) {
+  const clean = raw.replace(/^[A-Z]{6}\+/, '').replace(/-\d+$/, '')
+  const letters = clean.toLowerCase().replace(/[^a-z]/g, '')
+
+  let family: 'Helvetica' | 'Times Roman' | 'Courier' | 'Be Vietnam Pro' | 'Arimo' = 'Helvetica'
+  if (letters.includes('bevietnam')) {
+    family = 'Be Vietnam Pro'
+  } else if (letters.includes('arimo')) {
+    family = 'Arimo'
+  } else if (/courier|mono|consolas/.test(letters)) {
     family = 'Courier'
-  } else if (/times|georgia|garamond|cambria/.test(l)) {
+  } else if (/times|georgia|garamond|cambria/.test(letters)) {
     family = 'Times Roman'
-  } else if (/serif/.test(l) && !/sans/.test(l)) {
+  } else if (/serif/.test(letters) && !/sans/.test(letters)) {
     family = 'Times Roman'
   }
+
   const bold = /bold|black|heavy|semibold|demi/i.test(clean)
   const italic = /italic|oblique/i.test(clean)
   return { family, bold, italic }
