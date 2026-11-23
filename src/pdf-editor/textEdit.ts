@@ -17,11 +17,15 @@ export function buildReplacementAnnotation(
   let maxWidth: number | undefined
   if (!region.lineRects || region.lineRects.length === 0) {
     let maxContentRight = region.x + region.width
+    let minContentLeft = region.x
     for (const nb of neighbors) {
       if (nb.source === 'native' && (nb.rotation === undefined || nb.rotation === 0)) {
         maxContentRight = Math.max(maxContentRight, nb.x + nb.width)
+        minContentLeft = Math.min(minContentLeft, nb.x)
       }
     }
+    minContentLeft = Math.min(minContentLeft, region.x)
+    const mirroredRight = 1 - Math.max(minContentLeft, 0.03)
 
     const centerYRegion = region.y + region.height / 2
     let nearestRightX: number | undefined
@@ -40,7 +44,7 @@ export function buildReplacementAnnotation(
     }
 
     const gap = pageWidthPt && pageWidthPt > 0 ? (0.5 * region.fontSize) / pageWidthPt : 0
-    let limit = maxContentRight
+    let limit = Math.max(maxContentRight, mirroredRight)
     if (nearestRightX !== undefined) {
       limit = Math.min(nearestRightX - gap, limit)
     }
