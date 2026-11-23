@@ -696,11 +696,11 @@ function App() {
   const editTextRegion = useCallback((region: TextRegion, next: string) => {
     if (next === region.text) return
     const neighbors=textRegions[region.page]||[]
-    const replacement = buildReplacementAnnotation(region, next, neighbors)
+    const replacement = buildReplacementAnnotation(region, next, neighbors, undefined, currentPageDimensions.width)
     commit([...annotations,replacement], { action:'text_region.edited', description:'Chỉnh sửa vùng chữ', metadata:{ page:region.page, source:region.source } })
     setSelectedId(replacement.id)
     setTextRegions((current)=>({...current,[region.page]:(current[region.page]||[]).filter((x)=>x.id!==region.id)}))
-  }, [annotations, commit, textRegions])
+  }, [annotations, commit, textRegions, currentPageDimensions.width])
 
   const editTextAnnotation = useCallback((annotation: Annotation, next: string) => {
     if(next===annotation.text)return

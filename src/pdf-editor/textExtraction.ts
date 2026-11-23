@@ -300,6 +300,15 @@ function median(values: number[]): number {
   return sorted.length % 2 !== 0 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2
 }
 
+export function isLabelLine(text: string): boolean {
+  const trimmed = text.trim()
+  const m = trimmed.match(/^([\p{L}\p{N}][\p{L}\p{N} ./()&-]{0,39}):(\s|$)/u)
+  if (!m) return false
+  const label = m[1].trim()
+  const wordCount = label.split(/\s+/).filter(Boolean).length
+  return wordCount >= 1 && wordCount <= 6
+}
+
 export function groupLinesIntoBlocks(
   lines: TextRegion[],
   viewport: { width: number; height: number },
@@ -344,6 +353,13 @@ export function groupLinesIntoBlocks(
     // (a) cả hai source: 'native', không có rotation
     if (p.source !== 'native' || l.source !== 'native') return false
     if (p.rotation !== undefined || l.rotation !== undefined) return false
+
+    // F-18: Không gộp dòng nhãn
+    if (isLabelLine(l.text)) return false
+    const rightEdgeP = (p.x + p.width) * viewport.width
+    const rightEdgeL = (l.x + l.width) * viewport.width
+    const maxRight = Math.max(rightEdgeP, rightEdgeL)
+    if (isLabelLine(p.text) && rightEdgeP < maxRight - 2 * p.fontSize) return false
 
     // (b) không dòng nào có hàng xóm cùng hàng
     if (hasNeighbor.has(p.id) || hasNeighbor.has(l.id)) return false
