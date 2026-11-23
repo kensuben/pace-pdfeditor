@@ -8,6 +8,10 @@ import arimoRegular from './fonts/Arimo-Regular.ttf?url'
 import arimoItalic from './fonts/Arimo-Italic.ttf?url'
 import arimoBold from './fonts/Arimo-Bold.ttf?url'
 import arimoBoldItalic from './fonts/Arimo-BoldItalic.ttf?url'
+import tinosRegular from './fonts/Tinos-Regular.ttf?url'
+import tinosItalic from './fonts/Tinos-Italic.ttf?url'
+import tinosBold from './fonts/Tinos-Bold.ttf?url'
+import tinosBoldItalic from './fonts/Tinos-BoldItalic.ttf?url'
 import type { Annotation } from '../types'
 import { hexToRgb01 } from './geometry'
 import { resolveExportFontFamily } from './fonts'
@@ -34,7 +38,7 @@ export interface BuildPdfOptions {
 
 export type BuildEditedPdfOptions = BuildPdfOptions
 
-const exportFontUrls: Record<'Be Vietnam Pro' | 'Arimo', Record<'regular' | 'italic' | 'bold' | 'bolditalic', string>> = {
+const exportFontUrls: Record<'Be Vietnam Pro' | 'Arimo' | 'Tinos', Record<'regular' | 'italic' | 'bold' | 'bolditalic', string>> = {
   'Be Vietnam Pro': {
     regular: beRegular,
     italic: beItalic,
@@ -46,6 +50,12 @@ const exportFontUrls: Record<'Be Vietnam Pro' | 'Arimo', Record<'regular' | 'ita
     italic: arimoItalic,
     bold: arimoBold,
     bolditalic: arimoBoldItalic,
+  },
+  Tinos: {
+    regular: tinosRegular,
+    italic: tinosItalic,
+    bold: tinosBold,
+    bolditalic: tinosBoldItalic,
   },
 }
 
@@ -283,7 +293,7 @@ export async function buildEditedPdfWithReport(
     const cached = fontCache.get(key)
     if (cached) return { font: cached, family }
 
-    if (family === 'Be Vietnam Pro' || family === 'Arimo') {
+    if (family === 'Be Vietnam Pro' || family === 'Arimo' || family === 'Tinos') {
       let data: ArrayBuffer
       try {
         data = await loadFontBytes(family, variant)
@@ -329,7 +339,7 @@ export async function buildEditedPdfWithReport(
       const value = a.text || ''
 
       // TODO(verify): getCharacterSet() returns code points array for embedded fonts; standard fonts behavior is WinAnsi
-      if (family === 'Be Vietnam Pro' || family === 'Arimo') {
+      if (family === 'Be Vietnam Pro' || family === 'Arimo' || family === 'Tinos') {
         const charSet = new Set(font.getCharacterSet())
         const missingChars: string[] = []
         for (const char of Array.from(value)) {

@@ -396,11 +396,10 @@ describe('PDF Editor Modularized Unit Tests (W-6 & F-11)', () => {
   })
 
   // K3: fontFamily: 'Helvetica' + chuỗi S → xuất bằng Arimo (BaseFont trong PDF chứa Arimo), trích ra đúng S.
-  // Tương tự với Times Roman, Courier, Noto Sans.
+  // Tương tự với Courier, Noto Sans. (Times Roman đã chuyển sang Tinos, xem f17-*).
   it('K3: requested standard/Noto fonts with Vietnamese text S fall back to Arimo with BaseFont containing Arimo', async () => {
     const testFamilies: Array<NonNullable<Annotation['fontFamily']>> = [
       'Helvetica',
-      'Times Roman',
       'Courier',
       'Noto Sans',
     ]

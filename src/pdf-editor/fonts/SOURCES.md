@@ -1,6 +1,7 @@
-# Nguồn phông chữ nhúng xuất PDF (F-11)
+# Nguồn phông chữ nhúng xuất PDF (F-11, F-17)
 
 Ngày tải: 2026-11-20
+Ngày tải (Tinos): 2026-11-23
 
 | File | URL nguồn | SHA256 | License |
 |---|---|---|---|
@@ -14,3 +15,8 @@ Ngày tải: 2026-11-20
 | Arimo-Bold.ttf | https://raw.githubusercontent.com/googlefonts/Arimo/main/fonts/ttf/Arimo-Bold.ttf | D7A8B187CF8444D4CFEE102E8EAE9E3043682FD5106D5D33ED677FE268A0E2BA | OFL-1.1 |
 | Arimo-BoldItalic.ttf | https://raw.githubusercontent.com/googlefonts/Arimo/main/fonts/ttf/Arimo-BoldItalic.ttf | 77C967D49D4EF4A63C39FBCD1E27892102E503E35A20983CB058430C4F268B34 | OFL-1.1 |
 | OFL-Arimo.txt | https://raw.githubusercontent.com/googlefonts/Arimo/main/OFL.txt | C46FDA6859EFB80C0A3C1FAA868908A3D2FCB26EB7FD9602D73BEBEEC21BCA3A | OFL-1.1 |
+| Tinos-Regular.ttf | https://raw.githubusercontent.com/googlefonts/Tinos/main/fonts/ttf/Tinos-Regular.ttf | 60A0E8EF0C04DD5DD69FFE91025FA2AE5836CBD35600A82BA031977557E2CB61 | OFL-1.1 |
+| Tinos-Italic.ttf | https://raw.githubusercontent.com/googlefonts/Tinos/main/fonts/ttf/Tinos-Italic.ttf | 5942266ED398B155D7DC23E36833E7EC6BE988F2439BDBEB8EF1BEDE808EAA91 | OFL-1.1 |
+| Tinos-Bold.ttf | https://raw.githubusercontent.com/googlefonts/Tinos/main/fonts/ttf/Tinos-Bold.ttf | 393269DBAB8899F938DB19783ECA5EAC92EB431F7AE0AB45B8349CA895F1A06B | OFL-1.1 |
+| Tinos-BoldItalic.ttf | https://raw.githubusercontent.com/googlefonts/Tinos/main/fonts/ttf/Tinos-BoldItalic.ttf | A5DE79F0FE863EA0954757ACB3D47B3CCD0A930CE3DD5B97230CD3866790A06E | OFL-1.1 |
+| OFL-Tinos.txt | https://raw.githubusercontent.com/googlefonts/Tinos/main/OFL.txt | CB3382D4643E8B02C12E322C220A3C76A5020D667E4FD4E7C75E744CCA6CAA6B | OFL-1.1 |

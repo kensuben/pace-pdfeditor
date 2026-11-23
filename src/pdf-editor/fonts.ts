@@ -1,5 +1,5 @@
 export const EXPORT_FONT_FILES: Record<
-  'Be Vietnam Pro' | 'Arimo',
+  'Be Vietnam Pro' | 'Arimo' | 'Tinos',
   Record<'regular' | 'italic' | 'bold' | 'bolditalic', string>
 > = {
   'Be Vietnam Pro': {
@@ -14,20 +14,27 @@ export const EXPORT_FONT_FILES: Record<
     bold: 'Arimo-Bold.ttf',
     bolditalic: 'Arimo-BoldItalic.ttf',
   },
+  Tinos: {
+    regular: 'Tinos-Regular.ttf',
+    italic: 'Tinos-Italic.ttf',
+    bold: 'Tinos-Bold.ttf',
+    bolditalic: 'Tinos-BoldItalic.ttf',
+  },
 }
 
 export function resolveExportFontFamily(
   requested?: string,
   text?: string,
-): 'Be Vietnam Pro' | 'Arimo' | 'Helvetica' | 'Times Roman' | 'Courier' {
+): 'Be Vietnam Pro' | 'Arimo' | 'Tinos' | 'Helvetica' | 'Times Roman' | 'Courier' {
   if (requested === 'Be Vietnam Pro') return 'Be Vietnam Pro'
   if (requested === 'Arimo') return 'Arimo'
+  if (requested === 'Tinos') return 'Tinos'
   if (requested === 'Noto Sans') return 'Arimo'
 
   const effective = requested || 'Helvetica'
   const hasUnicode = Array.from(text || '').some((char) => (char.codePointAt(0) || 0) > 127)
 
-  if (effective === 'Times Roman') return hasUnicode ? 'Arimo' : 'Times Roman'
+  if (effective === 'Times Roman') return hasUnicode ? 'Tinos' : 'Times Roman'
   if (effective === 'Courier') return hasUnicode ? 'Arimo' : 'Courier'
   if (effective === 'Helvetica') return hasUnicode ? 'Arimo' : 'Helvetica'
 
@@ -48,6 +55,8 @@ export function styleFromBaseFont(name?: string): {
     family = 'Be Vietnam Pro'
   } else if (letters.includes('arimo')) {
     family = 'Arimo'
+  } else if (letters.includes('tinos')) {
+    family = 'Times Roman'
   } else if (/courier|mono|consolas/.test(letters)) {
     family = 'Courier'
   } else if (/times|georgia|garamond|cambria/.test(letters)) {
