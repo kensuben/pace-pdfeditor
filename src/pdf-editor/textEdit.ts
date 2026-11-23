@@ -35,5 +35,8 @@ export function buildReplacementAnnotation(
     maskPadX: region.height * 0.08,
     maskPadTop: Number.isFinite(gapAbove) ? Math.min(desiredTop, gapAbove * 0.25) : desiredTop,
     maskPadBottom: Number.isFinite(gapBelow) ? Math.min(desiredBottom, gapBelow * 0.25) : desiredBottom,
+    originalText: region.text,
+    originalSource: region.source,
+    originalRect: { x: region.x, y: region.y, width: region.width, height: region.height },
   }
 }

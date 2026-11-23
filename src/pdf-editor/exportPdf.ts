@@ -12,11 +12,26 @@ import type { Annotation } from '../types'
 import { hexToRgb01 } from './geometry'
 import { resolveExportFontFamily } from './fonts'
 import { getPageView, viewSizePt, viewToPdf } from './pageGeometry'
+import { removeTextInRegions, pagesWithRemainingText } from './engine/textRemoval'
+import type { Rect, RemovalReport } from './engine/types'
+import type { RemainingTextReason } from './residualCheck'
+
+export type { RemainingTextReason }
+
+export interface ExportTextReport {
+  editedPages: number[]
+  cleanedPages: number[]
+  maskedPages: number[]
+  warnings: Array<{ page: number; reason: RemainingTextReason; regionCount: number }>
+}
 
 export interface BuildPdfOptions {
   loadFontBytes?: (family: string, variant: string) => Promise<ArrayBuffer>
   loadImageBytes?: (dataUrl: string) => Promise<ArrayBuffer>
+  forceMaskPages?: number[]
 }
+
+export type BuildEditedPdfOptions = BuildPdfOptions
 
 const exportFontUrls: Record<'Be Vietnam Pro' | 'Arimo', Record<'regular' | 'italic' | 'bold' | 'bolditalic', string>> = {
   'Be Vietnam Pro': {
@@ -48,16 +63,128 @@ const defaultLoadImageBytes = async (dataUrl: string): Promise<ArrayBuffer> => {
   return response.arrayBuffer()
 }
 
-export async function buildEditedPdf(
+export async function buildEditedPdfWithReport(
   bytes: Uint8Array,
   annotations: Annotation[],
   options?: BuildPdfOptions,
-): Promise<Uint8Array> {
+): Promise<{ bytes: Uint8Array; report: ExportTextReport }> {
   const loadFontBytes = options?.loadFontBytes || defaultLoadFontBytes
   const loadImageBytes = options?.loadImageBytes || defaultLoadImageBytes
+  const forceMaskPages = options?.forceMaskPages || []
 
   const doc = await PDFDocument.load(bytes)
   doc.registerFontkit(fontkit)
+
+  // (a) Group annotations with type === 'text' && replaceOriginal by page
+  const replacementAnns = annotations.filter(
+    (a) => a.type === 'text' && a.replaceOriginal
+  )
+  const editedPagesSet = new Set<number>()
+  for (const a of replacementAnns) {
+    editedPagesSet.add(a.page)
+  }
+  const editedPages = Array.from(editedPagesSet).sort((a, b) => a - b)
+
+  const removalReports = new Map<number, RemovalReport>()
+  const pageOcrCounts = new Map<number, number>()
+  const warnings: Array<{ page: number; reason: RemainingTextReason; regionCount: number }> = []
+
+  // (b) For each page with at least 1 annotation with originalSource !== 'ocr':
+  for (const pageNumber of editedPages) {
+    const pageAnns = replacementAnns.filter((a) => a.page === pageNumber)
+    const ocrAnns = pageAnns.filter((a) => a.originalSource === 'ocr')
+    const nativeAnns = pageAnns.filter((a) => a.originalSource !== 'ocr')
+
+    if (ocrAnns.length > 0) {
+      pageOcrCounts.set(pageNumber, ocrAnns.length)
+      warnings.push({
+        page: pageNumber,
+        reason: 'ocr-image',
+        regionCount: ocrAnns.length,
+      })
+    }
+
+    if (nativeAnns.length > 0) {
+      const pageIndex = pageNumber - 1
+      if (pageIndex >= 0 && pageIndex < doc.getPageCount()) {
+        const p = doc.getPage(pageIndex)
+        const view = getPageView(p)
+        const { width, height } = viewSizePt(view)
+
+        const regions: Rect[] = []
+        for (const a of nativeAnns) {
+          const targetRect =
+            a.originalRect || { x: a.x, y: a.y, width: a.width, height: a.height }
+          const fontSize = a.fontSize || 16
+          const padX =
+            a.maskPadX !== undefined ? a.maskPadX * width : Math.max(0.5, fontSize * 0.08)
+          const padTop =
+            a.maskPadTop !== undefined ? a.maskPadTop * height : Math.max(0.5, fontSize * 0.08)
+          const padBottom =
+            a.maskPadBottom !== undefined
+              ? a.maskPadBottom * height
+              : Math.max(0.7, fontSize * 0.12)
+
+          const u0 = (targetRect.x * width - padX) / width
+          const u1 = ((targetRect.x + targetRect.width) * width + padX) / width
+          const v0 = (targetRect.y * height - padTop) / height
+          const v1 = ((targetRect.y + targetRect.height) * height + padBottom) / height
+
+          const c1 = viewToPdf(view, u0, v0)
+          const c2 = viewToPdf(view, u1, v0)
+          const c3 = viewToPdf(view, u1, v1)
+          const c4 = viewToPdf(view, u0, v1)
+
+          const rectX = Math.min(c1.x, c2.x, c3.x, c4.x)
+          const rectY = Math.min(c1.y, c2.y, c3.y, c4.y)
+          const rectW = Math.max(c1.x, c2.x, c3.x, c4.x) - rectX
+          const rectH = Math.max(c1.y, c2.y, c3.y, c4.y) - rectY
+
+          regions.push({ x: rectX, y: rectY, width: rectW, height: rectH })
+        }
+
+        const rep = removeTextInRegions(doc, pageIndex, regions)
+        removalReports.set(pageNumber, rep)
+
+        if (rep.keptIntersecting > 0) {
+          warnings.push({
+            page: pageNumber,
+            reason: 'kept-intersecting',
+            regionCount: rep.keptIntersecting,
+          })
+        }
+        const totalSkipped = rep.skipped.reduce((acc, s) => acc + s.count, 0)
+        if (totalSkipped > 0) {
+          warnings.push({
+            page: pageNumber,
+            reason: 'skipped',
+            regionCount: totalSkipped,
+          })
+        }
+      }
+    }
+  }
+
+  const pagesWithRemaining = pagesWithRemainingText(removalReports)
+  const maskedPagesSet = new Set<number>()
+  const cleanedPagesSet = new Set<number>()
+
+  for (const pageNumber of editedPages) {
+    const hasOcr = (pageOcrCounts.get(pageNumber) || 0) > 0
+    const hasRemaining = pagesWithRemaining.includes(pageNumber)
+    const isForced = forceMaskPages.includes(pageNumber)
+
+    if (hasOcr || hasRemaining || isForced) {
+      maskedPagesSet.add(pageNumber)
+    } else {
+      cleanedPagesSet.add(pageNumber)
+    }
+  }
+
+  const maskedPages = Array.from(maskedPagesSet).sort((a, b) => a - b)
+  const cleanedPages = Array.from(cleanedPagesSet).sort((a, b) => a - b)
+  warnings.sort((a, b) => a.page - b.page)
+
   const fontCache = new Map<string, PDFFont>()
 
   const getFont = async (a: Annotation) => {
@@ -102,7 +229,7 @@ export async function buildEditedPdf(
     const p = doc.getPage(a.page - 1)
     const view = getPageView(p)
     const { width, height } = viewSizePt(view)
-    const textRgb = hexToRgb01(a.color)
+    const textRgb = hexToRgb01(a.color || '#000000')
     const c = rgb(textRgb.r, textRgb.g, textRgb.b)
     const rotDegrees = view.rotation !== 0 ? degrees(view.rotation) : undefined
 
@@ -137,35 +264,42 @@ export async function buildEditedPdf(
       const alignOffset = a.align === 'center' ? Math.max(0, (boxWidth - textWidth) / 2) : a.align === 'right' ? Math.max(0, boxWidth - textWidth) : 0
 
       if (a.replaceOriginal) {
-        const backgroundRgb01 = hexToRgb01(a.backgroundColor || '#ffffff')
-        const backgroundRgb = rgb(backgroundRgb01.r, backgroundRgb01.g, backgroundRgb01.b)
-        const padX = a.maskPadX !== undefined ? a.maskPadX * width : Math.max(0.5, fontSize * 0.08)
-        const padTop = a.maskPadTop !== undefined ? a.maskPadTop * height : Math.max(0.5, fontSize * 0.08)
-        const padBottom = a.maskPadBottom !== undefined ? a.maskPadBottom * height : Math.max(0.7, fontSize * 0.12)
+        const shouldMask =
+          a.originalSource === 'ocr' ||
+          pagesWithRemaining.includes(a.page) ||
+          forceMaskPages.includes(a.page)
 
-        const u0 = (a.x * width - padX) / width
-        const u1 = ((a.x + a.width) * width + padX) / width
-        const v0 = (a.y * height - padTop) / height
-        const v1 = ((a.y + a.height) * height + padBottom) / height
+        if (shouldMask) {
+          const backgroundRgb01 = hexToRgb01(a.backgroundColor || '#ffffff')
+          const backgroundRgb = rgb(backgroundRgb01.r, backgroundRgb01.g, backgroundRgb01.b)
+          const padX = a.maskPadX !== undefined ? a.maskPadX * width : Math.max(0.5, fontSize * 0.08)
+          const padTop = a.maskPadTop !== undefined ? a.maskPadTop * height : Math.max(0.5, fontSize * 0.08)
+          const padBottom = a.maskPadBottom !== undefined ? a.maskPadBottom * height : Math.max(0.7, fontSize * 0.12)
 
-        const c1 = viewToPdf(view, u0, v0)
-        const c2 = viewToPdf(view, u1, v0)
-        const c3 = viewToPdf(view, u1, v1)
-        const c4 = viewToPdf(view, u0, v1)
+          const u0 = (a.x * width - padX) / width
+          const u1 = ((a.x + a.width) * width + padX) / width
+          const v0 = (a.y * height - padTop) / height
+          const v1 = ((a.y + a.height) * height + padBottom) / height
 
-        const rectX = Math.min(c1.x, c2.x, c3.x, c4.x)
-        const rectY = Math.min(c1.y, c2.y, c3.y, c4.y)
-        const rectW = Math.max(c1.x, c2.x, c3.x, c4.x) - rectX
-        const rectH = Math.max(c1.y, c2.y, c3.y, c4.y) - rectY
+          const c1 = viewToPdf(view, u0, v0)
+          const c2 = viewToPdf(view, u1, v0)
+          const c3 = viewToPdf(view, u1, v1)
+          const c4 = viewToPdf(view, u0, v1)
 
-        p.drawRectangle({
-          x: rectX,
-          y: rectY,
-          width: rectW,
-          height: rectH,
-          color: backgroundRgb,
-          opacity: 1,
-        })
+          const rectX = Math.min(c1.x, c2.x, c3.x, c4.x)
+          const rectY = Math.min(c1.y, c2.y, c3.y, c4.y)
+          const rectW = Math.max(c1.x, c2.x, c3.x, c4.x) - rectX
+          const rectH = Math.max(c1.y, c2.y, c3.y, c4.y) - rectY
+
+          p.drawRectangle({
+            x: rectX,
+            y: rectY,
+            width: rectW,
+            height: rectH,
+            color: backgroundRgb,
+            opacity: 1,
+          })
+        }
       }
       if (value) {
         const uText = (a.x * width + alignOffset) / width
@@ -247,5 +381,23 @@ export async function buildEditedPdf(
     }
   }
 
-  return new Uint8Array(await doc.save())
+  const outBytes = new Uint8Array(await doc.save())
+  return {
+    bytes: outBytes,
+    report: {
+      editedPages,
+      cleanedPages,
+      maskedPages,
+      warnings,
+    },
+  }
+}
+
+export async function buildEditedPdf(
+  bytes: Uint8Array,
+  annotations: Annotation[],
+  options?: BuildPdfOptions,
+): Promise<Uint8Array> {
+  const result = await buildEditedPdfWithReport(bytes, annotations, options)
+  return result.bytes
 }

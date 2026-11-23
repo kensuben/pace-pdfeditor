@@ -48,6 +48,9 @@ export type Annotation = {
   maskPadX?: number
   maskPadTop?: number
   maskPadBottom?: number
+  originalText?: string
+  originalSource?: 'native' | 'ocr'
+  originalRect?: { x: number; y: number; width: number; height: number }
 }
 
 export type TextStyle = Pick<Annotation, 'fontFamily' | 'fontSize' | 'bold' | 'italic' | 'underline' | 'align' | 'color'>

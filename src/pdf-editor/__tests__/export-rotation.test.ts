@@ -416,10 +416,11 @@ describe('Export Rotation & Offset Matrix Suite (F-12 K2–K7)', () => {
     const content = readPageContent(exportedDoc, 0)
     const ops = tokenizeContent(content)
 
-    // Reference operator sequence captured on main (unmodified exportPdf.ts):
+    // Reference operator sequence captured on main (with content stream engine text removal in W-9a):
+    // Note: mask rectangle operators ('q', 'gs', 'rg', 'w', 'd', 'cm', 'cm', 'cm', 'm', 'l', 'l', 'l', 'h', 'f', 'Q')
+    // are removed because engine cleanly removed original text, and original Tj is rewritten to TJ per engine Rule A.
     const expectedOperators = [
-      'q', 'q', 'BT', 'rg', 'Tf', 'TL', 'Tm', 'Tj', 'T*', 'ET', 'Q', 'Q',
-      'q', 'gs', 'rg', 'w', 'd', 'cm', 'cm', 'cm', 'm', 'l', 'l', 'l', 'h', 'f', 'Q',
+      'q', 'q', 'BT', 'rg', 'Tf', 'TL', 'Tm', 'TJ', 'T*', 'ET', 'Q', 'Q',
       'q', 'gs', 'BT', 'rg', 'Tf', 'TL', 'Tm', 'Tj', 'T*', 'ET', 'Q',
       'q', 'gs', 'rg', 'w', 'd', 'cm', 'cm', 'cm', 'm', 'l', 'l', 'l', 'h', 'f', 'Q',
       'q', 'gs', 'RG', 'w', 'd', 'm', 'm', 'l', 'S', 'Q',
@@ -431,23 +432,17 @@ describe('Export Rotation & Offset Matrix Suite (F-12 K2–K7)', () => {
     expect(actualOperators).toEqual(expectedOperators)
 
     // Check specific critical coordinates match unmodified export:
-    // Mask rectangle: 49.04 345.56 cm
-    const maskCm = ops[17]
-    expect(maskCm.operator).toBe('cm')
-    expect((maskCm.operands[4] as { value: number }).value).toBeCloseTo(49.04, 2)
-    expect((maskCm.operands[5] as { value: number }).value).toBeCloseTo(345.56, 2)
-
-    // Highlight rectangle: 60 340 cm
-    const hlCm = ops[43]
-    expect(hlCm.operator).toBe('cm')
-    expect((hlCm.operands[4] as { value: number }).value).toBeCloseTo(60, 2)
-    expect((hlCm.operands[5] as { value: number }).value).toBeCloseTo(340, 2)
-
     // Text position: 50 350 Tm
-    const textTm = ops[33]
+    const textTm = ops[18]
     expect(textTm.operator).toBe('Tm')
     expect((textTm.operands[4] as { value: number }).value).toBeCloseTo(50, 2)
     expect((textTm.operands[5] as { value: number }).value).toBeCloseTo(350, 2)
+
+    // Highlight rectangle: 60 340 cm (shifted by 15 operators after mask removal)
+    const hlCm = ops[28]
+    expect(hlCm.operator).toBe('cm')
+    expect((hlCm.operands[4] as { value: number }).value).toBeCloseTo(60, 2)
+    expect((hlCm.operands[5] as { value: number }).value).toBeCloseTo(340, 2)
 
     // Image position: 240 160 cm
     // Image block: q gs cm(translate) cm(rotate) cm(scale) cm(skew) Do Q
