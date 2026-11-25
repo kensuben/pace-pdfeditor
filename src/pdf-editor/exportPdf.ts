@@ -17,6 +17,7 @@ import { hexToRgb01 } from './geometry'
 import { resolveExportFontFamily } from './fonts'
 import { getPageView, viewSizePt, viewToPdf } from './pageGeometry'
 import { removeTextInRegions, pagesWithRemainingText } from './engine/textRemoval'
+import { applyImageEdits, type ImageEdit } from './engine/imageTransform'
 import type { Rect, RemovalReport } from './engine/types'
 import type { RemainingTextReason } from './residualCheck'
 
@@ -183,6 +184,54 @@ export async function buildEditedPdfWithReport(
   const warnings: Array<{ page: number; reason: RemainingTextReason; regionCount: number }> = []
   const overflowPagesSet = new Set<number>()
 
+  // Apply image edits for existing PDF images
+  const imageAnns = annotations.filter((a) => Boolean(a.sourceImage))
+  const imagePages = Array.from(new Set(imageAnns.map((a) => a.page))).sort((a, b) => a - b)
+  for (const pageNumber of imagePages) {
+    const pageIndex = pageNumber - 1
+    if (pageIndex < 0 || pageIndex >= doc.getPageCount()) continue
+    const p = doc.getPage(pageIndex)
+    const view = getPageView(p)
+    const pageImgAnns = imageAnns.filter((a) => a.page === pageNumber)
+    const edits: ImageEdit[] = []
+    for (const a of pageImgAnns) {
+      if (a.deleted) {
+        edits.push({
+          resourceName: a.sourceImage!.resourceName,
+          occurrence: a.sourceImage!.occurrence,
+          remove: true,
+        })
+      } else {
+        const c1 = viewToPdf(view, a.x, a.y)
+        const c2 = viewToPdf(view, a.x + a.width, a.y)
+        const c3 = viewToPdf(view, a.x + a.width, a.y + a.height)
+        const c4 = viewToPdf(view, a.x, a.y + a.height)
+        const minX = Math.min(c1.x, c2.x, c3.x, c4.x)
+        const maxX = Math.max(c1.x, c2.x, c3.x, c4.x)
+        const minY = Math.min(c1.y, c2.y, c3.y, c4.y)
+        const maxY = Math.max(c1.y, c2.y, c3.y, c4.y)
+        edits.push({
+          resourceName: a.sourceImage!.resourceName,
+          occurrence: a.sourceImage!.occurrence,
+          newBbox: {
+            x: minX,
+            y: minY,
+            width: maxX - minX,
+            height: maxY - minY,
+          },
+        })
+      }
+    }
+    const result = applyImageEdits(doc, pageIndex, edits)
+    if (result.notFound > 0) {
+      warnings.push({
+        page: pageNumber,
+        reason: 'image-not-found',
+        regionCount: result.notFound,
+      })
+    }
+  }
+
   // (b) For each page with at least 1 annotation with originalSource !== 'ocr':
   for (const pageNumber of editedPages) {
     const pageAnns = replacementAnns.filter((a) => a.page === pageNumber)
@@ -325,6 +374,7 @@ export async function buildEditedPdfWithReport(
   }
 
   for (const a of annotations) {
+    if (a.deleted) continue
     const p = doc.getPage(a.page - 1)
     const view = getPageView(p)
     const { width, height } = viewSizePt(view)
@@ -538,6 +588,9 @@ export async function buildEditedPdfWithReport(
         }
       }
     } else if (a.type === 'image' && a.imageDataUrl) {
+      if (a.sourceImage) {
+        continue
+      }
       const data = await loadImageBytes(a.imageDataUrl)
       const embedded = a.imageDataUrl.startsWith('data:image/png') ? await doc.embedPng(data) : await doc.embedJpg(data)
       const origin = viewToPdf(view, a.x, a.y + a.height)

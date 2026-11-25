@@ -1,6 +1,6 @@
 import * as pdfjs from 'pdfjs-dist'
 
-export type RemainingTextReason = 'kept-intersecting' | 'skipped' | 'ocr-image' | 'residual-text'
+export type RemainingTextReason = 'kept-intersecting' | 'skipped' | 'ocr-image' | 'residual-text' | 'image-not-found'
 
 export interface ResidualCheck {
   page: number
@@ -128,6 +128,7 @@ export function formatRemainingTextWarning(
     'skipped': 'chữ nằm trong khối đặc biệt (Form XObject/Type3) nên chỉ được che bằng nền',
     'ocr-image': 'chữ nằm trong ảnh scan nên chỉ được che, chưa xoá khỏi ảnh',
     'residual-text': 'kiểm tra sau khi xuất vẫn tìm thấy chữ cũ',
+    'image-not-found': 'không tìm thấy ảnh gốc để sửa, ảnh có thể vẫn ở vị trí cũ',
   }
 
   const pageMap = new Map<number, Set<string>>()

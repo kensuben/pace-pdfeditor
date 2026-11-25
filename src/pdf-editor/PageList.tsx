@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type * as pdfjs from 'pdfjs-dist'
-import type { Annotation, TextRegion, TextStyle, Tool } from '../types'
+import type { Annotation, PageImageRegion, TextRegion, TextStyle, Tool } from '../types'
 import { clamp } from './geometry'
 import { PdfCanvas } from './PdfCanvas'
 import { FIT_PADDING, fitZoom, pickCurrentPage, anchorScrollDelta, type ClientRectLike } from './viewMath'
@@ -30,6 +30,7 @@ export interface PageListProps {
   onInitialFit?: (initialZoom: number) => void
   showBoundingBoxes?: boolean
   aspectLocked?: boolean
+  pageImages?: Record<number, PageImageRegion[]>
 }
 
 interface PageDimensions {
@@ -64,6 +65,7 @@ export function PageList({
   onInitialFit,
   showBoundingBoxes,
   aspectLocked,
+  pageImages,
 }: PageListProps) {
   const localContainerRef = useRef<HTMLDivElement>(null)
   const containerRef = externalContainerRef || localContainerRef
@@ -407,6 +409,7 @@ export function PageList({
                 onEditAnnotation={onEditAnnotation}
                 showBoundingBoxes={showBoundingBoxes}
                 aspectLocked={aspectLocked}
+                pageImages={pageImages?.[pageNumber] || []}
               />
             ) : (
               <div

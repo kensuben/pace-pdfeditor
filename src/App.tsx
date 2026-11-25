@@ -9,7 +9,7 @@ import {
 import * as pdfjs from 'pdfjs-dist'
 import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url'
 import { PDFDocument } from 'pdf-lib'
-import type { Annotation, DocumentInfo, TextRegion, TextStyle, Tool } from './types'
+import type { Annotation, DocumentInfo, PageImageRegion, TextRegion, TextStyle, Tool } from './types'
 import type { AccountInfo } from '@azure/msal-browser'
 import { initializeAuth, isMicrosoftAuthConfigured, signInMicrosoft, signOutMicrosoft } from './auth'
 import { recordActivity } from './activityLog'
@@ -36,6 +36,8 @@ import {
   defaultAspectLockedForType,
   useToolbarLayout,
   ToolbarOverflowMenu,
+  probePageImages,
+  pdfToView,
 } from './pdf-editor'
 
 // Query version bypasses any previously cached worker response that may have
@@ -92,6 +94,7 @@ function App() {
   const [authReady, setAuthReady] = useState(false)
   const [showActivities, setShowActivities] = useState(false)
   const [textRegions, setTextRegions] = useState<Record<number, TextRegion[]>>({})
+  const [pageImages, setPageImages] = useState<Record<number, PageImageRegion[]>>({})
   const [ocrBusy, setOcrBusy] = useState(false)
   const [ocrProgress, setOcrProgress] = useState(0)
   const [textStyle, setTextStyle] = useState<TextStyle>({ fontFamily:'Be Vietnam Pro', fontSize:16, bold:false, italic:false, underline:false, align:'left', color:'#0C2340' })
@@ -230,7 +233,16 @@ function App() {
     if(!selectedId)return
     const removed=annotations.find((annotation)=>annotation.id===selectedId)
     if(!removed){setSelectedId(null);return}
-    const next=removed.type==='text'&&removed.replaceOriginal?annotations.map((annotation)=>annotation.id===selectedId?{...annotation,text:''}:annotation):annotations.filter((annotation)=>annotation.id!==selectedId)
+    const next =
+      removed.type === 'text' && removed.replaceOriginal
+        ? annotations.map((annotation) =>
+            annotation.id === selectedId ? { ...annotation, text: '' } : annotation
+          )
+        : removed.sourceImage
+          ? annotations.map((annotation) =>
+              annotation.id === selectedId ? { ...annotation, deleted: true } : annotation
+            )
+          : annotations.filter((annotation) => annotation.id !== selectedId)
     commit(next,{action:'annotation.deleted',description:'Xóa textbox/annotation đã chọn',metadata:{type:removed.type,page:removed.page}})
     setSelectedId(null)
   },[annotations,commit,selectedId])
@@ -356,6 +368,7 @@ function App() {
       setHistoryIndex(0)
       setSelectedId(null)
       setTextRegions({})
+      setPageImages({})
       setBytesVersion((v) => v + 1)
       setSidebar(window.innerWidth > SIDEBAR_OVERLAY_MAX_WIDTH)
       log('document.opened', 'Mở tài liệu PDF', { fileExt: 'pdf', fileSize: file.size, pageCount: loaded.numPages }, 'success')
@@ -404,10 +417,12 @@ function App() {
     bytes: Uint8Array | null
     doc: PDFDocument | null
     probes: Map<number, TextStyleProbe[]>
+    imageProbes: Map<number, PageImageRegion[]>
   }>({
     bytes: null,
     doc: null,
     probes: new Map(),
+    imageProbes: new Map(),
   })
 
   const handleTextRegions = useCallback((targetPage: number, regions: TextRegion[]) => {
@@ -425,6 +440,7 @@ function App() {
           cache.bytes = bytes
           cache.doc = null
           cache.probes.clear()
+          cache.imageProbes.clear()
         }
         if (!cache.doc) {
           cache.doc = await PDFDocument.load(bytes)
@@ -439,6 +455,39 @@ function App() {
         const pageIndex = targetPage - 1
         const pdfPage = cache.doc.getPage(pageIndex)
         const view = getPageView(pdfPage)
+
+        let imgRegions = cache.imageProbes.get(targetPage)
+        if (!imgRegions) {
+          const probed = probePageImages(cache.doc, pageIndex)
+          imgRegions = probed.images.map((img) => {
+            const [x0, y0, w, h] = [img.bbox.x, img.bbox.y, img.bbox.width, img.bbox.height]
+            const c1 = pdfToView(view, x0, y0)
+            const c2 = pdfToView(view, x0 + w, y0)
+            const c3 = pdfToView(view, x0 + w, y0 + h)
+            const c4 = pdfToView(view, x0, y0 + h)
+            const minU = Math.min(c1.u, c2.u, c3.u, c4.u)
+            const maxU = Math.max(c1.u, c2.u, c3.u, c4.u)
+            const minV = Math.min(c1.v, c2.v, c3.v, c4.v)
+            const maxV = Math.max(c1.v, c2.v, c3.v, c4.v)
+            return {
+              id: `img-${targetPage}-${img.resourceName}-${img.occurrence}`,
+              page: targetPage,
+              x: minU,
+              y: minV,
+              width: maxU - minU,
+              height: maxV - minV,
+              resourceName: img.resourceName,
+              occurrence: img.occurrence,
+              editable: img.axisAligned,
+            }
+          })
+          cache.imageProbes.set(targetPage, imgRegions)
+        }
+        setPageImages((current) => ({
+          ...current,
+          [targetPage]: imgRegions,
+        }))
+
         const enriched = enrichRegionsWithStyles(regions, probes, view)
         const enrichedMap = new Map(enriched.map((r) => [r.id, r]))
 
@@ -616,7 +665,8 @@ function App() {
       const { history: newHistory, historyIndex: newHistoryIndex } = resetHistoryOnPageOp(updatedAnnotations)
       setBytes(merged);setPdf(loaded);setInfo({...info,size:merged.byteLength,pages:loaded.numPages})
       setHistory(newHistory);setHistoryIndex(newHistoryIndex)
-      setTextRegions({});setPage(page+1);setBytesVersion((v)=>v+1)
+      setTextRegions({})
+      setPageImages({});setPage(page+1);setBytesVersion((v)=>v+1)
       showStatusNotice('Thao tác trang không hoàn tác được')
       log('pages.inserted', 'Chèn trang từ PDF khác', { afterPage: page, insertedPages: count, fileExt: 'pdf' })
     }catch(error){console.error(error);alert(`Không thể chèn trang PDF.\n\n${error instanceof Error?error.message:String(error)}`)}finally{setBusy(false)}
@@ -681,6 +731,7 @@ function App() {
       setHistory(newHistory)
       setHistoryIndex(newHistoryIndex)
       setTextRegions({})
+      setPageImages({})
       setSelectedId(null)
       setBytesVersion((v) => v + 1)
       showStatusNotice('Thao tác trang không hoàn tác được')
@@ -1190,6 +1241,7 @@ function App() {
               }}
               showBoundingBoxes={showBoundingBoxes}
               aspectLocked={aspectLocked}
+              pageImages={pageImages}
             />
           </div>
           {isDesktop && (

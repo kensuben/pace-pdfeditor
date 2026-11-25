@@ -115,7 +115,7 @@ export function zoomAroundPoint(
  * If any annotation on this page has replaceOriginal === true, rotation is blocked.
  */
 export function canRotatePage(annotations: Annotation[], page: number): boolean {
-  return !annotations.some((a) => a.page === page && a.replaceOriginal)
+  return !annotations.some((a) => a.page === page && (a.replaceOriginal || Boolean(a.sourceImage)))
 }
 
 /**

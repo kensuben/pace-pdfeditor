@@ -2,6 +2,18 @@ export type Tool = 'select' | 'text' | 'highlight' | 'draw' | 'signature'
 
 export type Point = { x: number; y: number }
 
+export type PageImageRegion = {
+  id: string
+  page: number
+  x: number
+  y: number
+  width: number
+  height: number
+  resourceName: string
+  occurrence: number
+  editable: boolean
+}
+
 export type TextRegion = {
   id: string
   page: number
@@ -57,6 +69,12 @@ export type Annotation = {
   lineHeight?: number
   originalLineRects?: Array<{ x: number; y: number; width: number; height: number }>
   maxWidth?: number
+  sourceImage?: {
+    resourceName: string
+    occurrence: number
+    originalRect: { x: number; y: number; width: number; height: number }
+  }
+  deleted?: boolean
 }
 
 export type TextStyle = Pick<Annotation, 'fontFamily' | 'fontSize' | 'bold' | 'italic' | 'underline' | 'align' | 'color'>
