@@ -10,6 +10,7 @@ export interface ImageEdit {
   occurrence: number
   newBbox?: Rect
   targetMatrix?: [number, number, number, number, number, number]
+  clip?: Rect
   replaceWith?: { name: string }
   remove?: boolean
 }
@@ -181,7 +182,7 @@ export function applyImageEdits(
 
         const M = multMatrix(edit.targetMatrix, invCtm)
 
-        // Check if M is practically identity and no replacement
+        // Check if M is practically identity, no replacement, and no clip
         const isIdentity =
           Math.abs(M[0] - 1) < 1e-4 &&
           Math.abs(M[1]) < 1e-4 &&
@@ -190,13 +191,39 @@ export function applyImageEdits(
           Math.abs(M[4]) < 1e-4 &&
           Math.abs(M[5]) < 1e-4
 
-        if (isIdentity && !edit.replaceWith) {
+        if (isIdentity && !edit.replaceWith && !edit.clip) {
           outOps.push(op)
           continue
         }
 
         hasStructuralChanges = true
         outOps.push({ operator: 'q', operands: [] })
+
+        if (edit.clip) {
+          // clip is in PDF page coordinates.
+          // Since re W n is placed before cm, transform clip to current CTM coordinate system using CTM⁻¹.
+          const c1 = applyMatrix({ x: edit.clip.x, y: edit.clip.y }, invCtm)
+          const c2 = applyMatrix({ x: edit.clip.x + edit.clip.width, y: edit.clip.y }, invCtm)
+          const c3 = applyMatrix({ x: edit.clip.x + edit.clip.width, y: edit.clip.y + edit.clip.height }, invCtm)
+          const c4 = applyMatrix({ x: edit.clip.x, y: edit.clip.y + edit.clip.height }, invCtm)
+          const minX = Math.min(c1.x, c2.x, c3.x, c4.x)
+          const maxX = Math.max(c1.x, c2.x, c3.x, c4.x)
+          const minY = Math.min(c1.y, c2.y, c3.y, c4.y)
+          const maxY = Math.max(c1.y, c2.y, c3.y, c4.y)
+
+          outOps.push({
+            operator: 're',
+            operands: [
+              { type: 'number', value: minX },
+              { type: 'number', value: minY },
+              { type: 'number', value: maxX - minX },
+              { type: 'number', value: maxY - minY },
+            ],
+          })
+          outOps.push({ operator: 'W', operands: [] })
+          outOps.push({ operator: 'n', operands: [] })
+        }
+
         outOps.push({
           operator: 'cm',
           operands: [

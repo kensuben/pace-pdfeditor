@@ -561,7 +561,7 @@ export function PdfCanvas({
                     top: `${display.y * 100}%`,
                     width: `${display.width * 100}%`,
                     height: `${display.height * 100}%`,
-                    overflow: 'visible',
+                    overflow: 'hidden',
                     zIndex: 20,
                   }}
                   onPointerDown={(e) => {
@@ -573,8 +573,20 @@ export function PdfCanvas({
                   {(() => {
                     const rot = display.imageRotation ?? 0
                     const isRotated = rot === 90 || rot === 270
-                    const imgW = (isRotated ? display.height : display.width) * size.width
-                    const imgH = (isRotated ? display.width : display.height) * size.height
+
+                    const crop = display.imageCrop || { left: 0, top: 0, right: 0, bottom: 0 }
+                    const sx = Math.max(0.01, 1 - crop.left - crop.right)
+                    const sy = Math.max(0.01, 1 - crop.top - crop.bottom)
+
+                    const remW = (isRotated ? display.height : display.width) * size.width
+                    const remH = (isRotated ? display.width : display.height) * size.height
+
+                    const fullW = remW / sx
+                    const fullH = remH / sy
+
+                    const dXi = ((crop.right - crop.left) / (2 * sx)) * remW
+                    const dEta = ((crop.bottom - crop.top) / (2 * sy)) * remH
+
                     const scaleX = display.flipH ? -1 : 1
                     const scaleY = display.flipV ? -1 : 1
                     return (
@@ -587,9 +599,9 @@ export function PdfCanvas({
                           position: 'absolute',
                           left: '50%',
                           top: '50%',
-                          width: `${imgW}px`,
-                          height: `${imgH}px`,
-                          transform: `translate(-50%, -50%) rotate(${rot}deg) scale(${scaleX}, ${scaleY})`,
+                          width: `${fullW}px`,
+                          height: `${fullH}px`,
+                          transform: `translate(-50%, -50%) rotate(${rot}deg) scale(${scaleX}, ${scaleY}) translate(${dXi}px, ${dEta}px)`,
                           opacity: display.opacity ?? 1,
                           pointerEvents: 'none',
                         }}

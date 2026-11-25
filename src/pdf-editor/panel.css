@@ -258,3 +258,15 @@
 .properties-button-group .tool-btn:active {
   background: #e2e8f0;
 }
+
+/* Image crop panel styles (W-10c) */
+.properties-hint {
+  font-size: 11px;
+  color: var(--muted, #627087);
+  margin-top: 6px;
+  line-height: 1.4;
+}
+
+.properties-crop-actions {
+  margin-top: 8px;
+}
