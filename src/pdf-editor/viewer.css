@@ -231,4 +231,32 @@
   background: #dc2626;
 }
 
+/* Existing PDF image regions (W-10a) */
+.page-image-region {
+  position: absolute;
+  background: transparent;
+  border: 1px solid transparent;
+  cursor: pointer;
+  padding: 0;
+  margin: 0;
+  box-sizing: border-box;
+  z-index: 15;
+}
+
+.page-image-region:hover {
+  border-color: var(--accent, #0047af);
+  background: rgba(0, 71, 175, 0.08);
+}
+
+.page-image-region.disabled,
+.page-image-region[aria-disabled="true"] {
+  cursor: not-allowed;
+  border-color: rgba(220, 38, 38, 0.4);
+}
+
+.page-image-region.disabled:hover,
+.page-image-region[aria-disabled="true"]:hover {
+  background: rgba(220, 38, 38, 0.08);
+}
+
 

@@ -95,3 +95,41 @@ export function viewToPdf(
       }
   }
 }
+
+/**
+ * Maps PDF user space coordinates (x, y) into normalized coordinates (u, v) in [0, 1]
+ * relative to the visible page frame (top-left is (0, 0)). Exact inverse of viewToPdf.
+ */
+export function pdfToView(
+  view: PageView,
+  x: number,
+  y: number,
+): { u: number; v: number } {
+  const [x0, y0, x1, y1] = view.box
+  const boxW = x1 - x0
+  const boxH = y1 - y0
+
+  switch (view.rotation) {
+    case 0:
+      return {
+        u: (x - x0) / boxW,
+        v: (y1 - y) / boxH,
+      }
+    case 90:
+      return {
+        u: (y - y0) / boxH,
+        v: (x - x0) / boxW,
+      }
+    case 180:
+      return {
+        u: (x1 - x) / boxW,
+        v: (y - y0) / boxH,
+      }
+    case 270:
+      return {
+        u: (y1 - y) / boxH,
+        v: (x1 - x) / boxW,
+      }
+  }
+}
+

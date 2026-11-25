@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import type * as pdfjs from 'pdfjs-dist'
-import type { Annotation, Point, TextRegion, TextStyle, Tool } from '../types'
+import type { Annotation, PageImageRegion, Point, TextRegion, TextStyle, Tool } from '../types'
 import { clamp, uid } from './geometry'
 import { groupTextItemsIntoLines, groupLinesIntoBlocks } from './textExtraction'
 import { cssFontStack } from './fonts'
@@ -30,6 +30,7 @@ export interface PdfCanvasProps {
   onEditAnnotation: (annotation: Annotation, text: string) => void
   showBoundingBoxes?: boolean
   aspectLocked?: boolean
+  pageImages?: PageImageRegion[]
 }
 
 export function PdfCanvas({
@@ -52,6 +53,7 @@ export function PdfCanvas({
   onEditAnnotation,
   showBoundingBoxes,
   aspectLocked,
+  pageImages = [],
 }: PdfCanvasProps) {
   const isDesktop = useDesktopEditor()
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -307,6 +309,28 @@ export function PdfCanvas({
     return `#${[channel(0), channel(1), channel(2)].map((value) => value.toString(16).padStart(2, '0')).join('')}`
   }
 
+  const captureImagePreview = (region: Pick<PageImageRegion, 'x' | 'y' | 'width' | 'height'>): string => {
+    const canvas = canvasRef.current
+    if (!canvas) return ''
+    const ratioX = canvas.width / size.width
+    const ratioY = canvas.height / size.height
+    const cropX = Math.round(region.x * size.width * ratioX)
+    const cropY = Math.round(region.y * size.height * ratioY)
+    const cropW = Math.max(1, Math.round(region.width * size.width * ratioX))
+    const cropH = Math.max(1, Math.round(region.height * size.height * ratioY))
+    try {
+      const offscreen = document.createElement('canvas')
+      offscreen.width = cropW
+      offscreen.height = cropH
+      const ctx = offscreen.getContext('2d')
+      if (!ctx) return ''
+      ctx.drawImage(canvas, cropX, cropY, cropW, cropH, 0, 0, cropW, cropH)
+      return offscreen.toDataURL?.('image/png') || ''
+    } catch {
+      return ''
+    }
+  }
+
   const finishInlineEdit = (commitChange: boolean) => {
     if (!inlineEdit) return
     const edit = inlineEdit
@@ -351,6 +375,11 @@ export function PdfCanvas({
   }
 
   const selectedAnnotation = annotations.find((a) => a.id === selectedId && a.page === pageNumber)
+  const activeSourceImageKeys = new Set(
+    annotations
+      .filter((a) => Boolean(a.sourceImage))
+      .map((a) => `${a.sourceImage!.resourceName}-${a.sourceImage!.occurrence}`),
+  )
 
   return (
     <div className="page-shell" style={{ width: size.width, height: size.height }}>
@@ -435,6 +464,56 @@ export function PdfCanvas({
               </button>
             ),
           )}
+        {tool === 'select' &&
+          pageImages.map((img) => {
+            if (activeSourceImageKeys.has(`${img.resourceName}-${img.occurrence}`)) return null
+            return (
+              <button
+                key={img.id}
+                className={`page-image-region${img.editable ? '' : ' disabled'}`}
+                aria-disabled={img.editable ? undefined : 'true'}
+                title={img.editable ? 'Ảnh trong PDF' : 'Ảnh này chưa hỗ trợ sửa'}
+                style={{
+                  left: `${img.x * 100}%`,
+                  top: `${img.y * 100}%`,
+                  width: `${img.width * 100}%`,
+                  height: `${img.height * 100}%`,
+                }}
+                onPointerDown={(e) => e.stopPropagation()}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  if (!img.editable) return
+                  const previewUrl = captureImagePreview(img)
+                  const bg = sampleBackground(img)
+                  const newAnnotation: Annotation = {
+                    id: `ann-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+                    page: pageNumber,
+                    type: 'image',
+                    x: img.x,
+                    y: img.y,
+                    width: img.width,
+                    height: img.height,
+                    color: '#000000',
+                    opacity: 1,
+                    imageDataUrl: previewUrl,
+                    backgroundColor: bg,
+                    sourceImage: {
+                      resourceName: img.resourceName,
+                      occurrence: img.occurrence,
+                      originalRect: {
+                        x: img.x,
+                        y: img.y,
+                        width: img.width,
+                        height: img.height,
+                      },
+                    },
+                  }
+                  onAdd(newAnnotation)
+                  onSelect(newAnnotation.id)
+                }}
+              />
+            )
+          })}
         {annotations.map((a) => {
           const display = preview && preview.id === a.id ? preview : a
           return display.points ? (
@@ -457,26 +536,46 @@ export function PdfCanvas({
               />
             </svg>
           ) : a.type === 'image' && a.imageDataUrl ? (
-            <img
-              key={a.id}
-              draggable={false}
-              className={`image-annotation ${selectedId === a.id ? 'selected' : ''}`}
-              src={a.imageDataUrl}
-              alt="Inserted"
-              style={{
-                left: `${display.x * 100}%`,
-                top: `${display.y * 100}%`,
-                width: `${display.width * 100}%`,
-                height: `${display.height * 100}%`,
-                opacity: display.opacity ?? 1,
-              }}
-              onPointerDown={(e) => {
-                e.preventDefault()
-                e.stopPropagation()
-                onSelect(a.id)
-              }}
-            />
-          ) : inlineEdit?.kind === 'annotation' && inlineEdit.id === a.id ? (
+            <div key={a.id}>
+              {a.sourceImage && (
+                <div
+                  className="source-image-mask"
+                  style={{
+                    position: 'absolute',
+                    left: `${a.sourceImage.originalRect.x * 100}%`,
+                    top: `${a.sourceImage.originalRect.y * 100}%`,
+                    width: `${a.sourceImage.originalRect.width * 100}%`,
+                    height: `${a.sourceImage.originalRect.height * 100}%`,
+                    backgroundColor: a.backgroundColor || '#ffffff',
+                    pointerEvents: 'none',
+                    zIndex: 9,
+                  }}
+                />
+              )}
+              {!a.deleted && (
+                <img
+                  draggable={false}
+                  className={`image-annotation ${selectedId === a.id ? 'selected' : ''}`}
+                  src={a.imageDataUrl}
+                  alt="Inserted"
+                  style={{
+                    position: 'absolute',
+                    left: `${display.x * 100}%`,
+                    top: `${display.y * 100}%`,
+                    width: `${display.width * 100}%`,
+                    height: `${display.height * 100}%`,
+                    opacity: display.opacity ?? 1,
+                    zIndex: 20,
+                  }}
+                  onPointerDown={(e) => {
+                    e.preventDefault()
+                    e.stopPropagation()
+                    onSelect(a.id)
+                  }}
+                />
+              )}
+            </div>
+          ) : a.deleted ? null : inlineEdit?.kind === 'annotation' && inlineEdit.id === a.id ? (
             <textarea
               key={a.id}
               ref={(el) => {
@@ -579,7 +678,29 @@ export function PdfCanvas({
             )
           })}
         {showBoundingBoxes &&
+          pageImages.map((img) => {
+            if (activeSourceImageKeys.has(`${img.resourceName}-${img.occurrence}`)) return null
+            return (
+              <div
+                key={`bbox-img-${img.id}`}
+                className="bounding-box-image"
+                style={{
+                  position: 'absolute',
+                  left: `${img.x * 100}%`,
+                  top: `${img.y * 100}%`,
+                  width: `${img.width * 100}%`,
+                  height: `${img.height * 100}%`,
+                  border: '1px dashed var(--accent, #0047af)',
+                  pointerEvents: 'none',
+                  zIndex: 44,
+                  boxSizing: 'border-box',
+                }}
+              />
+            )
+          })}
+        {showBoundingBoxes &&
           annotations.map((a) => {
+            if (a.deleted) return null
             if (inlineEdit?.kind === 'annotation' && inlineEdit.id === a.id) return null
             const b = getBounds(a)
             return (
@@ -600,7 +721,7 @@ export function PdfCanvas({
               />
             )
           })}
-        {selectedAnnotation && !inlineEdit && (
+        {selectedAnnotation && !inlineEdit && !selectedAnnotation.deleted && (
           <SelectionFrame
             annotation={preview && preview.id === selectedAnnotation.id ? preview : selectedAnnotation}
             zoom={zoom}
