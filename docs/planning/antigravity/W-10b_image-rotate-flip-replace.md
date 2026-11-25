@@ -63,7 +63,7 @@ Task này **không** làm crop/sắp lớp/Form XObject/inline.
    - trả về `[P1x−P0x, P1y−P0y, P2x−P0x, P2y−P0y, P0x, P0y]`. Đây là ma trận đưa hình vuông đơn vị của ảnh vào đúng chỗ, đúng cả trên trang `/Rotate` và CropBox lệch gốc.
 6. **Xuất ảnh chèn** (`exportPdf.ts`):
    - không xoay/lật → **giữ nguyên** `drawImage` như hiện tại (test cũ không đổi);
-   - có xoay/lật → nhúng ảnh như cũ, rồi ghi `q`, `<imagePlacementMatrix> cm`, `/<tên> Do`, `Q` bằng toán tử cấp thấp của pdf-lib (`pushGraphicsState`, `concatTransformationMatrix`, `drawObject`, `popGraphicsState`), và đăng ký XObject vào trang (`page.node.newXObject('Image', ref)`). Claude đã kiểm trong `node_modules/pdf-lib` (1.17.1): `cjs/api/operators.d.ts` có 4 hàm toán tử trên, `cjs/core/structures/PDFPageLeaf.d.ts` có `newXObject(tag: string, xObjectRef: PDFRef): PDFName`. Thêm nội dung vào trang bằng `page.pushOperators(...)` (chưa xác minh tên → `TODO(verify)`);
+   - có xoay/lật → nhúng ảnh như cũ, rồi ghi `q`, `<imagePlacementMatrix> cm`, `/<tên> Do`, `Q` bằng toán tử cấp thấp của pdf-lib (`pushGraphicsState`, `concatTransformationMatrix`, `drawObject`, `popGraphicsState`), và đăng ký XObject vào trang (`page.node.newXObject('Image', ref)`). Claude đã kiểm trong `node_modules/pdf-lib` (1.17.1): `cjs/api/operators.d.ts` có 4 hàm toán tử trên, `cjs/core/structures/PDFPageLeaf.d.ts` có `newXObject(tag: string, xObjectRef: PDFRef): PDFName`. Thêm nội dung vào trang bằng `page.pushOperators(...)` (có trong `cjs/api/PDFPage.d.ts`);
    - `opacity < 1` → giữ hành vi độ mờ như `drawImage` (ExtGState). Không làm được thì ghi rõ trong báo cáo.
 7. **Xuất ảnh có sẵn** (`engine/imageTransform.ts`):
    - `ImageEdit` thêm `targetMatrix?: Matrix` và `replaceWith?: { name: string }`;
