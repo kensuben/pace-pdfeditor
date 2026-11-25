@@ -228,3 +228,157 @@ export function applyImageCrop(
     imageCrop: newCrop,
   }
 }
+
+export interface CroppedPreviewLayout {
+  width: number
+  height: number
+  fullWidth: number
+  fullHeight: number
+  dx: number
+  dy: number
+  dXi: number
+  dEta: number
+}
+
+/**
+ * Computes the preview layout (dimensions and offset) of the full image in upright coordinates
+ * so that the cropped portion aligns exactly with the annotation's displayed bounding box.
+ */
+export function croppedPreviewLayout(
+  a: Pick<Annotation, 'x' | 'y' | 'width' | 'height'> & {
+    imageRotation?: number
+    imageCrop?: { left: number; top: number; right: number; bottom: number }
+  },
+  pageSizePx: { width: number; height: number },
+): CroppedPreviewLayout {
+  const rot = a.imageRotation ?? 0
+  const isRotated = rot === 90 || rot === 270
+
+  const crop = a.imageCrop || { left: 0, top: 0, right: 0, bottom: 0 }
+  const sx = Math.max(0.01, 1 - crop.left - crop.right)
+  const sy = Math.max(0.01, 1 - crop.top - crop.bottom)
+
+  const remW = isRotated ? a.height * pageSizePx.height : a.width * pageSizePx.width
+  const remH = isRotated ? a.width * pageSizePx.width : a.height * pageSizePx.height
+
+  const fullW = remW / sx
+  const fullH = remH / sy
+
+  const dXi = ((crop.right - crop.left) / (2 * sx)) * remW
+  const dEta = ((crop.bottom - crop.top) / (2 * sy)) * remH
+
+  return {
+    width: fullW,
+    height: fullH,
+    fullWidth: fullW,
+    fullHeight: fullH,
+    dx: dXi,
+    dy: dEta,
+    dXi,
+    dEta,
+  }
+}
+
+/**
+ * Samples background color from a rendered canvas behind a region.
+ * When options.outside is true, samples from a 2-4px ring outside the region's 4 edges,
+ * skipping points outside the page bounds, and returns the dominant color.
+ */
+export function sampleBackground(
+  region: { x: number; y: number; width: number; height: number },
+  canvas: HTMLCanvasElement | null,
+  size: { width: number; height: number },
+  options?: { outside?: boolean },
+): string {
+  if (!canvas) return '#ffffff'
+  const ratioX = canvas.width / size.width
+  const ratioY = canvas.height / size.height
+  const ctx = canvas.getContext('2d') as CanvasRenderingContext2D | null
+  if (!ctx) return '#ffffff'
+
+  const samples: number[][] = []
+
+  if (options?.outside) {
+    const x0 = region.x * size.width * ratioX
+    const y0 = region.y * size.height * ratioY
+    const w = region.width * size.width * ratioX
+    const h = region.height * size.height * ratioY
+    const x1 = x0 + w
+    const y1 = y0 + h
+
+    // Sample 2–4 px outside 4 edges
+    const offsets = [2, 3, 4]
+    const stepsX = 13
+    const stepsY = 7
+
+    for (const d of offsets) {
+      // Top edge: y = y0 - d
+      const topY = y0 - d
+      if (topY >= 0 && topY < canvas.height) {
+        for (let i = 0; i < stepsX; i++) {
+          const x = x0 + ((i + 0.5) / stepsX) * w
+          if (x >= 0 && x < canvas.width) {
+            samples.push(Array.from(ctx.getImageData(Math.round(x), Math.round(topY), 1, 1).data.slice(0, 3)))
+          }
+        }
+      }
+
+      // Bottom edge: y = y1 + d
+      const bottomY = y1 + d
+      if (bottomY >= 0 && bottomY < canvas.height) {
+        for (let i = 0; i < stepsX; i++) {
+          const x = x0 + ((i + 0.5) / stepsX) * w
+          if (x >= 0 && x < canvas.width) {
+            samples.push(Array.from(ctx.getImageData(Math.round(x), Math.round(bottomY), 1, 1).data.slice(0, 3)))
+          }
+        }
+      }
+
+      // Left edge: x = x0 - d
+      if (x0 - d >= 0 && x0 - d < canvas.width) {
+        const leftX = x0 - d
+        for (let j = 0; j < stepsY; j++) {
+          const y = y0 + ((j + 0.5) / stepsY) * h
+          if (y >= 0 && y < canvas.height) {
+            samples.push(Array.from(ctx.getImageData(Math.round(leftX), Math.round(y), 1, 1).data.slice(0, 3)))
+          }
+        }
+      }
+
+      // Right edge: x = x1 + d
+      if (x1 + d >= 0 && x1 + d < canvas.width) {
+        const rightX = x1 + d
+        for (let j = 0; j < stepsY; j++) {
+          const y = y0 + ((j + 0.5) / stepsY) * h
+          if (y >= 0 && y < canvas.height) {
+            samples.push(Array.from(ctx.getImageData(Math.round(rightX), Math.round(y), 1, 1).data.slice(0, 3)))
+          }
+        }
+      }
+    }
+  } else {
+    // Existing inside sampling (W-9)
+    for (let row = 0; row < 7; row++) {
+      for (let column = 0; column < 13; column++) {
+        const px = (column + 0.5) / 13
+        const py = (row + 0.5) / 7
+        const x = Math.min(Math.max(0, Math.round((region.x + region.width * px) * size.width * ratioX)), canvas.width - 1)
+        const y = Math.min(Math.max(0, Math.round((region.y + region.height * py) * size.height * ratioY)), canvas.height - 1)
+        samples.push(Array.from(ctx.getImageData(x, y, 1, 1).data.slice(0, 3)))
+      }
+    }
+  }
+
+  if (samples.length === 0) return '#ffffff'
+
+  const buckets = new Map<string, number[][]>()
+  samples.forEach((pixel) => {
+    const key = pixel.map((channel) => Math.round(channel / 12) * 12).join(',')
+    buckets.set(key, [...(buckets.get(key) || []), pixel])
+  })
+  const dominant = [...buckets.values()].sort((a, b) => b.length - a.length)[0] || [[255, 255, 255]]
+  const channel = (index: number) =>
+    Math.round(dominant.reduce((sum, pixel) => sum + pixel[index], 0) / dominant.length)
+  return `#${[channel(0), channel(1), channel(2)].map((value) => value.toString(16).padStart(2, '0')).join('')}`
+}
+
