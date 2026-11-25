@@ -210,7 +210,7 @@
     <ul>
       <li><b>Xoay trang</b> 90° theo chiều kim đồng hồ: được lưu thẳng vào file xuất. Đánh dấu, nét vẽ trên trang xoay theo; chữ và ảnh bạn thêm vẫn đứng thẳng.</li>
       <li>Chèn, đổi vị trí, xoá hay xoay trang <b>không hoàn tác được</b> bằng Undo (thanh trạng thái sẽ nhắc). Hãy kiểm tra kỹ trước khi thao tác.</li>
-      <li>Trang có <b>chữ đã sửa từ chữ gốc</b> (xem bên dưới) tạm thời không xoay được.</li>
+      <li>Trang có <b>chữ hoặc ảnh có sẵn đã sửa</b> (xem bên dưới) tạm thời không xoay được.</li>
     </ul>
 
     <h3>Sửa chữ có sẵn trong PDF</h3>
@@ -234,6 +234,25 @@
         <li>Chữ <b>xoay</b> (chữ dọc, chữ trên trang xoay) chưa sửa được: rê chuột thấy "Chữ xoay: chưa hỗ trợ sửa".</li>
       </ul>
     </div>
+    <h3>Sửa ảnh có sẵn trong PDF</h3>
+    <p>Logo, ảnh chữ ký, con dấu… có sẵn trong file cũng chọn được bằng công cụ <b>Chọn</b> (bật <i>Hiện khung bao</i> để thấy khung của từng ảnh).</p>
+    <figure>
+      <a class="zoomable" href="img/27-pdf-sua-anh.jpg" target="_blank" rel="noopener" title="Bấm để xem ảnh kích thước đầy đủ"><img src="img/27-pdf-sua-anh.jpg" alt="Logo có sẵn trong PDF đang được chọn với 8 tay nắm; bảng Thuộc tính có nhóm Ảnh (xoay, lật, thay ảnh) và nhóm Cắt ảnh" loading="lazy" width="1440" height="960"></a>
+      <figcaption><span class="n">1</span> Ảnh có sẵn đang chọn: kéo, đổi kích thước như ảnh chèn. <span class="n">2</span> <b>Xoay trái/phải 90°</b>, <b>Lật ngang/dọc</b>, <b>Thay ảnh…</b> <span class="n">3</span> <b>Cắt ảnh</b> theo % mỗi cạnh (tính trên ảnh gốc, trước khi xoay/lật); <i>Bỏ cắt</i> để trả lại (tài liệu mẫu, dữ liệu giả).</figcaption>
+    </figure>
+    <ul>
+      <li>Kéo, đổi kích thước, xoay, lật, thay, cắt, xoá (phím <kbd>Delete</kbd>): mỗi thao tác là một bước <b>Undo</b>. Các nút xoay/lật/thay/cắt cũng dùng được cho <b>ảnh bạn chèn</b>.</li>
+      <li>Khi xuất, ảnh gốc <b>giữ nguyên chất lượng</b>, chỉ đổi vị trí/hướng; ảnh đã xoá được <b>bỏ khỏi file</b>.</li>
+      <li>Ảnh nằm nghiêng chưa sửa được: rê chuột thấy <i>Ảnh này chưa hỗ trợ sửa</i>. Ảnh lồng trong khối đặc biệt của PDF thì chưa được nhận (không có khung).</li>
+      <li>Ảnh có sẵn không đổi được độ mờ.</li>
+    </ul>
+    <div class="note warn"><b>Lưu ý:</b>
+      <ul>
+        <li><b>Cắt ảnh chỉ che phần bị cắt</b>, phần đó <b>vẫn nằm trong file</b> và người khác trích ảnh ra vẫn thấy đủ. Không dùng cắt ảnh để giấu thông tin nhạy cảm trong ảnh; hãy xoá ảnh hoặc thay bằng ảnh đã xử lý.</li>
+        <li><b>Xoá hoặc thay chữ ký, con dấu</b> trên văn bản đã ký/đóng dấu có thể làm sai lệch giá trị pháp lý của văn bản. Chỉ làm khi bạn có quyền chỉnh sửa văn bản đó.</li>
+      </ul>
+    </div>
+
     <div class="note bad"><b>Nhớ Xuất PDF trước khi đóng tab hoặc tải lại trang.</b> Thay đổi chỉ nằm trong trình duyệt cho tới khi bạn xuất file.</div>
     <div class="note info"><b>Chữ ký nét vẽ ≠ chữ ký số.</b> Công cụ <i>Chữ ký</i> chỉ tạo hình chữ ký hiển thị, không có giá trị như chữ ký số có chứng thư. Văn bản cần ký số hợp lệ phải dùng nút <i>Ký số</i>.</div>
   </section>
@@ -430,6 +449,10 @@
       <p>Gợi ý dựa trên các nhãn thường gặp trong mẫu hợp đồng (Bên A/B, Đại diện, Chức vụ, Giấy ủy quyền số, Hợp đồng số). Mẫu khác có thể bị sót: tự thêm ở thẻ <i>Pháp nhân &amp; người đại diện</i> hoặc <i>Thay thế từ khoá</i>. Mục nhận nhầm thì bỏ chọn trước khi bấm <i>Thêm các mục đã chọn</i>.</p></details>
     <details><summary>Danh sách từ khoá có được lưu lại cho lần sau không?</summary>
       <p>Không. Danh sách chỉ tồn tại trong phiên làm việc, không lưu trên trình duyệt hay máy chủ và không ghi vào nhật ký — vì từ khoá thường là tên thật. Có thể giữ danh sách trong một file văn bản nội bộ rồi dùng nút <i>Dán danh sách</i>.</p></details>
+    <details><summary>Cắt ảnh có xoá phần bị cắt khỏi file không?</summary>
+      <p>Không. Cắt ảnh chỉ giới hạn vùng hiển thị; phần bị cắt vẫn nằm trong file PDF. Muốn bỏ hẳn thì xoá ảnh, hoặc dùng <i>Thay ảnh…</i> với một ảnh đã cắt sẵn.</p></details>
+    <details><summary>Vì sao một ảnh trong PDF không chọn được?</summary>
+      <p>Hiện chỉ sửa được ảnh nằm thẳng, đặt trực tiếp trên trang. Ảnh nằm nghiêng có khung nhưng báo <i>chưa hỗ trợ sửa</i>; ảnh lồng trong khối đặc biệt (Form XObject) hoặc ảnh "inline" chưa được nhận nên không có khung. PDF dạng ảnh scan cả trang là một ảnh lớn duy nhất.</p></details>
     <details><summary>Chữ sửa xong trông khác font các dòng bên cạnh?</summary>
       <p>Công cụ nhận font gốc và dùng font tương đương có sẵn: Be Vietnam Pro, Arimo (thay Arial/Helvetica khi có dấu), Tinos (thay Times New Roman khi có dấu). Font khác (vd. font riêng của doanh nghiệp) sẽ được thay bằng font gần nhất trong số này. Cần giữ đúng font gốc thì sửa ở file gốc (Word…) rồi xuất lại PDF.</p></details>
     <details><summary>Vì sao danh sách font không còn Noto Sans?</summary>
