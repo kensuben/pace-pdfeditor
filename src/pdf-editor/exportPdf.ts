@@ -1,4 +1,16 @@
-import { PDFDocument, rgb, StandardFonts, degrees, BlendMode, type PDFFont } from 'pdf-lib'
+import {
+  PDFDocument,
+  rgb,
+  StandardFonts,
+  degrees,
+  BlendMode,
+  pushGraphicsState,
+  concatTransformationMatrix,
+  drawObject,
+  popGraphicsState,
+  setGraphicsState,
+  type PDFFont,
+} from 'pdf-lib'
 import fontkit from '@pdf-lib/fontkit'
 import beRegular from './fonts/BeVietnamPro-Regular.ttf?url'
 import beItalic from './fonts/BeVietnamPro-Italic.ttf?url'
@@ -16,6 +28,7 @@ import type { Annotation } from '../types'
 import { hexToRgb01 } from './geometry'
 import { resolveExportFontFamily } from './fonts'
 import { getPageView, viewSizePt, viewToPdf } from './pageGeometry'
+import { imagePlacementMatrix } from './imagePlacement'
 import { removeTextInRegions, pagesWithRemainingText } from './engine/textRemoval'
 import { applyImageEdits, type ImageEdit } from './engine/imageTransform'
 import type { Rect, RemovalReport } from './engine/types'
@@ -202,24 +215,48 @@ export async function buildEditedPdfWithReport(
           remove: true,
         })
       } else {
-        const c1 = viewToPdf(view, a.x, a.y)
-        const c2 = viewToPdf(view, a.x + a.width, a.y)
-        const c3 = viewToPdf(view, a.x + a.width, a.y + a.height)
-        const c4 = viewToPdf(view, a.x, a.y + a.height)
-        const minX = Math.min(c1.x, c2.x, c3.x, c4.x)
-        const maxX = Math.max(c1.x, c2.x, c3.x, c4.x)
-        const minY = Math.min(c1.y, c2.y, c3.y, c4.y)
-        const maxY = Math.max(c1.y, c2.y, c3.y, c4.y)
-        edits.push({
-          resourceName: a.sourceImage!.resourceName,
-          occurrence: a.sourceImage!.occurrence,
-          newBbox: {
-            x: minX,
-            y: minY,
-            width: maxX - minX,
-            height: maxY - minY,
-          },
-        })
+        let replaceWith: { name: string } | undefined
+        if (a.replacementDataUrl) {
+          const data = await loadImageBytes(a.replacementDataUrl)
+          const embedded = a.replacementDataUrl.startsWith('data:image/png')
+            ? await doc.embedPng(data)
+            : await doc.embedJpg(data)
+          const xObjectKey = p.node.newXObject('Image', embedded.ref)
+          replaceWith = { name: xObjectKey.asString() }
+        }
+
+        const isRotatedOrFlippedOrReplaced = Boolean(
+          a.imageRotation || a.flipH || a.flipV || a.replacementDataUrl,
+        )
+
+        if (isRotatedOrFlippedOrReplaced) {
+          const targetMatrix = imagePlacementMatrix(a, view)
+          edits.push({
+            resourceName: a.sourceImage!.resourceName,
+            occurrence: a.sourceImage!.occurrence,
+            targetMatrix,
+            replaceWith,
+          })
+        } else {
+          const c1 = viewToPdf(view, a.x, a.y)
+          const c2 = viewToPdf(view, a.x + a.width, a.y)
+          const c3 = viewToPdf(view, a.x + a.width, a.y + a.height)
+          const c4 = viewToPdf(view, a.x, a.y + a.height)
+          const minX = Math.min(c1.x, c2.x, c3.x, c4.x)
+          const maxX = Math.max(c1.x, c2.x, c3.x, c4.x)
+          const minY = Math.min(c1.y, c2.y, c3.y, c4.y)
+          const maxY = Math.max(c1.y, c2.y, c3.y, c4.y)
+          edits.push({
+            resourceName: a.sourceImage!.resourceName,
+            occurrence: a.sourceImage!.occurrence,
+            newBbox: {
+              x: minX,
+              y: minY,
+              width: maxX - minX,
+              height: maxY - minY,
+            },
+          })
+        }
       }
     }
     const result = applyImageEdits(doc, pageIndex, edits)
@@ -587,21 +624,56 @@ export async function buildEditedPdfWithReport(
           }
         }
       }
-    } else if (a.type === 'image' && a.imageDataUrl) {
+    } else if (a.type === 'image' && (a.imageDataUrl || a.replacementDataUrl)) {
       if (a.sourceImage) {
         continue
       }
-      const data = await loadImageBytes(a.imageDataUrl)
-      const embedded = a.imageDataUrl.startsWith('data:image/png') ? await doc.embedPng(data) : await doc.embedJpg(data)
-      const origin = viewToPdf(view, a.x, a.y + a.height)
-      p.drawImage(embedded, {
-        x: origin.x,
-        y: origin.y,
-        width: a.width * width,
-        height: a.height * height,
-        opacity: a.opacity,
-        rotate: rotDegrees,
-      })
+      const dataUrl = a.replacementDataUrl || a.imageDataUrl!
+      const data = await loadImageBytes(dataUrl)
+      const embedded = dataUrl.startsWith('data:image/png')
+        ? await doc.embedPng(data)
+        : await doc.embedJpg(data)
+
+      const isRotatedOrFlipped = Boolean(a.imageRotation || a.flipH || a.flipV)
+      if (isRotatedOrFlipped) {
+        const targetMatrix = imagePlacementMatrix(a, view)
+        const xObjectKey = p.node.newXObject('Image', embedded.ref)
+        const operators = [pushGraphicsState()]
+        if (a.opacity !== undefined && a.opacity < 1) {
+          const pageInternal = p as unknown as {
+            maybeEmbedGraphicsState: (options: { opacity: number }) => unknown
+          }
+          const graphicsStateKey = pageInternal.maybeEmbedGraphicsState({
+            opacity: a.opacity,
+          })
+          if (graphicsStateKey) {
+            operators.push(setGraphicsState(graphicsStateKey as never))
+          }
+        }
+        operators.push(
+          concatTransformationMatrix(
+            targetMatrix[0],
+            targetMatrix[1],
+            targetMatrix[2],
+            targetMatrix[3],
+            targetMatrix[4],
+            targetMatrix[5],
+          ),
+          drawObject(xObjectKey),
+          popGraphicsState(),
+        )
+        p.pushOperators(...operators)
+      } else {
+        const origin = viewToPdf(view, a.x, a.y + a.height)
+        p.drawImage(embedded, {
+          x: origin.x,
+          y: origin.y,
+          width: a.width * width,
+          height: a.height * height,
+          opacity: a.opacity,
+          rotate: rotDegrees,
+        })
+      }
     } else if (a.type === 'highlight') {
       const c1 = viewToPdf(view, a.x, a.y)
       const c2 = viewToPdf(view, a.x + a.width, a.y)

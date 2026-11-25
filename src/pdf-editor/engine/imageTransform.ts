@@ -9,6 +9,8 @@ export interface ImageEdit {
   resourceName: string
   occurrence: number
   newBbox?: Rect
+  targetMatrix?: [number, number, number, number, number, number]
+  replaceWith?: { name: string }
   remove?: boolean
 }
 
@@ -161,6 +163,56 @@ export function applyImageEdits(
         continue
       }
 
+      // Check if replaceWith changes the XObject name
+      let doOp = op
+      if (edit.replaceWith) {
+        hasStructuralChanges = true
+        const repName = edit.replaceWith.name.startsWith('/') ? edit.replaceWith.name : `/${edit.replaceWith.name}`
+        doOp = { operator: 'Do', operands: [{ type: 'name', value: repName }] }
+      }
+
+      if (edit.targetMatrix) {
+        // Compute M = targetMatrix × CTM⁻¹
+        const invCtm = invertMatrix(ctm)
+        if (!invCtm) {
+          outOps.push(doOp)
+          continue
+        }
+
+        const M = multMatrix(edit.targetMatrix, invCtm)
+
+        // Check if M is practically identity and no replacement
+        const isIdentity =
+          Math.abs(M[0] - 1) < 1e-4 &&
+          Math.abs(M[1]) < 1e-4 &&
+          Math.abs(M[2]) < 1e-4 &&
+          Math.abs(M[3] - 1) < 1e-4 &&
+          Math.abs(M[4]) < 1e-4 &&
+          Math.abs(M[5]) < 1e-4
+
+        if (isIdentity && !edit.replaceWith) {
+          outOps.push(op)
+          continue
+        }
+
+        hasStructuralChanges = true
+        outOps.push({ operator: 'q', operands: [] })
+        outOps.push({
+          operator: 'cm',
+          operands: [
+            { type: 'number', value: M[0] },
+            { type: 'number', value: M[1] },
+            { type: 'number', value: M[2] },
+            { type: 'number', value: M[3] },
+            { type: 'number', value: M[4] },
+            { type: 'number', value: M[5] },
+          ],
+        })
+        outOps.push(doOp)
+        outOps.push({ operator: 'Q', operands: [] })
+        continue
+      }
+
       if (edit.newBbox) {
         // Compute old bbox from current ctm
         const p1 = applyMatrix({ x: 0, y: 0 }, ctm)
@@ -185,7 +237,7 @@ export function applyImageEdits(
         const dw = Math.abs(edit.newBbox.width - oldBbox.width)
         const dh = Math.abs(edit.newBbox.height - oldBbox.height)
 
-        if (dx < 0.5 && dy < 0.5 && dw < 0.5 && dh < 0.5) {
+        if (dx < 0.5 && dy < 0.5 && dw < 0.5 && dh < 0.5 && !edit.replaceWith) {
           // Unchanged (< 0.5pt on all edges) -> leave unchanged
           outOps.push(op)
           continue
@@ -199,7 +251,7 @@ export function applyImageEdits(
 
         const invCtm = invertMatrix(ctm)
         if (!invCtm) {
-          outOps.push(op)
+          outOps.push(doOp)
           continue
         }
 
@@ -219,8 +271,14 @@ export function applyImageEdits(
             { type: 'number', value: M[5] },
           ],
         })
-        outOps.push(op)
+        outOps.push(doOp)
         outOps.push({ operator: 'Q', operands: [] })
+        continue
+      }
+
+      if (edit.replaceWith) {
+        hasStructuralChanges = true
+        outOps.push(doOp)
         continue
       }
 

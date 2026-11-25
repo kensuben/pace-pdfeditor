@@ -76,5 +76,5 @@ export function writePageContent(doc: PDFDocument, pageIndex: number, bytes: Uin
   const page = doc.getPage(pageIndex)
   const newStream = doc.context.flateStream(bytes)
   const streamRef = doc.context.register(newStream)
-  page.node.set(PDFName.of('Contents'), streamRef)
+  page.node.set(PDFName.of('Contents'), doc.context.obj([streamRef]))
 }

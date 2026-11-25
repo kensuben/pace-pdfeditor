@@ -1,4 +1,5 @@
-import { useState } from 'react'
+import { useState, useRef } from 'react'
+import { RotateCcw, RotateCw, FlipHorizontal, FlipVertical, ImagePlus } from 'lucide-react'
 import type { Annotation, TextStyle, Tool } from '../types'
 import { getBounds, applyPanelDimensions } from './selection/geometry'
 import { TextFormatBar } from './TextFormatBar'
@@ -89,6 +90,117 @@ export function PropertiesPanel({
       setInputW(String(currentWPt))
       setInputH(String(currentHPt))
     }
+  }
+
+  const fileInputRef = useRef<HTMLInputElement>(null)
+
+  const handleRotateLeft = () => {
+    if (!selectedAnnotation || selectedAnnotation.type !== 'image') return
+    const curRot = (selectedAnnotation.imageRotation ?? 0) as 0 | 90 | 180 | 270
+    const newRot = ((curRot - 90 + 360) % 360) as 0 | 90 | 180 | 270
+    const cxPt = (selectedAnnotation.x + selectedAnnotation.width / 2) * pageW
+    const cyPt = (selectedAnnotation.y + selectedAnnotation.height / 2) * pageH
+    const newWPt = selectedAnnotation.height * pageH
+    const newHPt = selectedAnnotation.width * pageW
+    const newX = (cxPt - newWPt / 2) / pageW
+    const newY = (cyPt - newHPt / 2) / pageH
+    const newW = newWPt / pageW
+    const newH = newHPt / pageH
+    onUpdateAnnotation(
+      {
+        ...selectedAnnotation,
+        x: newX,
+        y: newY,
+        width: newW,
+        height: newH,
+        imageRotation: newRot,
+      },
+      'resize',
+    )
+  }
+
+  const handleRotateRight = () => {
+    if (!selectedAnnotation || selectedAnnotation.type !== 'image') return
+    const curRot = (selectedAnnotation.imageRotation ?? 0) as 0 | 90 | 180 | 270
+    const newRot = ((curRot + 90) % 360) as 0 | 90 | 180 | 270
+    const cxPt = (selectedAnnotation.x + selectedAnnotation.width / 2) * pageW
+    const cyPt = (selectedAnnotation.y + selectedAnnotation.height / 2) * pageH
+    const newWPt = selectedAnnotation.height * pageH
+    const newHPt = selectedAnnotation.width * pageW
+    const newX = (cxPt - newWPt / 2) / pageW
+    const newY = (cyPt - newHPt / 2) / pageH
+    const newW = newWPt / pageW
+    const newH = newHPt / pageH
+    onUpdateAnnotation(
+      {
+        ...selectedAnnotation,
+        x: newX,
+        y: newY,
+        width: newW,
+        height: newH,
+        imageRotation: newRot,
+      },
+      'resize',
+    )
+  }
+
+  const handleFlipH = () => {
+    if (!selectedAnnotation || selectedAnnotation.type !== 'image') return
+    onUpdateAnnotation(
+      {
+        ...selectedAnnotation,
+        flipH: !selectedAnnotation.flipH,
+      },
+      'update',
+    )
+  }
+
+  const handleFlipV = () => {
+    if (!selectedAnnotation || selectedAnnotation.type !== 'image') return
+    onUpdateAnnotation(
+      {
+        ...selectedAnnotation,
+        flipV: !selectedAnnotation.flipV,
+      },
+      'update',
+    )
+  }
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file || !selectedAnnotation || selectedAnnotation.type !== 'image') return
+    if (!['image/png', 'image/jpeg'].includes(file.type)) {
+      alert('Chỉ hỗ trợ ảnh PNG hoặc JPEG')
+      return
+    }
+    const reader = new FileReader()
+    reader.onload = () => {
+      const dataUrl = reader.result as string
+      const img = new Image()
+      img.onload = () => {
+        const imgW = img.naturalWidth || 1
+        const imgH = img.naturalHeight || 1
+        const curRot = selectedAnnotation.imageRotation ?? 0
+        const isRotated90or270 = curRot === 90 || curRot === 270
+        const aspectOnScreen = isRotated90or270 ? imgH / imgW : imgW / imgH
+        const currentWPt = selectedAnnotation.width * pageW
+        const newHPt = currentWPt / aspectOnScreen
+        const newH = newHPt / pageH
+
+        const isExisting = Boolean(selectedAnnotation.sourceImage)
+        const updated: Annotation = {
+          ...selectedAnnotation,
+          height: newH,
+          ...(isExisting
+            ? { replacementDataUrl: dataUrl }
+            : { imageDataUrl: dataUrl }),
+        }
+        onUpdateAnnotation(updated, 'resize')
+      }
+      img.src = dataUrl
+    }
+    reader.readAsDataURL(file)
+    e.target.value = ''
   }
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
@@ -214,8 +326,73 @@ export function PropertiesPanel({
             </label>
           </div>
 
-          {(selectedAnnotation.type === 'highlight' ||
-            selectedAnnotation.type === 'image' ||
+          {selectedAnnotation.type === 'image' && (
+            <div className="properties-section">
+              <div className="properties-section-title">Ảnh</div>
+              <div className="properties-button-group">
+                <button
+                  type="button"
+                  className="tool-btn"
+                  onClick={handleRotateLeft}
+                  title="Xoay trái 90°"
+                  aria-label="Xoay trái 90°"
+                >
+                  <RotateCcw size={16} />
+                  <span>Xoay trái 90°</span>
+                </button>
+                <button
+                  type="button"
+                  className="tool-btn"
+                  onClick={handleRotateRight}
+                  title="Xoay phải 90°"
+                  aria-label="Xoay phải 90°"
+                >
+                  <RotateCw size={16} />
+                  <span>Xoay phải 90°</span>
+                </button>
+                <button
+                  type="button"
+                  className="tool-btn"
+                  onClick={handleFlipH}
+                  title="Lật ngang"
+                  aria-label="Lật ngang"
+                >
+                  <FlipHorizontal size={16} />
+                  <span>Lật ngang</span>
+                </button>
+                <button
+                  type="button"
+                  className="tool-btn"
+                  onClick={handleFlipV}
+                  title="Lật dọc"
+                  aria-label="Lật dọc"
+                >
+                  <FlipVertical size={16} />
+                  <span>Lật dọc</span>
+                </button>
+                <button
+                  type="button"
+                  className="tool-btn"
+                  onClick={() => fileInputRef.current?.click()}
+                  title="Thay ảnh…"
+                  aria-label="Thay ảnh…"
+                >
+                  <ImagePlus size={16} />
+                  <span>Thay ảnh…</span>
+                </button>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/png,image/jpeg"
+                  style={{ display: 'none' }}
+                  onChange={handleFileChange}
+                />
+              </div>
+            </div>
+          )}
+
+          {((selectedAnnotation.type === 'image' && !selectedAnnotation.sourceImage) ||
+            selectedAnnotation.type === 'highlight' ||
             selectedAnnotation.type === 'text') && (
             <div className="properties-section">
               <div className="properties-section-title">Độ mờ</div>

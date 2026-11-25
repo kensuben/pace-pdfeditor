@@ -535,7 +535,7 @@ export function PdfCanvas({
                 strokeLinejoin="round"
               />
             </svg>
-          ) : a.type === 'image' && a.imageDataUrl ? (
+          ) : a.type === 'image' && (a.imageDataUrl || a.replacementDataUrl) ? (
             <div key={a.id}>
               {a.sourceImage && (
                 <div
@@ -553,18 +553,15 @@ export function PdfCanvas({
                 />
               )}
               {!a.deleted && (
-                <img
-                  draggable={false}
-                  className={`image-annotation ${selectedId === a.id ? 'selected' : ''}`}
-                  src={a.imageDataUrl}
-                  alt="Inserted"
+                <div
+                  className={`image-annotation-wrapper ${selectedId === a.id ? 'selected' : ''}`}
                   style={{
                     position: 'absolute',
                     left: `${display.x * 100}%`,
                     top: `${display.y * 100}%`,
                     width: `${display.width * 100}%`,
                     height: `${display.height * 100}%`,
-                    opacity: display.opacity ?? 1,
+                    overflow: 'visible',
                     zIndex: 20,
                   }}
                   onPointerDown={(e) => {
@@ -572,7 +569,34 @@ export function PdfCanvas({
                     e.stopPropagation()
                     onSelect(a.id)
                   }}
-                />
+                >
+                  {(() => {
+                    const rot = display.imageRotation ?? 0
+                    const isRotated = rot === 90 || rot === 270
+                    const imgW = (isRotated ? display.height : display.width) * size.width
+                    const imgH = (isRotated ? display.width : display.height) * size.height
+                    const scaleX = display.flipH ? -1 : 1
+                    const scaleY = display.flipV ? -1 : 1
+                    return (
+                      <img
+                        draggable={false}
+                        className={`image-annotation ${selectedId === a.id ? 'selected' : ''}`}
+                        src={display.replacementDataUrl || display.imageDataUrl}
+                        alt="Inserted"
+                        style={{
+                          position: 'absolute',
+                          left: '50%',
+                          top: '50%',
+                          width: `${imgW}px`,
+                          height: `${imgH}px`,
+                          transform: `translate(-50%, -50%) rotate(${rot}deg) scale(${scaleX}, ${scaleY})`,
+                          opacity: display.opacity ?? 1,
+                          pointerEvents: 'none',
+                        }}
+                      />
+                    )
+                  })()}
+                </div>
               )}
             </div>
           ) : a.deleted ? null : inlineEdit?.kind === 'annotation' && inlineEdit.id === a.id ? (
