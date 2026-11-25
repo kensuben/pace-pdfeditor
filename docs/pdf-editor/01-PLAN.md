@@ -139,8 +139,9 @@ Nguyên tắc:
 | **F-16** | Nhận font Be Vietnam Pro / Arimo từ BaseFont để chữ sửa giữ đúng font; ẩn khung bao của vùng đang sửa (B23, B24) | W-9c | ✅ Đã merge (PR #72, squash) |
 | **F-17** | Đóng gói font Tinos (OFL-1.1, cùng kích thước Times New Roman) để chữ tiếng Việt kiểu Times xuất ra font có chân thay vì Arimo (B25) | F-16 | ✅ Đã merge (PR #74) |
 | **F-18** | Dòng đơn sửa dài hơn kéo sang phải tới chỗ trống trước khi xuống dòng; dòng "Nhãn: giá trị" không bị gộp thành khối (B26, B27) | F-17 | ✅ Đã merge (PR #76) |
-| **F-18b** | Dòng rộng nhất trang khi sửa dài hơn được kéo tới lề phải (lề trái đối xứng) thay vì xuống dòng ngay (B26 còn sót) | F-18 | Prompt: `docs/planning/antigravity/F-18b_single-line-mirror-margin.md` |
-| **W-10** | Ảnh có sẵn: nhận, chọn, di chuyển, giãn, xoay, lật, thay, xoá, cắt; ảnh chèn có xoay/cắt/thay (B9) | W-7, W-8 | |
+| **F-18b** | Dòng rộng nhất trang khi sửa dài hơn được kéo tới lề phải (lề trái đối xứng) thay vì xuống dòng ngay (B26 còn sót) | F-18 | ✅ Đã merge (PR #78) |
+| **W-10a** | Ảnh có sẵn: nhận (XObject ảnh ở cấp trang), chọn, kéo, giãn, xoá thật qua content stream; giữ nguyên chất lượng ảnh gốc (B9) | W-7, W-8 | Prompt: `docs/planning/antigravity/W-10a_existing-images-move-resize-delete.md` |
+| **W-10b** | Ảnh: xoay, lật, cắt, thay, sắp lớp; ảnh trong Form XObject và ảnh inline; ảnh chèn có xoay/cắt/thay | W-10a | Viết prompt sau khi W-10a merge |
 | **W-11** | Cuộn liên tục có ảo hoá, thumbnail thật, menu zoom + vừa trang/vừa chiều rộng, xoay trang lưu vào file, đặt lại Undo sau thao tác trang (B12, B13, B15) | W-8, F-12, F-13 | ✅ Đã merge (PR #48, gồm W-11b) |
 | W-12a–d | Tìm & thay thế chữ · watermark + header/footer · crop trang · link | W-9 | Đã duyệt (Q-P3) |
 | — | Cập nhật trang hướng dẫn `/huong-dan/` | Sau W-9, W-10 | Claude tự làm, chụp ảnh với dữ liệu giả |
