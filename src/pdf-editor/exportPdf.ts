@@ -9,6 +9,9 @@ import {
   drawObject,
   popGraphicsState,
   setGraphicsState,
+  rectangle,
+  clip,
+  endPath,
   type PDFFont,
 } from 'pdf-lib'
 import fontkit from '@pdf-lib/fontkit'
@@ -28,7 +31,7 @@ import type { Annotation } from '../types'
 import { hexToRgb01 } from './geometry'
 import { resolveExportFontFamily } from './fonts'
 import { getPageView, viewSizePt, viewToPdf } from './pageGeometry'
-import { imagePlacementMatrix } from './imagePlacement'
+import { croppedImageMatrix } from './imagePlacement'
 import { removeTextInRegions, pagesWithRemainingText } from './engine/textRemoval'
 import { applyImageEdits, type ImageEdit } from './engine/imageTransform'
 import type { Rect, RemovalReport } from './engine/types'
@@ -225,16 +228,21 @@ export async function buildEditedPdfWithReport(
           replaceWith = { name: xObjectKey.asString() }
         }
 
+        const hasCrop = Boolean(
+          a.imageCrop &&
+          (a.imageCrop.left > 0 || a.imageCrop.top > 0 || a.imageCrop.right > 0 || a.imageCrop.bottom > 0),
+        )
         const isRotatedOrFlippedOrReplaced = Boolean(
-          a.imageRotation || a.flipH || a.flipV || a.replacementDataUrl,
+          a.imageRotation || a.flipH || a.flipV || a.replacementDataUrl || hasCrop,
         )
 
         if (isRotatedOrFlippedOrReplaced) {
-          const targetMatrix = imagePlacementMatrix(a, view)
+          const { matrix: targetMatrix, clip: clipRect } = croppedImageMatrix(a, view)
           edits.push({
             resourceName: a.sourceImage!.resourceName,
             occurrence: a.sourceImage!.occurrence,
             targetMatrix,
+            clip: hasCrop ? clipRect : undefined,
             replaceWith,
           })
         } else {
@@ -634,11 +642,26 @@ export async function buildEditedPdfWithReport(
         ? await doc.embedPng(data)
         : await doc.embedJpg(data)
 
-      const isRotatedOrFlipped = Boolean(a.imageRotation || a.flipH || a.flipV)
-      if (isRotatedOrFlipped) {
-        const targetMatrix = imagePlacementMatrix(a, view)
+      const hasCrop = Boolean(
+        a.imageCrop &&
+        (a.imageCrop.left > 0 || a.imageCrop.top > 0 || a.imageCrop.right > 0 || a.imageCrop.bottom > 0),
+      )
+      const isRotatedOrFlippedOrCropped = Boolean(
+        a.imageRotation || a.flipH || a.flipV || hasCrop,
+      )
+      if (isRotatedOrFlippedOrCropped) {
+        const { matrix: targetMatrix, clip: clipRect } = croppedImageMatrix(a, view)
         const xObjectKey = p.node.newXObject('Image', embedded.ref)
         const operators = [pushGraphicsState()]
+
+        if (hasCrop) {
+          operators.push(
+            rectangle(clipRect.x, clipRect.y, clipRect.width, clipRect.height),
+            clip(),
+            endPath(),
+          )
+        }
+
         if (a.opacity !== undefined && a.opacity < 1) {
           const pageInternal = p as unknown as {
             maybeEmbedGraphicsState: (options: { opacity: number }) => unknown

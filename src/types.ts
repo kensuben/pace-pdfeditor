@@ -79,6 +79,7 @@ export type Annotation = {
   flipH?: boolean
   flipV?: boolean
   replacementDataUrl?: string
+  imageCrop?: { left: number; top: number; right: number; bottom: number }
 }
 
 export type TextStyle = Pick<Annotation, 'fontFamily' | 'fontSize' | 'bold' | 'italic' | 'underline' | 'align' | 'color'>

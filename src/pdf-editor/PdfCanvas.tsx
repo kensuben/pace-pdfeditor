@@ -9,6 +9,7 @@ import { getBounds, moveBy, nudgeDelta } from './selection/geometry'
 import { useDesktopEditor } from './useDesktopEditor'
 import { annotationFill, draftRect } from './annotationStyle'
 import { globalRenderQueue } from './viewMath'
+import { croppedPreviewLayout, sampleBackground } from './imagePlacement'
 
 export interface PdfCanvasProps {
   pdf: pdfjs.PDFDocumentProxy
@@ -282,32 +283,9 @@ export function PdfCanvas({
   const path = (points: Point[]) =>
     points.map((p, i) => `${i ? 'L' : 'M'} ${p.x * size.width} ${p.y * size.height}`).join(' ')
 
-  const sampleBackground = (region: Pick<TextRegion, 'x' | 'y' | 'width' | 'height'>) => {
-    const canvas = canvasRef.current
-    if (!canvas) return '#ffffff'
-    const ratioX = canvas.width / size.width,
-      ratioY = canvas.height / size.height
-    const ctx = canvas.getContext('2d', { willReadFrequently: true })
-    if (!ctx) return '#ffffff'
-    const samples: number[][] = []
-    for (let row = 0; row < 7; row++)
-      for (let column = 0; column < 13; column++) {
-        const px = (column + 0.5) / 13,
-          py = (row + 0.5) / 7
-        const x = clamp(Math.round((region.x + region.width * px) * size.width * ratioX), 0, canvas.width - 1)
-        const y = clamp(Math.round((region.y + region.height * py) * size.height * ratioY), 0, canvas.height - 1)
-        samples.push(Array.from(ctx.getImageData(x, y, 1, 1).data.slice(0, 3)))
-      }
-    const buckets = new Map<string, number[][]>()
-    samples.forEach((pixel) => {
-      const key = pixel.map((channel) => Math.round(channel / 12) * 12).join(',')
-      buckets.set(key, [...(buckets.get(key) || []), pixel])
-    })
-    const dominant = [...buckets.values()].sort((a, b) => b.length - a.length)[0] || [[255, 255, 255]]
-    const channel = (index: number) =>
-      Math.round(dominant.reduce((sum, pixel) => sum + pixel[index], 0) / dominant.length)
-    return `#${[channel(0), channel(1), channel(2)].map((value) => value.toString(16).padStart(2, '0')).join('')}`
-  }
+  const sampleBg = (region: Pick<TextRegion, 'x' | 'y' | 'width' | 'height'>, options?: { outside?: boolean }) =>
+    sampleBackground(region, canvasRef.current, size, options)
+
 
   const captureImagePreview = (region: Pick<PageImageRegion, 'x' | 'y' | 'width' | 'height'>): string => {
     const canvas = canvasRef.current
@@ -370,7 +348,7 @@ export function PdfCanvas({
         kind: 'annotation',
         id: a.id,
         value: a.text || '',
-        backgroundColor: a.replaceOriginal ? sampleBackground(a) : a.backgroundColor,
+        backgroundColor: a.replaceOriginal ? sampleBg(a) : a.backgroundColor,
       })
   }
 
@@ -456,7 +434,7 @@ export function PdfCanvas({
                     kind: 'region',
                     id: region.id,
                     value: region.text,
-                    backgroundColor: sampleBackground(region),
+                    backgroundColor: sampleBg(region),
                   })
                 }}
               >
@@ -484,7 +462,7 @@ export function PdfCanvas({
                   e.stopPropagation()
                   if (!img.editable) return
                   const previewUrl = captureImagePreview(img)
-                  const bg = sampleBackground(img)
+                  const bg = sampleBg(img, { outside: true })
                   const newAnnotation: Annotation = {
                     id: `ann-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
                     page: pageNumber,
@@ -561,7 +539,7 @@ export function PdfCanvas({
                     top: `${display.y * 100}%`,
                     width: `${display.width * 100}%`,
                     height: `${display.height * 100}%`,
-                    overflow: 'visible',
+                    overflow: 'hidden',
                     zIndex: 20,
                   }}
                   onPointerDown={(e) => {
@@ -572,9 +550,7 @@ export function PdfCanvas({
                 >
                   {(() => {
                     const rot = display.imageRotation ?? 0
-                    const isRotated = rot === 90 || rot === 270
-                    const imgW = (isRotated ? display.height : display.width) * size.width
-                    const imgH = (isRotated ? display.width : display.height) * size.height
+                    const layout = croppedPreviewLayout(display, size)
                     const scaleX = display.flipH ? -1 : 1
                     const scaleY = display.flipV ? -1 : 1
                     return (
@@ -587,9 +563,9 @@ export function PdfCanvas({
                           position: 'absolute',
                           left: '50%',
                           top: '50%',
-                          width: `${imgW}px`,
-                          height: `${imgH}px`,
-                          transform: `translate(-50%, -50%) rotate(${rot}deg) scale(${scaleX}, ${scaleY})`,
+                          width: `${layout.fullWidth}px`,
+                          height: `${layout.fullHeight}px`,
+                          transform: `translate(-50%, -50%) rotate(${rot}deg) scale(${scaleX}, ${scaleY}) translate(${layout.dx}px, ${layout.dy}px)`,
                           opacity: display.opacity ?? 1,
                           pointerEvents: 'none',
                         }}
@@ -836,3 +812,4 @@ export function PdfCanvas({
     </div>
   )
 }
+

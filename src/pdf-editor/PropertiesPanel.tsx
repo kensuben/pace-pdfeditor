@@ -2,6 +2,7 @@ import { useState, useRef } from 'react'
 import { RotateCcw, RotateCw, FlipHorizontal, FlipVertical, ImagePlus } from 'lucide-react'
 import type { Annotation, TextStyle, Tool } from '../types'
 import { getBounds, applyPanelDimensions } from './selection/geometry'
+import { applyImageCrop } from './imagePlacement'
 import { TextFormatBar } from './TextFormatBar'
 import './panel.css'
 
@@ -41,6 +42,12 @@ export function PropertiesPanel({
   const [inputW, setInputW] = useState(String(currentWPt))
   const [inputH, setInputH] = useState(String(currentHPt))
 
+  const curCrop = selectedAnnotation?.imageCrop || { left: 0, top: 0, right: 0, bottom: 0 }
+  const [inputCropL, setInputCropL] = useState(String(Math.round(curCrop.left * 100)))
+  const [inputCropT, setInputCropT] = useState(String(Math.round(curCrop.top * 100)))
+  const [inputCropR, setInputCropR] = useState(String(Math.round(curCrop.right * 100)))
+  const [inputCropB, setInputCropB] = useState(String(Math.round(curCrop.bottom * 100)))
+
   // Synchronize local input state during render when selected annotation changes
   if (selectedAnnotation?.id !== prevId) {
     setPrevId(selectedAnnotation?.id)
@@ -48,6 +55,10 @@ export function PropertiesPanel({
     setInputY(String(currentYPt))
     setInputW(String(currentWPt))
     setInputH(String(currentHPt))
+    setInputCropL(String(Math.round(curCrop.left * 100)))
+    setInputCropT(String(Math.round(curCrop.top * 100)))
+    setInputCropR(String(Math.round(curCrop.right * 100)))
+    setInputCropB(String(Math.round(curCrop.bottom * 100)))
   }
 
   const commitPosition = (dim: 'x' | 'y') => {
@@ -201,6 +212,81 @@ export function PropertiesPanel({
     }
     reader.readAsDataURL(file)
     e.target.value = ''
+  }
+
+  const commitCrop = (side: 'left' | 'top' | 'right' | 'bottom') => {
+    if (!selectedAnnotation || selectedAnnotation.type !== 'image') return
+    const cur = selectedAnnotation.imageCrop || { left: 0, top: 0, right: 0, bottom: 0 }
+    let rawVal = 0
+    if (side === 'left') rawVal = Number(inputCropL)
+    else if (side === 'top') rawVal = Number(inputCropT)
+    else if (side === 'right') rawVal = Number(inputCropR)
+    else if (side === 'bottom') rawVal = Number(inputCropB)
+
+    if (isNaN(rawVal)) {
+      setInputCropL(String(Math.round(cur.left * 100)))
+      setInputCropT(String(Math.round(cur.top * 100)))
+      setInputCropR(String(Math.round(cur.right * 100)))
+      setInputCropB(String(Math.round(cur.bottom * 100)))
+      return
+    }
+
+    // Clamp side >= 0 and side <= 90
+    let clampedVal = Math.max(0, Math.min(90, Math.round(rawVal))) / 100
+
+    let newL = cur.left
+    let newT = cur.top
+    let newR = cur.right
+    let newB = cur.bottom
+
+    if (side === 'left') {
+      if (clampedVal + newR > 0.9) {
+        clampedVal = Math.max(0, 0.9 - newR)
+      }
+      newL = clampedVal
+    } else if (side === 'right') {
+      if (clampedVal + newL > 0.9) {
+        clampedVal = Math.max(0, 0.9 - newL)
+      }
+      newR = clampedVal
+    } else if (side === 'top') {
+      if (clampedVal + newB > 0.9) {
+        clampedVal = Math.max(0, 0.9 - newB)
+      }
+      newT = clampedVal
+    } else if (side === 'bottom') {
+      if (clampedVal + newT > 0.9) {
+        clampedVal = Math.max(0, 0.9 - newT)
+      }
+      newB = clampedVal
+    }
+
+    const nextCrop = { left: newL, top: newT, right: newR, bottom: newB }
+    setInputCropL(String(Math.round(newL * 100)))
+    setInputCropT(String(Math.round(newT * 100)))
+    setInputCropR(String(Math.round(newR * 100)))
+    setInputCropB(String(Math.round(newB * 100)))
+
+    if (
+      Math.abs(cur.left - newL) > 1e-4 ||
+      Math.abs(cur.top - newT) > 1e-4 ||
+      Math.abs(cur.right - newR) > 1e-4 ||
+      Math.abs(cur.bottom - newB) > 1e-4
+    ) {
+      const updated = applyImageCrop(selectedAnnotation, nextCrop)
+      onUpdateAnnotation(updated, 'resize')
+    }
+  }
+
+  const handleResetCrop = () => {
+    if (!selectedAnnotation || selectedAnnotation.type !== 'image') return
+    const nextCrop = { left: 0, top: 0, right: 0, bottom: 0 }
+    setInputCropL('0')
+    setInputCropT('0')
+    setInputCropR('0')
+    setInputCropB('0')
+    const updated = applyImageCrop(selectedAnnotation, nextCrop)
+    onUpdateAnnotation(updated, 'resize')
   }
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
@@ -387,6 +473,86 @@ export function PropertiesPanel({
                   style={{ display: 'none' }}
                   onChange={handleFileChange}
                 />
+              </div>
+
+              <div className="properties-section-title" style={{ marginTop: '14px' }}>Cắt ảnh</div>
+              <div className="properties-grid-2x2">
+                <div className="properties-field">
+                  <label htmlFor="prop-crop-left">Trái</label>
+                  <input
+                    id="prop-crop-left"
+                    aria-label="Cắt trái (%)"
+                    type="number"
+                    min="0"
+                    max="90"
+                    step="1"
+                    value={inputCropL}
+                    onChange={(e) => setInputCropL(e.target.value)}
+                    onBlur={() => commitCrop('left')}
+                    onKeyDown={handleKeyDown}
+                  />
+                  <span className="unit">%</span>
+                </div>
+                <div className="properties-field">
+                  <label htmlFor="prop-crop-top">Trên</label>
+                  <input
+                    id="prop-crop-top"
+                    aria-label="Cắt trên (%)"
+                    type="number"
+                    min="0"
+                    max="90"
+                    step="1"
+                    value={inputCropT}
+                    onChange={(e) => setInputCropT(e.target.value)}
+                    onBlur={() => commitCrop('top')}
+                    onKeyDown={handleKeyDown}
+                  />
+                  <span className="unit">%</span>
+                </div>
+                <div className="properties-field">
+                  <label htmlFor="prop-crop-right">Phải</label>
+                  <input
+                    id="prop-crop-right"
+                    aria-label="Cắt phải (%)"
+                    type="number"
+                    min="0"
+                    max="90"
+                    step="1"
+                    value={inputCropR}
+                    onChange={(e) => setInputCropR(e.target.value)}
+                    onBlur={() => commitCrop('right')}
+                    onKeyDown={handleKeyDown}
+                  />
+                  <span className="unit">%</span>
+                </div>
+                <div className="properties-field">
+                  <label htmlFor="prop-crop-bottom">Dưới</label>
+                  <input
+                    id="prop-crop-bottom"
+                    aria-label="Cắt dưới (%)"
+                    type="number"
+                    min="0"
+                    max="90"
+                    step="1"
+                    value={inputCropB}
+                    onChange={(e) => setInputCropB(e.target.value)}
+                    onBlur={() => commitCrop('bottom')}
+                    onKeyDown={handleKeyDown}
+                  />
+                  <span className="unit">%</span>
+                </div>
+              </div>
+              <div className="properties-hint">theo ảnh gốc, trước khi xoay/lật</div>
+              <div className="properties-crop-actions">
+                <button
+                  type="button"
+                  className="tool-btn"
+                  onClick={handleResetCrop}
+                  title="Bỏ cắt"
+                  aria-label="Bỏ cắt"
+                >
+                  <span>Bỏ cắt</span>
+                </button>
               </div>
             </div>
           )}
