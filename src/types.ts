@@ -75,6 +75,10 @@ export type Annotation = {
     originalRect: { x: number; y: number; width: number; height: number }
   }
   deleted?: boolean
+  imageRotation?: 0 | 90 | 180 | 270
+  flipH?: boolean
+  flipV?: boolean
+  replacementDataUrl?: string
 }
 
 export type TextStyle = Pick<Annotation, 'fontFamily' | 'fontSize' | 'bold' | 'italic' | 'underline' | 'align' | 'color'>

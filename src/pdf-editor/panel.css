@@ -228,3 +228,33 @@
   max-width: calc(100vw - 32px);
   overflow-x: auto;
 }
+
+/* Image operations button group (W-10b) */
+.properties-button-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.properties-button-group .tool-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-radius: 4px;
+  border: 1px solid var(--line, #d8dee7);
+  background: var(--surface, #f8fafc);
+  color: var(--ink, #0c2340);
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.properties-button-group .tool-btn:hover {
+  background: #edf2f7;
+  border-color: #cbd5e1;
+}
+
+.properties-button-group .tool-btn:active {
+  background: #e2e8f0;
+}
