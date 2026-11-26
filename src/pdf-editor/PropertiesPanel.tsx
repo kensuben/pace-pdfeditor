@@ -1,13 +1,15 @@
 import { useState, useRef } from 'react'
-import { RotateCcw, RotateCw, FlipHorizontal, FlipVertical, ImagePlus } from 'lucide-react'
+import { RotateCcw, RotateCw, FlipHorizontal, FlipVertical, ImagePlus, ChevronsUp, ChevronUp, ChevronDown, ChevronsDown } from 'lucide-react'
 import type { Annotation, TextStyle, Tool } from '../types'
 import { getBounds, applyPanelDimensions } from './selection/geometry'
-import { applyImageCrop } from './imagePlacement'
+import { applyImageCrop, isBottomLayerInPlace } from './imagePlacement'
+import { canReorder, type LayerAction } from './layers'
 import { TextFormatBar } from './TextFormatBar'
 import './panel.css'
 
 export interface PropertiesPanelProps {
   selectedAnnotation: Annotation | null
+  annotations?: Annotation[]
   pageSizePt: { width: number; height: number }
   tool: Tool
   textStyle: TextStyle
@@ -15,10 +17,12 @@ export interface PropertiesPanelProps {
   onUpdateAnnotation: (updated: Annotation, kind: 'move' | 'resize' | 'update') => void
   aspectLocked: boolean
   onToggleAspectLock: (locked: boolean) => void
+  onReorder?: (id: string, action: LayerAction) => void
 }
 
 export function PropertiesPanel({
   selectedAnnotation,
+  annotations,
   pageSizePt,
   tool,
   textStyle,
@@ -26,6 +30,7 @@ export function PropertiesPanel({
   onUpdateAnnotation,
   aspectLocked,
   onToggleAspectLock,
+  onReorder,
 }: PropertiesPanelProps) {
   const bounds = selectedAnnotation ? getBounds(selectedAnnotation) : null
   const pageW = pageSizePt.width || 1
@@ -43,6 +48,10 @@ export function PropertiesPanel({
   const [inputH, setInputH] = useState(String(currentHPt))
 
   const curCrop = selectedAnnotation?.imageCrop || { left: 0, top: 0, right: 0, bottom: 0 }
+  const canFront = selectedAnnotation && annotations ? canReorder(annotations, selectedAnnotation.id, 'front') : false
+  const canForward = selectedAnnotation && annotations ? canReorder(annotations, selectedAnnotation.id, 'forward') : false
+  const canBackward = selectedAnnotation && annotations ? canReorder(annotations, selectedAnnotation.id, 'backward') : false
+  const canBack = selectedAnnotation && annotations ? canReorder(annotations, selectedAnnotation.id, 'back') : false
   const [inputCropL, setInputCropL] = useState(String(Math.round(curCrop.left * 100)))
   const [inputCropT, setInputCropT] = useState(String(Math.round(curCrop.top * 100)))
   const [inputCropR, setInputCropR] = useState(String(Math.round(curCrop.right * 100)))
@@ -410,6 +419,57 @@ export function PropertiesPanel({
               />
               <span>Khoá tỉ lệ</span>
             </label>
+          </div>
+
+          <div className="properties-section">
+            <div className="properties-section-title">Sắp lớp</div>
+            <div className="properties-layer-actions">
+              <button
+                type="button"
+                className="tool-btn"
+                title="Đưa lên trên cùng"
+                aria-label="Đưa lên trên cùng"
+                disabled={!canFront}
+                onClick={() => onReorder?.(selectedAnnotation.id, 'front')}
+              >
+                <ChevronsUp size={16} />
+              </button>
+              <button
+                type="button"
+                className="tool-btn"
+                title="Đưa lên một lớp"
+                aria-label="Đưa lên một lớp"
+                disabled={!canForward}
+                onClick={() => onReorder?.(selectedAnnotation.id, 'forward')}
+              >
+                <ChevronUp size={16} />
+              </button>
+              <button
+                type="button"
+                className="tool-btn"
+                title="Đưa xuống một lớp"
+                aria-label="Đưa xuống một lớp"
+                disabled={!canBackward}
+                onClick={() => onReorder?.(selectedAnnotation.id, 'backward')}
+              >
+                <ChevronDown size={16} />
+              </button>
+              <button
+                type="button"
+                className="tool-btn"
+                title="Đưa xuống dưới cùng"
+                aria-label="Đưa xuống dưới cùng"
+                disabled={!canBack}
+                onClick={() => onReorder?.(selectedAnnotation.id, 'back')}
+              >
+                <ChevronsDown size={16} />
+              </button>
+            </div>
+            {selectedAnnotation && isBottomLayerInPlace(selectedAnnotation) && (
+              <div className="properties-hint" style={{ marginTop: '6px' }}>
+                Bản xem chưa thể hiện thứ tự lớp so với nội dung gốc; file xuất sẽ đúng.
+              </div>
+            )}
           </div>
 
           {selectedAnnotation.type === 'image' && (

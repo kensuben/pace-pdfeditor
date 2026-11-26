@@ -38,6 +38,8 @@ import {
   ToolbarOverflowMenu,
   probePageImages,
   pdfToView,
+  reorderAnnotations,
+  type LayerAction,
 } from './pdf-editor'
 
 // Query version bypasses any previously cached worker response that may have
@@ -247,6 +249,18 @@ function App() {
     setSelectedId(null)
   },[annotations,commit,selectedId])
 
+  const handleReorder = useCallback((id: string, action: LayerAction) => {
+    const target = annotations.find((a) => a.id === id)
+    if (!target) return
+    const next = reorderAnnotations(annotations, id, action)
+    if (next === annotations) return
+    commit(next, {
+      action: 'annotation.reordered',
+      description: 'Sắp lớp đối tượng',
+      metadata: { page: target.page, layer: action },
+    })
+  }, [annotations, commit])
+
   const changeTextStyle = useCallback((patch: Partial<TextStyle>) => {
     setTextStyle((current)=>({...current,...patch}))
     const selected = annotations.find((a)=>a.id===selectedId && a.type==='text')
@@ -407,10 +421,29 @@ function App() {
         if (e.shiftKey) setHistoryIndex((i) => Math.min(history.length - 1, i + 1))
         else setHistoryIndex((i) => Math.max(0, i - 1))
       }
+      if (
+        (e.ctrlKey || e.metaKey) &&
+        (e.code === 'BracketRight' || e.code === 'BracketLeft') &&
+        selectedId &&
+        !(e.target instanceof HTMLInputElement) &&
+        !(e.target instanceof HTMLTextAreaElement)
+      ) {
+        e.preventDefault()
+        const action: LayerAction =
+          e.code === 'BracketRight'
+            ? e.shiftKey
+              ? 'front'
+              : 'forward'
+            : e.shiftKey
+              ? 'back'
+              : 'backward'
+        handleReorder(selectedId, action)
+        return
+      }
       if ((e.key === 'Delete' || e.key === 'Backspace') && selectedId && !(e.target instanceof HTMLInputElement) && !(e.target instanceof HTMLTextAreaElement)) { e.preventDefault();deleteSelected() }
     }
     window.addEventListener('keydown', key); return () => window.removeEventListener('keydown', key)
-  }, [deleteSelected, history.length, selectedId, zoom, log, handleFitWidth])
+  }, [deleteSelected, history.length, selectedId, zoom, log, handleFitWidth, handleReorder])
 
   const selectedText = useMemo(()=>annotations.find((a)=>a.id===selectedId&&a.type==='text'),[annotations,selectedId])
   const styleProbeCacheRef = useRef<{
@@ -479,6 +512,7 @@ function App() {
               resourceName: img.resourceName,
               occurrence: img.occurrence,
               editable: img.axisAligned,
+              pdfBbox: { x: x0, y: y0, width: w, height: h },
             }
           })
           cache.imageProbes.set(targetPage, imgRegions)
@@ -1247,6 +1281,8 @@ function App() {
           {isDesktop && (
             <PropertiesPanel
               selectedAnnotation={annotations.find((a) => a.id === selectedId) || null}
+              annotations={annotations}
+              onReorder={handleReorder}
               pageSizePt={currentPageDimensions}
               tool={tool}
               textStyle={textStyle}

@@ -13,7 +13,10 @@ export interface ImageEdit {
   clip?: Rect
   replaceWith?: { name: string }
   remove?: boolean
+  layer?: 'top' | 'bottom'
+  pageMatrix?: [number, number, number, number, number, number]
 }
+
 
 /**
  * Computes the inverse of a 2D affine transformation matrix [a, b, c, d, e, f].
@@ -41,6 +44,47 @@ export function invertMatrix(
  * - newBbox: wraps the `Do` operator in `q M cm Do Q` where M = CTM × U × CTM⁻¹.
  * If difference from old bbox is < 0.5pt on all edges, no modification is made.
  */
+function makeLayerOps(edit: ImageEdit): ContentOp[] {
+  const resName = edit.replaceWith ? edit.replaceWith.name : edit.resourceName
+  const cleanName = resName.startsWith('/') ? resName : `/${resName}`
+  const ops: ContentOp[] = [{ operator: 'q', operands: [] }]
+
+  if (edit.clip) {
+    ops.push({
+      operator: 're',
+      operands: [
+        { type: 'number', value: edit.clip.x },
+        { type: 'number', value: edit.clip.y },
+        { type: 'number', value: edit.clip.width },
+        { type: 'number', value: edit.clip.height },
+      ],
+    })
+    ops.push({ operator: 'W', operands: [] })
+    ops.push({ operator: 'n', operands: [] })
+  }
+
+  const m = edit.pageMatrix || [1, 0, 0, 1, 0, 0]
+  ops.push({
+    operator: 'cm',
+    operands: [
+      { type: 'number', value: m[0] },
+      { type: 'number', value: m[1] },
+      { type: 'number', value: m[2] },
+      { type: 'number', value: m[3] },
+      { type: 'number', value: m[4] },
+      { type: 'number', value: m[5] },
+    ],
+  })
+
+  ops.push({
+    operator: 'Do',
+    operands: [{ type: 'name', value: cleanName }],
+  })
+
+  ops.push({ operator: 'Q', operands: [] })
+  return ops
+}
+
 export function applyImageEdits(
   doc: PDFDocument,
   pageIndex: number,
@@ -76,6 +120,8 @@ export function applyImageEdits(
   const occMap = new Map<string, number>()
 
   const appliedIndices = new Set<number>()
+  const bottomEdits: ImageEdit[] = []
+  const topEdits: ImageEdit[] = []
   let hasStructuralChanges = false
   const outOps: ContentOp[] = []
 
@@ -157,6 +203,16 @@ export function applyImageEdits(
 
       const edit = edits[editIdx]
       appliedIndices.add(editIdx)
+
+      if (edit.layer) {
+        hasStructuralChanges = true
+        if (edit.layer === 'bottom') {
+          bottomEdits.push(edit)
+        } else if (edit.layer === 'top') {
+          topEdits.push(edit)
+        }
+        continue
+      }
 
       if (edit.remove) {
         // Drop the Do operator
@@ -319,8 +375,28 @@ export function applyImageEdits(
   const applied = appliedIndices.size
   const notFound = edits.length - applied
 
+  let finalOps = outOps
+  if (bottomEdits.length > 0 || topEdits.length > 0) {
+    bottomEdits.sort((a, b) => edits.indexOf(a) - edits.indexOf(b))
+    topEdits.sort((a, b) => edits.indexOf(a) - edits.indexOf(b))
+    finalOps = []
+    for (const edit of bottomEdits) {
+      finalOps.push(...makeLayerOps(edit))
+    }
+    if (topEdits.length > 0) {
+      finalOps.push({ operator: 'q', operands: [] })
+      finalOps.push(...outOps)
+      finalOps.push({ operator: 'Q', operands: [] })
+    } else {
+      finalOps.push(...outOps)
+    }
+    for (const edit of topEdits) {
+      finalOps.push(...makeLayerOps(edit))
+    }
+  }
+
   if (hasStructuralChanges) {
-    const serialized = serializeContent(outOps)
+    const serialized = serializeContent(finalOps)
     writePageContent(doc, pageIndex, serialized)
   }
 

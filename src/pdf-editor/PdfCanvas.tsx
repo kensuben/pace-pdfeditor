@@ -9,7 +9,13 @@ import { getBounds, moveBy, nudgeDelta } from './selection/geometry'
 import { useDesktopEditor } from './useDesktopEditor'
 import { annotationFill, draftRect } from './annotationStyle'
 import { globalRenderQueue } from './viewMath'
-import { croppedPreviewLayout, sampleBackground } from './imagePlacement'
+import {
+  croppedPreviewLayout,
+  sampleBackground,
+  captureCanvasPreview,
+  extractCleanImagePreview,
+  isBottomLayerInPlace,
+} from './imagePlacement'
 
 export interface PdfCanvasProps {
   pdf: pdfjs.PDFDocumentProxy
@@ -59,6 +65,8 @@ export function PdfCanvas({
   const isDesktop = useDesktopEditor()
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const wrapRef = useRef<HTMLDivElement>(null)
+  const pageRef = useRef<pdfjs.PDFPageProxy | null>(null)
+  const pendingClicksRef = useRef<Set<string>>(new Set())
   const [size, setSize] = useState({ width: 612, height: 792 })
   const [pagePt, setPagePt] = useState({ width: 612, height: 792 })
   const [draft, setDraft] = useState<Point[]>([])
@@ -85,6 +93,7 @@ export function PdfCanvas({
     const canvasElement = canvasRef.current
     ;(async () => {
       const page = await pdf.getPage(pageNumber)
+      pageRef.current = page
       const viewport = page.getViewport({ scale: zoom })
       const unscaled = page.getViewport({ scale: 1 })
       if (cancelled || !canvasRef.current) return
@@ -112,7 +121,7 @@ export function PdfCanvas({
     })
     return () => {
       cancelled = true
-      task?.cancel()
+      task?.cancel?.()
       releasePermit?.()
       if (canvasElement) {
         canvasElement.width = 0
@@ -130,6 +139,7 @@ export function PdfCanvas({
     let cancelled = false
     ;(async () => {
       const page = await pdf.getPage(pageNumber)
+      pageRef.current = page
       const viewport = page.getViewport({ scale: 1 })
       const content = await page.getTextContent()
       if (cancelled) return
@@ -287,27 +297,8 @@ export function PdfCanvas({
     sampleBackground(region, canvasRef.current, size, options)
 
 
-  const captureImagePreview = (region: Pick<PageImageRegion, 'x' | 'y' | 'width' | 'height'>): string => {
-    const canvas = canvasRef.current
-    if (!canvas) return ''
-    const ratioX = canvas.width / size.width
-    const ratioY = canvas.height / size.height
-    const cropX = Math.round(region.x * size.width * ratioX)
-    const cropY = Math.round(region.y * size.height * ratioY)
-    const cropW = Math.max(1, Math.round(region.width * size.width * ratioX))
-    const cropH = Math.max(1, Math.round(region.height * size.height * ratioY))
-    try {
-      const offscreen = document.createElement('canvas')
-      offscreen.width = cropW
-      offscreen.height = cropH
-      const ctx = offscreen.getContext('2d')
-      if (!ctx) return ''
-      ctx.drawImage(canvas, cropX, cropY, cropW, cropH, 0, 0, cropW, cropH)
-      return offscreen.toDataURL?.('image/png') || ''
-    } catch {
-      return ''
-    }
-  }
+  const captureImagePreview = (region: Pick<PageImageRegion, 'x' | 'y' | 'width' | 'height'>): string =>
+    captureCanvasPreview(canvasRef.current, region, size)
 
   const finishInlineEdit = (commitChange: boolean) => {
     if (!inlineEdit) return
@@ -461,44 +452,85 @@ export function PdfCanvas({
                 onClick={(e) => {
                   e.stopPropagation()
                   if (!img.editable) return
-                  const previewUrl = captureImagePreview(img)
-                  const bg = sampleBg(img, { outside: true })
-                  const newAnnotation: Annotation = {
-                    id: `ann-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-                    page: pageNumber,
-                    type: 'image',
-                    x: img.x,
-                    y: img.y,
-                    width: img.width,
-                    height: img.height,
-                    color: '#000000',
-                    opacity: 1,
-                    imageDataUrl: previewUrl,
-                    backgroundColor: bg,
-                    sourceImage: {
-                      resourceName: img.resourceName,
-                      occurrence: img.occurrence,
-                      originalRect: {
-                        x: img.x,
-                        y: img.y,
-                        width: img.width,
-                        height: img.height,
+                  const imgKey = `${pageNumber}-${img.resourceName}-${img.occurrence}`
+                  if (pendingClicksRef.current.has(imgKey)) return
+                  pendingClicksRef.current.add(imgKey)
+
+                  const createAnnotation = (previewUrl: string) => {
+                    const bg = sampleBg(img, { outside: true })
+                    const newAnnotation: Annotation = {
+                      id: `ann-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+                      page: pageNumber,
+                      type: 'image',
+                      x: img.x,
+                      y: img.y,
+                      width: img.width,
+                      height: img.height,
+                      color: '#000000',
+                      opacity: 1,
+                      imageDataUrl: previewUrl,
+                      backgroundColor: bg,
+                      sourceImage: {
+                        resourceName: img.resourceName,
+                        occurrence: img.occurrence,
+                        originalRect: {
+                          x: img.x,
+                          y: img.y,
+                          width: img.width,
+                          height: img.height,
+                        },
                       },
-                    },
+                    }
+                    onAdd(newAnnotation)
+                    onSelect(newAnnotation.id)
                   }
-                  onAdd(newAnnotation)
-                  onSelect(newAnnotation.id)
+
+                  const page = pageRef.current
+                  if (page && typeof (page as unknown as { getOperatorList?: unknown }).getOperatorList === 'function') {
+                    void (async () => {
+                      try {
+                        let previewUrl = ''
+                        try {
+                          previewUrl = await extractCleanImagePreview(
+                            page as unknown as Parameters<typeof extractCleanImagePreview>[0],
+                            img,
+                            canvasRef.current,
+                            size,
+                            1500,
+                          )
+                        } catch {
+                          previewUrl = captureImagePreview(img)
+                        }
+                        if (!previewUrl) {
+                          previewUrl = captureImagePreview(img)
+                        }
+                        createAnnotation(previewUrl)
+                      } finally {
+                        pendingClicksRef.current.delete(imgKey)
+                      }
+                    })()
+                  } else {
+                    try {
+                      const previewUrl = captureImagePreview(img)
+                      createAnnotation(previewUrl)
+                    } finally {
+                      pendingClicksRef.current.delete(imgKey)
+                    }
+                  }
                 }}
               />
             )
           })}
-        {annotations.map((a) => {
+        {annotations.map((a, index) => {
           const display = preview && preview.id === a.id ? preview : a
+          const zIndex = 20 + index
+          const isBottomInPlace = isBottomLayerInPlace(display)
           return display.points ? (
             <svg
               key={a.id}
               className={`ink ${selectedId === a.id ? 'selected' : ''}`}
               viewBox={`0 0 ${size.width} ${size.height}`}
+              style={{ zIndex }}
               onPointerDown={(e) => {
                 e.stopPropagation()
                 onSelect(a.id)
@@ -515,7 +547,7 @@ export function PdfCanvas({
             </svg>
           ) : a.type === 'image' && (a.imageDataUrl || a.replacementDataUrl) ? (
             <div key={a.id}>
-              {a.sourceImage && (
+              {a.sourceImage && !isBottomInPlace && (
                 <div
                   className="source-image-mask"
                   style={{
@@ -540,7 +572,7 @@ export function PdfCanvas({
                     width: `${display.width * 100}%`,
                     height: `${display.height * 100}%`,
                     overflow: 'hidden',
-                    zIndex: 20,
+                    zIndex,
                   }}
                   onPointerDown={(e) => {
                     e.preventDefault()
@@ -548,7 +580,7 @@ export function PdfCanvas({
                     onSelect(a.id)
                   }}
                 >
-                  {(() => {
+                  {!isBottomInPlace && (() => {
                     const rot = display.imageRotation ?? 0
                     const layout = croppedPreviewLayout(display, size)
                     const scaleX = display.flipH ? -1 : 1
@@ -641,6 +673,7 @@ export function PdfCanvas({
                   fontStyle: a.italic ? 'italic' : 'normal',
                   textDecoration: a.underline ? 'underline' : 'none',
                   textAlign: a.align || 'left',
+                  zIndex,
                 } as React.CSSProperties
               }
               onPointerDown={(e) => {

@@ -12,6 +12,7 @@ export type PageImageRegion = {
   resourceName: string
   occurrence: number
   editable: boolean
+  pdfBbox?: { x: number; y: number; width: number; height: number }
 }
 
 export type TextRegion = {
@@ -80,6 +81,7 @@ export type Annotation = {
   flipV?: boolean
   replacementDataUrl?: string
   imageCrop?: { left: number; top: number; right: number; bottom: number }
+  pageLayer?: 'original' | 'top' | 'bottom'
 }
 
 export type TextStyle = Pick<Annotation, 'fontFamily' | 'fontSize' | 'bold' | 'italic' | 'underline' | 'align' | 'color'>
