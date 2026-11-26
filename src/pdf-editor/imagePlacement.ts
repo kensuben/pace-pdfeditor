@@ -2,7 +2,7 @@ import type { Annotation, PageImageRegion } from '../types'
 import type { PageView } from './pageGeometry'
 import { viewToPdf } from './pageGeometry'
 import type { Rect } from './engine/types'
-import { multMatrix } from './engine/textGeometry'
+import { multMatrix, applyMatrix } from './engine/textGeometry'
 import { invertMatrix } from './engine/imageTransform'
 
 export type Matrix = [number, number, number, number, number, number]
@@ -396,6 +396,11 @@ export function captureCanvasPreview(
   const cropH = Math.max(1, Math.round(region.height * size.height * ratioY))
   try {
     const offscreen = document.createElement('canvas')
+    if ((canvas as unknown as { _mockDataUrl?: string })._mockDataUrl) {
+      ;(offscreen as unknown as { _mockDataUrl?: string })._mockDataUrl = (
+        canvas as unknown as { _mockDataUrl?: string }
+      )._mockDataUrl
+    }
     offscreen.width = cropW
     offscreen.height = cropH
     const ctx = offscreen.getContext('2d')
@@ -430,9 +435,12 @@ export interface PdfJsPageLike {
  */
 export async function extractCleanImagePreview(
   page: PdfJsPageLike | null | undefined,
-  img: Pick<PageImageRegion, 'resourceName' | 'occurrence' | 'x' | 'y' | 'width' | 'height'>,
+  img: Pick<PageImageRegion, 'resourceName' | 'occurrence' | 'x' | 'y' | 'width' | 'height'> & {
+    pdfBbox?: { x: number; y: number; width: number; height: number }
+  },
   fallbackCanvas?: HTMLCanvasElement | null,
   pageSize?: { width: number; height: number },
+  timeoutMs = 1500,
 ): Promise<string> {
   const getFallback = () => {
     if (fallbackCanvas && pageSize) {
@@ -441,164 +449,245 @@ export async function extractCleanImagePreview(
     return ''
   }
 
-  try {
-    if (!page || typeof page.getOperatorList !== 'function') {
-      return getFallback()
-    }
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const timeoutPromise = new Promise<string>((resolve) => {
+    timer = setTimeout(() => {
+      resolve(getFallback())
+    }, timeoutMs)
+  })
 
-    const opList = await page.getOperatorList()
-    if (!opList || !Array.isArray(opList.fnArray) || !Array.isArray(opList.argsArray)) {
-      return getFallback()
-    }
+  const extractPromise = (async (): Promise<string> => {
+    try {
+      if (!page || typeof page.getOperatorList !== 'function') {
+        return getFallback()
+      }
 
-    // OPS.paintImageXObject = 85, OPS.paintImageXObjectRepeat = 88 in pdfjs-dist
-    const paintImageOps = new Set([85, 88])
+      const opList = await page.getOperatorList()
+      if (!opList || !Array.isArray(opList.fnArray) || !Array.isArray(opList.argsArray)) {
+        return getFallback()
+      }
 
-    let matchedName: string | null = null
-    let resOcc = 0
-    let globalCandidate: string | null = null
-    let globalOcc = 0
+      // OPS in pdfjs: save = 10, restore = 11, transform = 12, paintImageXObject = 85, paintImageXObjectRepeat = 88
+      const OPS_SAVE = 10
+      const OPS_RESTORE = 11
+      const OPS_TRANSFORM = 12
+      const paintImageOps = new Set([85, 88])
 
-    for (let i = 0; i < opList.fnArray.length; i++) {
-      const fn = opList.fnArray[i]
-      if (paintImageOps.has(fn)) {
-        const args = opList.argsArray[i]
-        const name = Array.isArray(args) ? args[0] : args
-        if (typeof name === 'string') {
-          if (name === img.resourceName) {
-            if (resOcc === img.occurrence) {
-              matchedName = name
-              break
-            }
-            resOcc++
-          }
-          if (globalOcc === img.occurrence && !globalCandidate) {
-            globalCandidate = name
+      // Xác định bbox PDF của vùng ảnh
+      let targetBbox = img.pdfBbox
+      if (!targetBbox && typeof (page as unknown as { getViewport?: (opt: { scale: number }) => { width: number; height: number } }).getViewport === 'function') {
+        const vp = (page as unknown as { getViewport: (opt: { scale: number }) => { width: number; height: number } }).getViewport({ scale: 1 })
+        if (vp && vp.width && vp.height) {
+          targetBbox = {
+            x: img.x * vp.width,
+            y: (1 - img.y - img.height) * vp.height,
+            width: img.width * vp.width,
+            height: img.height * vp.height,
           }
         }
-        globalOcc++
       }
-    }
 
-    const targetId = matchedName || globalCandidate
-    if (!targetId || !page.objs) {
-      return getFallback()
-    }
+      let currentCtm: [number, number, number, number, number, number] = [1, 0, 0, 1, 0, 0]
+      const ctmStack: Array<[number, number, number, number, number, number]> = []
+      const matchingIds: string[] = []
+      let globalCandidate: string | null = null
+      let globalOcc = 0
 
-    const rawData = await new Promise<Record<string, unknown> | null>((resolve, reject) => {
-      let resolved = false
-      try {
-        const res = page.objs?.get?.(targetId, (data: unknown) => {
-          resolved = true
-          resolve(data as Record<string, unknown> | null)
-        })
-        if (res !== null && res !== undefined) {
-          if (typeof (res as Promise<unknown>).then === 'function') {
-            ;(res as Promise<unknown>).then(
-              (val) => resolve(val as Record<string, unknown> | null),
-              reject,
-            )
-          } else {
-            resolve(res as Record<string, unknown> | null)
+      for (let i = 0; i < opList.fnArray.length; i++) {
+        const fn = opList.fnArray[i]
+        const args = opList.argsArray[i]
+
+        if (fn === OPS_SAVE) {
+          ctmStack.push([...currentCtm])
+        } else if (fn === OPS_RESTORE) {
+          if (ctmStack.length > 0) {
+            currentCtm = ctmStack.pop()!
           }
-        } else {
-          setTimeout(() => {
-            if (!resolved) {
-              try {
-                if (page.objs?.has?.(targetId)) {
-                  resolve(page.objs.get?.(targetId) as Record<string, unknown> | null)
-                } else {
+        } else if (fn === OPS_TRANSFORM) {
+          if (Array.isArray(args) && args.length >= 6) {
+            currentCtm = multMatrix(
+              args as [number, number, number, number, number, number],
+              currentCtm,
+            )
+          }
+        } else if (paintImageOps.has(fn)) {
+          const rawId = Array.isArray(args) ? args[0] : args
+          const objId = typeof rawId === 'string' ? rawId : String(rawId)
+
+          if (targetBbox) {
+            // Tính ảnh của 4 góc hình vuông đơn vị qua CTM hiện tại
+            const p0 = applyMatrix({ x: 0, y: 0 }, currentCtm)
+            const p1 = applyMatrix({ x: 1, y: 0 }, currentCtm)
+            const p2 = applyMatrix({ x: 1, y: 1 }, currentCtm)
+            const p3 = applyMatrix({ x: 0, y: 1 }, currentCtm)
+
+            const minX = Math.min(p0.x, p1.x, p2.x, p3.x)
+            const maxX = Math.max(p0.x, p1.x, p2.x, p3.x)
+            const minY = Math.min(p0.y, p1.y, p2.y, p3.y)
+            const maxY = Math.max(p0.y, p1.y, p2.y, p3.y)
+
+            const targetMinX = targetBbox.x
+            const targetMaxX = targetBbox.x + targetBbox.width
+            const targetMinY = targetBbox.y
+            const targetMaxY = targetBbox.y + targetBbox.height
+
+            // Khớp bbox PDF của vùng ảnh với 4 góc lệch <= 1pt
+            const tol = 1.0
+            if (
+              Math.abs(minX - targetMinX) <= tol &&
+              Math.abs(maxX - targetMaxX) <= tol &&
+              Math.abs(minY - targetMinY) <= tol &&
+              Math.abs(maxY - targetMaxY) <= tol
+            ) {
+              matchingIds.push(objId)
+            }
+          } else {
+            // Nhánh dự phòng khi không có bbox
+            if (objId === img.resourceName) {
+              matchingIds.push(objId)
+            }
+            if (globalOcc === img.occurrence && !globalCandidate) {
+              globalCandidate = objId
+            }
+            globalOcc++
+          }
+        }
+      }
+
+      let targetId: string | null = null
+      if (matchingIds.length > 0) {
+        const occ = img.occurrence ?? 0
+        targetId = occ < matchingIds.length ? matchingIds[occ] : matchingIds[0]
+      } else if (!targetBbox && globalCandidate) {
+        targetId = globalCandidate
+      }
+
+      if (!targetId || !page.objs) {
+        return getFallback()
+      }
+
+      const rawData = await new Promise<Record<string, unknown> | null>((resolve, reject) => {
+        let resolved = false
+        try {
+          const res = page.objs?.get?.(targetId, (data: unknown) => {
+            resolved = true
+            resolve(data as Record<string, unknown> | null)
+          })
+          if (res !== null && res !== undefined) {
+            if (typeof (res as Promise<unknown>).then === 'function') {
+              ;(res as Promise<unknown>).then(
+                (val) => resolve(val as Record<string, unknown> | null),
+                reject,
+              )
+            } else {
+              resolve(res as Record<string, unknown> | null)
+            }
+          } else {
+            setTimeout(() => {
+              if (!resolved) {
+                try {
+                  if (page.objs?.has?.(targetId)) {
+                    resolve(page.objs.get?.(targetId) as Record<string, unknown> | null)
+                  } else {
+                    resolve(null)
+                  }
+                } catch {
                   resolve(null)
                 }
-              } catch {
-                resolve(null)
               }
-            }
-          }, 300)
+            }, 300)
+          }
+        } catch (err) {
+          reject(err)
         }
-      } catch (err) {
-        reject(err)
+      })
+
+      if (!rawData) {
+        return getFallback()
       }
-    })
 
-    if (!rawData) {
-      return getFallback()
-    }
+      const offscreen = document.createElement('canvas')
+      const rawBitmap = rawData.bitmap as { width?: number; height?: number } | undefined
+      const w = (rawData.width as number) || (rawData.naturalWidth as number) || rawBitmap?.width
+      const h = (rawData.height as number) || (rawData.naturalHeight as number) || rawBitmap?.height
+      if (!w || !h) {
+        return getFallback()
+      }
 
-    const offscreen = document.createElement('canvas')
-    const rawBitmap = rawData.bitmap as { width?: number; height?: number } | undefined
-    const w = (rawData.width as number) || (rawData.naturalWidth as number) || rawBitmap?.width
-    const h = (rawData.height as number) || (rawData.naturalHeight as number) || rawBitmap?.height
-    if (!w || !h) {
-      return getFallback()
-    }
+      offscreen.width = w
+      offscreen.height = h
+      const ctx = offscreen.getContext('2d')
+      if (!ctx) return getFallback()
 
-    offscreen.width = w
-    offscreen.height = h
-    const ctx = offscreen.getContext('2d')
-    if (!ctx) return getFallback()
-
-    if (rawData.bitmap) {
-      ctx.drawImage(rawData.bitmap as CanvasImageSource, 0, 0)
-    } else if (
-      rawData instanceof HTMLImageElement ||
-      rawData instanceof HTMLCanvasElement ||
-      (typeof ImageBitmap !== 'undefined' && rawData instanceof ImageBitmap)
-    ) {
-      ctx.drawImage(rawData as CanvasImageSource, 0, 0)
-    } else if (rawData.data) {
-      const data = rawData.data as ArrayLike<number>
-      const length = data.length
-      if (length === w * h * 4 || rawData.kind === 3) {
-        const clamped = new Uint8ClampedArray(w * h * 4)
-        clamped.set(data)
-        const imgData =
-          typeof ImageData !== 'undefined'
-            ? new ImageData(clamped, w, h)
-            : ctx.createImageData(w, h)
-        imgData.data.set(clamped)
-        ctx.putImageData(imgData, 0, 0)
-      } else if (length === w * h * 3 || rawData.kind === 2) {
-        const rgba = new Uint8ClampedArray(w * h * 4)
-        for (let i = 0, j = 0; i < length; i += 3, j += 4) {
-          rgba[j] = data[i]
-          rgba[j + 1] = data[i + 1]
-          rgba[j + 2] = data[i + 2]
-          rgba[j + 3] = 255
+      if (rawData.bitmap) {
+        ctx.drawImage(rawData.bitmap as CanvasImageSource, 0, 0)
+      } else if (
+        rawData instanceof HTMLImageElement ||
+        rawData instanceof HTMLCanvasElement ||
+        (typeof ImageBitmap !== 'undefined' && rawData instanceof ImageBitmap)
+      ) {
+        ctx.drawImage(rawData as CanvasImageSource, 0, 0)
+      } else if (rawData.data) {
+        const data = rawData.data as ArrayLike<number>
+        const length = data.length
+        if (length === w * h * 4 || rawData.kind === 3) {
+          const clamped = new Uint8ClampedArray(w * h * 4)
+          clamped.set(data)
+          const imgData =
+            typeof ImageData !== 'undefined'
+              ? new ImageData(clamped, w, h)
+              : ctx.createImageData(w, h)
+          imgData.data.set(clamped)
+          ctx.putImageData(imgData, 0, 0)
+        } else if (length === w * h * 3 || rawData.kind === 2) {
+          const rgba = new Uint8ClampedArray(w * h * 4)
+          for (let i = 0, j = 0; i < length; i += 3, j += 4) {
+            rgba[j] = data[i]
+            rgba[j + 1] = data[i + 1]
+            rgba[j + 2] = data[i + 2]
+            rgba[j + 3] = 255
+          }
+          const imgData =
+            typeof ImageData !== 'undefined'
+              ? new ImageData(rgba, w, h)
+              : ctx.createImageData(w, h)
+          imgData.data.set(rgba)
+          ctx.putImageData(imgData, 0, 0)
+        } else if (length === w * h || rawData.kind === 1) {
+          const rgba = new Uint8ClampedArray(w * h * 4)
+          for (let i = 0, j = 0; i < length; i++, j += 4) {
+            const v = data[i]
+            rgba[j] = v
+            rgba[j + 1] = v
+            rgba[j + 2] = v
+            rgba[j + 3] = 255
+          }
+          const imgData =
+            typeof ImageData !== 'undefined'
+              ? new ImageData(rgba, w, h)
+              : ctx.createImageData(w, h)
+          imgData.data.set(rgba)
+          ctx.putImageData(imgData, 0, 0)
+        } else {
+          return getFallback()
         }
-        const imgData =
-          typeof ImageData !== 'undefined'
-            ? new ImageData(rgba, w, h)
-            : ctx.createImageData(w, h)
-        imgData.data.set(rgba)
-        ctx.putImageData(imgData, 0, 0)
-      } else if (length === w * h || rawData.kind === 1) {
-        const rgba = new Uint8ClampedArray(w * h * 4)
-        for (let i = 0, j = 0; i < length; i++, j += 4) {
-          const v = data[i]
-          rgba[j] = v
-          rgba[j + 1] = v
-          rgba[j + 2] = v
-          rgba[j + 3] = 255
-        }
-        const imgData =
-          typeof ImageData !== 'undefined'
-            ? new ImageData(rgba, w, h)
-            : ctx.createImageData(w, h)
-        imgData.data.set(rgba)
-        ctx.putImageData(imgData, 0, 0)
+      } else if (typeof ImageData !== 'undefined' && rawData instanceof ImageData) {
+        ctx.putImageData(rawData, 0, 0)
       } else {
         return getFallback()
       }
-    } else if (rawData instanceof ImageData) {
-      ctx.putImageData(rawData, 0, 0)
-    } else {
+
+      return offscreen.toDataURL?.('image/png') || getFallback()
+    } catch {
       return getFallback()
     }
+  })()
 
-    return offscreen.toDataURL?.('image/png') || getFallback()
-  } catch {
-    return getFallback()
+  try {
+    const res = await Promise.race([extractPromise, timeoutPromise])
+    return res || getFallback()
+  } finally {
+    if (timer) clearTimeout(timer)
   }
 }
 

@@ -512,6 +512,7 @@ function App() {
               resourceName: img.resourceName,
               occurrence: img.occurrence,
               editable: img.axisAligned,
+              pdfBbox: { x: x0, y: y0, width: w, height: h },
             }
           })
           cache.imageProbes.set(targetPage, imgRegions)

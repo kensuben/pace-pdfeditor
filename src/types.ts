@@ -12,6 +12,7 @@ export type PageImageRegion = {
   resourceName: string
   occurrence: number
   editable: boolean
+  pdfBbox?: { x: number; y: number; width: number; height: number }
 }
 
 export type TextRegion = {

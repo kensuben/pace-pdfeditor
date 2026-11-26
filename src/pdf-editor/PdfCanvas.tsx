@@ -65,6 +65,8 @@ export function PdfCanvas({
   const isDesktop = useDesktopEditor()
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const wrapRef = useRef<HTMLDivElement>(null)
+  const pageRef = useRef<pdfjs.PDFPageProxy | null>(null)
+  const pendingClicksRef = useRef<Set<string>>(new Set())
   const [size, setSize] = useState({ width: 612, height: 792 })
   const [pagePt, setPagePt] = useState({ width: 612, height: 792 })
   const [draft, setDraft] = useState<Point[]>([])
@@ -91,6 +93,7 @@ export function PdfCanvas({
     const canvasElement = canvasRef.current
     ;(async () => {
       const page = await pdf.getPage(pageNumber)
+      pageRef.current = page
       const viewport = page.getViewport({ scale: zoom })
       const unscaled = page.getViewport({ scale: 1 })
       if (cancelled || !canvasRef.current) return
@@ -136,6 +139,7 @@ export function PdfCanvas({
     let cancelled = false
     ;(async () => {
       const page = await pdf.getPage(pageNumber)
+      pageRef.current = page
       const viewport = page.getViewport({ scale: 1 })
       const content = await page.getTextContent()
       if (cancelled) return
@@ -448,54 +452,71 @@ export function PdfCanvas({
                 onClick={(e) => {
                   e.stopPropagation()
                   if (!img.editable) return
-                  const initialUrl = captureImagePreview(img)
-                  const bg = sampleBg(img, { outside: true })
-                  const newAnnotation: Annotation = {
-                    id: `ann-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-                    page: pageNumber,
-                    type: 'image',
-                    x: img.x,
-                    y: img.y,
-                    width: img.width,
-                    height: img.height,
-                    color: '#000000',
-                    opacity: 1,
-                    imageDataUrl: initialUrl,
-                    backgroundColor: bg,
-                    sourceImage: {
-                      resourceName: img.resourceName,
-                      occurrence: img.occurrence,
-                      originalRect: {
-                        x: img.x,
-                        y: img.y,
-                        width: img.width,
-                        height: img.height,
-                      },
-                    },
-                  }
-                  onAdd(newAnnotation)
-                  onSelect(newAnnotation.id)
+                  const imgKey = `${pageNumber}-${img.resourceName}-${img.occurrence}`
+                  if (pendingClicksRef.current.has(imgKey)) return
+                  pendingClicksRef.current.add(imgKey)
 
-                  // Asynchronously fetch clean image pixels from pdf.js XObject and upgrade preview
-                  void (async () => {
-                    try {
-                      const page = await pdf.getPage(pageNumber)
-                      const cleanUrl = await extractCleanImagePreview(
-                        page,
-                        img,
-                        canvasRef.current,
-                        size,
-                      )
-                      if (cleanUrl) {
-                        onUpdate({
-                          ...newAnnotation,
-                          imageDataUrl: cleanUrl,
-                        })
-                      }
-                    } catch {
-                      // Keep initial fallbackUrl on error
+                  const createAnnotation = (previewUrl: string) => {
+                    const bg = sampleBg(img, { outside: true })
+                    const newAnnotation: Annotation = {
+                      id: `ann-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+                      page: pageNumber,
+                      type: 'image',
+                      x: img.x,
+                      y: img.y,
+                      width: img.width,
+                      height: img.height,
+                      color: '#000000',
+                      opacity: 1,
+                      imageDataUrl: previewUrl,
+                      backgroundColor: bg,
+                      sourceImage: {
+                        resourceName: img.resourceName,
+                        occurrence: img.occurrence,
+                        originalRect: {
+                          x: img.x,
+                          y: img.y,
+                          width: img.width,
+                          height: img.height,
+                        },
+                      },
                     }
-                  })()
+                    onAdd(newAnnotation)
+                    onSelect(newAnnotation.id)
+                  }
+
+                  const page = pageRef.current
+                  if (page && typeof (page as unknown as { getOperatorList?: unknown }).getOperatorList === 'function') {
+                    void (async () => {
+                      try {
+                        let previewUrl = ''
+                        try {
+                          previewUrl = await extractCleanImagePreview(
+                            page as unknown as Parameters<typeof extractCleanImagePreview>[0],
+                            img,
+                            canvasRef.current,
+                            size,
+                            1500,
+                          )
+                        } catch {
+                          previewUrl = captureImagePreview(img)
+                        }
+                        if (!previewUrl) {
+                          previewUrl = captureImagePreview(img)
+                        }
+                        createAnnotation(previewUrl)
+                      } finally {
+                        pendingClicksRef.current.delete(imgKey)
+                      }
+                    })()
+                  } else {
+                    try {
+                      const previewUrl = captureImagePreview(img)
+                      createAnnotation(previewUrl)
+                    } finally {
+                      pendingClicksRef.current.delete(imgKey)
+                    }
+                  }
                 }}
               />
             )
