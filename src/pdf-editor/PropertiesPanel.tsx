@@ -2,7 +2,7 @@ import { useState, useRef } from 'react'
 import { RotateCcw, RotateCw, FlipHorizontal, FlipVertical, ImagePlus, ChevronsUp, ChevronUp, ChevronDown, ChevronsDown } from 'lucide-react'
 import type { Annotation, TextStyle, Tool } from '../types'
 import { getBounds, applyPanelDimensions } from './selection/geometry'
-import { applyImageCrop } from './imagePlacement'
+import { applyImageCrop, isBottomLayerInPlace } from './imagePlacement'
 import { canReorder, type LayerAction } from './layers'
 import { TextFormatBar } from './TextFormatBar'
 import './panel.css'
@@ -465,6 +465,11 @@ export function PropertiesPanel({
                 <ChevronsDown size={16} />
               </button>
             </div>
+            {selectedAnnotation && isBottomLayerInPlace(selectedAnnotation) && (
+              <div className="properties-hint" style={{ marginTop: '6px' }}>
+                Bản xem chưa thể hiện thứ tự lớp so với nội dung gốc; file xuất sẽ đúng.
+              </div>
+            )}
           </div>
 
           {selectedAnnotation.type === 'image' && (

@@ -9,7 +9,13 @@ import { getBounds, moveBy, nudgeDelta } from './selection/geometry'
 import { useDesktopEditor } from './useDesktopEditor'
 import { annotationFill, draftRect } from './annotationStyle'
 import { globalRenderQueue } from './viewMath'
-import { croppedPreviewLayout, sampleBackground } from './imagePlacement'
+import {
+  croppedPreviewLayout,
+  sampleBackground,
+  captureCanvasPreview,
+  extractCleanImagePreview,
+  isBottomLayerInPlace,
+} from './imagePlacement'
 
 export interface PdfCanvasProps {
   pdf: pdfjs.PDFDocumentProxy
@@ -112,7 +118,7 @@ export function PdfCanvas({
     })
     return () => {
       cancelled = true
-      task?.cancel()
+      task?.cancel?.()
       releasePermit?.()
       if (canvasElement) {
         canvasElement.width = 0
@@ -287,27 +293,8 @@ export function PdfCanvas({
     sampleBackground(region, canvasRef.current, size, options)
 
 
-  const captureImagePreview = (region: Pick<PageImageRegion, 'x' | 'y' | 'width' | 'height'>): string => {
-    const canvas = canvasRef.current
-    if (!canvas) return ''
-    const ratioX = canvas.width / size.width
-    const ratioY = canvas.height / size.height
-    const cropX = Math.round(region.x * size.width * ratioX)
-    const cropY = Math.round(region.y * size.height * ratioY)
-    const cropW = Math.max(1, Math.round(region.width * size.width * ratioX))
-    const cropH = Math.max(1, Math.round(region.height * size.height * ratioY))
-    try {
-      const offscreen = document.createElement('canvas')
-      offscreen.width = cropW
-      offscreen.height = cropH
-      const ctx = offscreen.getContext('2d')
-      if (!ctx) return ''
-      ctx.drawImage(canvas, cropX, cropY, cropW, cropH, 0, 0, cropW, cropH)
-      return offscreen.toDataURL?.('image/png') || ''
-    } catch {
-      return ''
-    }
-  }
+  const captureImagePreview = (region: Pick<PageImageRegion, 'x' | 'y' | 'width' | 'height'>): string =>
+    captureCanvasPreview(canvasRef.current, region, size)
 
   const finishInlineEdit = (commitChange: boolean) => {
     if (!inlineEdit) return
@@ -461,7 +448,7 @@ export function PdfCanvas({
                 onClick={(e) => {
                   e.stopPropagation()
                   if (!img.editable) return
-                  const previewUrl = captureImagePreview(img)
+                  const initialUrl = captureImagePreview(img)
                   const bg = sampleBg(img, { outside: true })
                   const newAnnotation: Annotation = {
                     id: `ann-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
@@ -473,7 +460,7 @@ export function PdfCanvas({
                     height: img.height,
                     color: '#000000',
                     opacity: 1,
-                    imageDataUrl: previewUrl,
+                    imageDataUrl: initialUrl,
                     backgroundColor: bg,
                     sourceImage: {
                       resourceName: img.resourceName,
@@ -488,6 +475,27 @@ export function PdfCanvas({
                   }
                   onAdd(newAnnotation)
                   onSelect(newAnnotation.id)
+
+                  // Asynchronously fetch clean image pixels from pdf.js XObject and upgrade preview
+                  void (async () => {
+                    try {
+                      const page = await pdf.getPage(pageNumber)
+                      const cleanUrl = await extractCleanImagePreview(
+                        page,
+                        img,
+                        canvasRef.current,
+                        size,
+                      )
+                      if (cleanUrl) {
+                        onUpdate({
+                          ...newAnnotation,
+                          imageDataUrl: cleanUrl,
+                        })
+                      }
+                    } catch {
+                      // Keep initial fallbackUrl on error
+                    }
+                  })()
                 }}
               />
             )
@@ -495,6 +503,7 @@ export function PdfCanvas({
         {annotations.map((a, index) => {
           const display = preview && preview.id === a.id ? preview : a
           const zIndex = 20 + index
+          const isBottomInPlace = isBottomLayerInPlace(display)
           return display.points ? (
             <svg
               key={a.id}
@@ -517,7 +526,7 @@ export function PdfCanvas({
             </svg>
           ) : a.type === 'image' && (a.imageDataUrl || a.replacementDataUrl) ? (
             <div key={a.id}>
-              {a.sourceImage && (
+              {a.sourceImage && !isBottomInPlace && (
                 <div
                   className="source-image-mask"
                   style={{
@@ -550,7 +559,7 @@ export function PdfCanvas({
                     onSelect(a.id)
                   }}
                 >
-                  {(() => {
+                  {!isBottomInPlace && (() => {
                     const rot = display.imageRotation ?? 0
                     const layout = croppedPreviewLayout(display, size)
                     const scaleX = display.flipH ? -1 : 1
@@ -570,7 +579,6 @@ export function PdfCanvas({
                           transform: `translate(-50%, -50%) rotate(${rot}deg) scale(${scaleX}, ${scaleY}) translate(${layout.dx}px, ${layout.dy}px)`,
                           opacity: display.opacity ?? 1,
                           pointerEvents: 'none',
-                          mixBlendMode: a.sourceImage && a.pageLayer === 'bottom' ? 'multiply' : undefined,
                         }}
                       />
                     )

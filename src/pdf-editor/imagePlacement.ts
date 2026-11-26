@@ -1,4 +1,4 @@
-import type { Annotation } from '../types'
+import type { Annotation, PageImageRegion } from '../types'
 import type { PageView } from './pageGeometry'
 import { viewToPdf } from './pageGeometry'
 import type { Rect } from './engine/types'
@@ -380,5 +380,242 @@ export function sampleBackground(
   const channel = (index: number) =>
     Math.round(dominant.reduce((sum, pixel) => sum + pixel[index], 0) / dominant.length)
   return `#${[channel(0), channel(1), channel(2)].map((value) => value.toString(16).padStart(2, '0')).join('')}`
+}
+
+export function captureCanvasPreview(
+  canvas: HTMLCanvasElement | null,
+  region: Pick<PageImageRegion, 'x' | 'y' | 'width' | 'height'>,
+  size: { width: number; height: number },
+): string {
+  if (!canvas) return ''
+  const ratioX = canvas.width / size.width
+  const ratioY = canvas.height / size.height
+  const cropX = Math.round(region.x * size.width * ratioX)
+  const cropY = Math.round(region.y * size.height * ratioY)
+  const cropW = Math.max(1, Math.round(region.width * size.width * ratioX))
+  const cropH = Math.max(1, Math.round(region.height * size.height * ratioY))
+  try {
+    const offscreen = document.createElement('canvas')
+    offscreen.width = cropW
+    offscreen.height = cropH
+    const ctx = offscreen.getContext('2d')
+    if (!ctx) return ''
+    ctx.drawImage(canvas, cropX, cropY, cropW, cropH, 0, 0, cropW, cropH)
+    return offscreen.toDataURL?.('image/png') || ''
+  } catch {
+    return ''
+  }
+}
+
+export interface PdfJsPageLike {
+  getOperatorList?: () => Promise<{ fnArray: number[]; argsArray: unknown[][] }>
+  objs?: {
+    get?: (id: string, cb?: (data: unknown) => void) => unknown
+    has?: (id: string) => boolean
+  }
+}
+
+/**
+ * Trích xuất ảnh preview sạch từ chính XObject của pdf.js qua getOperatorList() và objs.get().
+ *
+ * TODO(verify): Đối chiếu API pdf.js 6.1.200 (page.objs, dạng dữ liệu ảnh trả về):
+ * Trong pdfjs-dist 6.1.200:
+ * - page.objs là thực thể PDFObjects.
+ * - getOperatorList() trả về fnArray và argsArray.
+ * - Lệnh paintImageXObject có mã OPS.paintImageXObject (85) hoặc paintImageXObjectRepeat (88).
+ * - argsArray[i] chứa [objId].
+ * - objs.get(objId, callback) nhận callback(imgData) khi đối tượng được nạp từ worker.
+ * - imgData có thể chứa bitmap (ImageBitmap) hoặc data (Uint8ClampedArray/Uint8Array) kèm width, height, kind.
+ * Nếu không lấy được hoặc gặp lỗi thì quay về cách cắt canvas trang cũ.
+ */
+export async function extractCleanImagePreview(
+  page: PdfJsPageLike | null | undefined,
+  img: Pick<PageImageRegion, 'resourceName' | 'occurrence' | 'x' | 'y' | 'width' | 'height'>,
+  fallbackCanvas?: HTMLCanvasElement | null,
+  pageSize?: { width: number; height: number },
+): Promise<string> {
+  const getFallback = () => {
+    if (fallbackCanvas && pageSize) {
+      return captureCanvasPreview(fallbackCanvas, img, pageSize)
+    }
+    return ''
+  }
+
+  try {
+    if (!page || typeof page.getOperatorList !== 'function') {
+      return getFallback()
+    }
+
+    const opList = await page.getOperatorList()
+    if (!opList || !Array.isArray(opList.fnArray) || !Array.isArray(opList.argsArray)) {
+      return getFallback()
+    }
+
+    // OPS.paintImageXObject = 85, OPS.paintImageXObjectRepeat = 88 in pdfjs-dist
+    const paintImageOps = new Set([85, 88])
+
+    let matchedName: string | null = null
+    let resOcc = 0
+    let globalCandidate: string | null = null
+    let globalOcc = 0
+
+    for (let i = 0; i < opList.fnArray.length; i++) {
+      const fn = opList.fnArray[i]
+      if (paintImageOps.has(fn)) {
+        const args = opList.argsArray[i]
+        const name = Array.isArray(args) ? args[0] : args
+        if (typeof name === 'string') {
+          if (name === img.resourceName) {
+            if (resOcc === img.occurrence) {
+              matchedName = name
+              break
+            }
+            resOcc++
+          }
+          if (globalOcc === img.occurrence && !globalCandidate) {
+            globalCandidate = name
+          }
+        }
+        globalOcc++
+      }
+    }
+
+    const targetId = matchedName || globalCandidate
+    if (!targetId || !page.objs) {
+      return getFallback()
+    }
+
+    const rawData = await new Promise<Record<string, unknown> | null>((resolve, reject) => {
+      let resolved = false
+      try {
+        const res = page.objs?.get?.(targetId, (data: unknown) => {
+          resolved = true
+          resolve(data as Record<string, unknown> | null)
+        })
+        if (res !== null && res !== undefined) {
+          if (typeof (res as Promise<unknown>).then === 'function') {
+            ;(res as Promise<unknown>).then(
+              (val) => resolve(val as Record<string, unknown> | null),
+              reject,
+            )
+          } else {
+            resolve(res as Record<string, unknown> | null)
+          }
+        } else {
+          setTimeout(() => {
+            if (!resolved) {
+              try {
+                if (page.objs?.has?.(targetId)) {
+                  resolve(page.objs.get?.(targetId) as Record<string, unknown> | null)
+                } else {
+                  resolve(null)
+                }
+              } catch {
+                resolve(null)
+              }
+            }
+          }, 300)
+        }
+      } catch (err) {
+        reject(err)
+      }
+    })
+
+    if (!rawData) {
+      return getFallback()
+    }
+
+    const offscreen = document.createElement('canvas')
+    const rawBitmap = rawData.bitmap as { width?: number; height?: number } | undefined
+    const w = (rawData.width as number) || (rawData.naturalWidth as number) || rawBitmap?.width
+    const h = (rawData.height as number) || (rawData.naturalHeight as number) || rawBitmap?.height
+    if (!w || !h) {
+      return getFallback()
+    }
+
+    offscreen.width = w
+    offscreen.height = h
+    const ctx = offscreen.getContext('2d')
+    if (!ctx) return getFallback()
+
+    if (rawData.bitmap) {
+      ctx.drawImage(rawData.bitmap as CanvasImageSource, 0, 0)
+    } else if (
+      rawData instanceof HTMLImageElement ||
+      rawData instanceof HTMLCanvasElement ||
+      (typeof ImageBitmap !== 'undefined' && rawData instanceof ImageBitmap)
+    ) {
+      ctx.drawImage(rawData as CanvasImageSource, 0, 0)
+    } else if (rawData.data) {
+      const data = rawData.data as ArrayLike<number>
+      const length = data.length
+      if (length === w * h * 4 || rawData.kind === 3) {
+        const clamped = new Uint8ClampedArray(w * h * 4)
+        clamped.set(data)
+        const imgData =
+          typeof ImageData !== 'undefined'
+            ? new ImageData(clamped, w, h)
+            : ctx.createImageData(w, h)
+        imgData.data.set(clamped)
+        ctx.putImageData(imgData, 0, 0)
+      } else if (length === w * h * 3 || rawData.kind === 2) {
+        const rgba = new Uint8ClampedArray(w * h * 4)
+        for (let i = 0, j = 0; i < length; i += 3, j += 4) {
+          rgba[j] = data[i]
+          rgba[j + 1] = data[i + 1]
+          rgba[j + 2] = data[i + 2]
+          rgba[j + 3] = 255
+        }
+        const imgData =
+          typeof ImageData !== 'undefined'
+            ? new ImageData(rgba, w, h)
+            : ctx.createImageData(w, h)
+        imgData.data.set(rgba)
+        ctx.putImageData(imgData, 0, 0)
+      } else if (length === w * h || rawData.kind === 1) {
+        const rgba = new Uint8ClampedArray(w * h * 4)
+        for (let i = 0, j = 0; i < length; i++, j += 4) {
+          const v = data[i]
+          rgba[j] = v
+          rgba[j + 1] = v
+          rgba[j + 2] = v
+          rgba[j + 3] = 255
+        }
+        const imgData =
+          typeof ImageData !== 'undefined'
+            ? new ImageData(rgba, w, h)
+            : ctx.createImageData(w, h)
+        imgData.data.set(rgba)
+        ctx.putImageData(imgData, 0, 0)
+      } else {
+        return getFallback()
+      }
+    } else if (rawData instanceof ImageData) {
+      ctx.putImageData(rawData, 0, 0)
+    } else {
+      return getFallback()
+    }
+
+    return offscreen.toDataURL?.('image/png') || getFallback()
+  } catch {
+    return getFallback()
+  }
+}
+
+export function isBottomLayerInPlace(a: Annotation): boolean {
+  if (!a.sourceImage || a.pageLayer !== 'bottom') return false
+  if (a.replacementDataUrl) return false
+  if (a.imageRotation && a.imageRotation % 360 !== 0) return false
+  if (a.flipH || a.flipV) return false
+  if (a.imageCrop && (a.imageCrop.left || a.imageCrop.top || a.imageCrop.right || a.imageCrop.bottom)) return false
+
+  const orig = a.sourceImage.originalRect
+  const EPSILON = 1e-4
+  const sameX = Math.abs(a.x - orig.x) < EPSILON
+  const sameY = Math.abs(a.y - orig.y) < EPSILON
+  const sameW = Math.abs(a.width - orig.width) < EPSILON
+  const sameH = Math.abs(a.height - orig.height) < EPSILON
+
+  return sameX && sameY && sameW && sameH
 }
 
