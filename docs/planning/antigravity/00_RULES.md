@@ -7,7 +7,7 @@
 2. **Commit message đúng nguyên văn trong prompt.** Không tự đặt message khác (ví dụ `feat: initialize …`, `refactor: add core …`). Bước Y tự kiểm và sửa bằng `--amend` **trước** khi push.
 3. **Chưa thấy `PUSH OK` thì chưa xong.** Dòng **đầu tiên** của báo cáo phải là dòng `PUSH OK: <sha> refs/heads/<nhánh>` do Bước Y in ra. Không có dòng này → người giao việc coi là **chưa làm**, kể cả khi code trên máy đã chạy được.
 
-Lịch sử vi phạm (để biết vì sao quy tắc này cứng): 8 lần báo "done" khi chưa push; W-9a, W-9b, W-9c, F-16 đều dùng sai commit message.
+Lịch sử vi phạm (để biết vì sao quy tắc này cứng): 9 lần báo "done" khi chưa push (lần gần nhất F-18b); W-9a, W-9b, W-9c, F-16 đều dùng sai commit message. Từ F-17, Bước Y đã giúp commit đúng message.
 
 ## Bước A — Lấy repo sạch, mới nhất (bắt buộc trước MỌI task)
 Chạy ở thư mục gốc repo (PowerShell):
@@ -66,6 +66,12 @@ git log --oneline -1 origin/<nhánh>
 - Trước commit phải xanh: `npm run lint`, `npm run build`, và `vitest run` chạy **2 lần** (mẫu có giới hạn thời gian trong từng prompt). Dán **dòng tổng kết** (`Test Files … / Tests …`) của cả 2 lần vào báo cáo.
 - **Test có sẵn trượt → DỪNG**, báo tên test + lý do. Không tự sửa test cũ, trừ test được prompt cho phép đích danh.
 - React: gắn `ResizeObserver` / listener vào phần tử render muộn (có điều kiện) thì dùng **callback ref**, không dùng `useEffect([])` với `ref.current` (lỗi đã gặp ở W-11, F-15).
+- React + lịch sử Undo: **không** gọi `commit` / `onAdd` / `onUpdate` / `setHistory` bên trong callback **bất đồng bộ** (`await`, `.then`, `setTimeout`) bằng dữ liệu đã chụp lúc render (`annotations`, `historyIndex`…). Dữ liệu đó có thể đã cũ khi callback chạy, làm cắt mất lịch sử hoặc làm sập ứng dụng (lỗi đã gặp ở W-10d2). Làm theo một trong hai cách:
+  - **chờ xong việc bất đồng bộ trước**, rồi tạo/cập nhật **đúng một lần**;
+  - hoặc dùng **cập nhật dạng hàm** (`setState(prev => …)`) cho cả lịch sử lẫn chỉ số.
+
+  Mọi luồng bất đồng bộ như vậy phải có test kiểm "callback tạo/cập nhật được gọi đúng 1 lần".
+- Thao tác người dùng có thể làm hỏng toàn trang (bấm, phím tắt) thì test jsdom phải **render cả component cha** đủ để bắt lỗi ném ra, không chỉ gọi hàm thuần.
 - UI: tiếng Việt, dùng token trong `src/pace-theme.css`, không vỡ ở 390/768/1280px.
 
 ## Bước Y — Commit + push + tự kiểm (chạy NGAY khi lint/test/build xanh, không chờ hỏi)
@@ -79,11 +85,23 @@ $Expect = 1   # số commit của nhánh trên main sau commit này (prompt gộ
 if ((git branch --show-current) -ne $Branch) { Write-Output "DUNG: dang o nhanh '$(git branch --show-current)', khong phai '$Branch'"; return }
 foreach ($p in $Paths) { if (Test-Path $p) { git add -- $p } }
 git status --porcelain
-$base = git rev-parse origin/main
-git commit -m $Msg
-if ($LASTEXITCODE -ne 0) { Write-Output "DUNG: git commit loi (khong co gi de commit?)"; return }
+$base   = git rev-parse origin/main
+$staged = git diff --cached --name-only
+if ($staged) {
+  git commit -m $Msg
+  if ($LASTEXITCODE -ne 0) { Write-Output "DUNG: git commit loi"; return }
+} elseif ([int](git rev-list --count "$base..HEAD") -eq $Expect) {
+  Write-Output "COMMIT DA CO SAN: bo qua buoc commit, chi push"
+} else {
+  Write-Output "DUNG: khong co thay doi de commit va nhanh chua co commit dung"; return
+}
 if ([int](git rev-list --count "$base..HEAD") -ne $Expect) { Write-Output "DUNG: nhanh co $(git rev-list --count "$base..HEAD") commit tren main, can dung $Expect"; return }
-if ((git log -1 --format=%s) -ne $Msg) { git commit --amend -m $Msg }
+$remoteBefore = git ls-remote --heads origin $Branch
+$pushedAlready = $remoteBefore -and $remoteBefore.StartsWith((git rev-parse HEAD))
+if ((git log -1 --format=%s) -ne $Msg) {
+  if ($pushedAlready) { Write-Output "DUNG: commit da push nhung sai message - KHONG amend, bao lai"; return }
+  git commit --amend -m $Msg
+}
 Write-Output "MSG: $(git log -1 --format=%s)"
 git push -u origin $Branch
 git fetch origin
@@ -92,7 +110,8 @@ $local  = git rev-parse HEAD
 if ($remote -and $remote.StartsWith($local)) { Write-Output "PUSH OK: $remote" } else { Write-Output "CHUA PUSH: remote='$remote' local='$local'" }
 git log --oneline -1 "origin/$Branch"
 ```
-- In `DUNG: …` (sai nhánh, commit lỗi, hoặc nhánh không phải đúng 1 commit trên `main`) → dừng và báo lại nguyên output. **Không** amend khi thấy `DUNG`.
+- **Chạy lại được:** commit đã có từ lần trước (chưa push, hoặc push lỗi) thì Bước Y in `COMMIT DA CO SAN` và chỉ push. Khi được nhắc "chưa push", **chạy lại nguyên khối Bước Y** với cùng giá trị, không tự gõ lệnh khác.
+- In `DUNG: …` (sai nhánh, commit lỗi, không có gì để commit, số commit trên `main` khác `$Expect`, hoặc commit đã push mà sai message) → dừng và báo lại nguyên output. **Không** amend, không force-push khi thấy `DUNG`.
 - `git status --porcelain` sau `git add` còn file **ngoài** danh sách Ràng buộc → không commit file đó; ghi trong báo cáo.
 - `git push` hỏi đăng nhập / báo lỗi, hoặc in `CHUA PUSH` → **chưa xong**: dán nguyên văn lỗi, dừng. Không force-push, không đổi tên nhánh, không push `main`.
 - In `PUSH OK` và dòng `MSG:` đúng nguyên văn → được báo "done".
