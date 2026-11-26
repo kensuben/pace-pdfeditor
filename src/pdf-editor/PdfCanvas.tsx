@@ -492,13 +492,15 @@ export function PdfCanvas({
               />
             )
           })}
-        {annotations.map((a) => {
+        {annotations.map((a, index) => {
           const display = preview && preview.id === a.id ? preview : a
+          const zIndex = 20 + index
           return display.points ? (
             <svg
               key={a.id}
               className={`ink ${selectedId === a.id ? 'selected' : ''}`}
               viewBox={`0 0 ${size.width} ${size.height}`}
+              style={{ zIndex }}
               onPointerDown={(e) => {
                 e.stopPropagation()
                 onSelect(a.id)
@@ -540,7 +542,7 @@ export function PdfCanvas({
                     width: `${display.width * 100}%`,
                     height: `${display.height * 100}%`,
                     overflow: 'hidden',
-                    zIndex: 20,
+                    zIndex,
                   }}
                   onPointerDown={(e) => {
                     e.preventDefault()
@@ -568,6 +570,7 @@ export function PdfCanvas({
                           transform: `translate(-50%, -50%) rotate(${rot}deg) scale(${scaleX}, ${scaleY}) translate(${layout.dx}px, ${layout.dy}px)`,
                           opacity: display.opacity ?? 1,
                           pointerEvents: 'none',
+                          mixBlendMode: a.sourceImage && a.pageLayer === 'bottom' ? 'multiply' : undefined,
                         }}
                       />
                     )
@@ -641,6 +644,7 @@ export function PdfCanvas({
                   fontStyle: a.italic ? 'italic' : 'normal',
                   textDecoration: a.underline ? 'underline' : 'none',
                   textAlign: a.align || 'left',
+                  zIndex,
                 } as React.CSSProperties
               }
               onPointerDown={(e) => {

@@ -236,7 +236,18 @@ export async function buildEditedPdfWithReport(
           a.imageRotation || a.flipH || a.flipV || a.replacementDataUrl || hasCrop,
         )
 
-        if (isRotatedOrFlippedOrReplaced) {
+        const layer = a.pageLayer === 'top' || a.pageLayer === 'bottom' ? a.pageLayer : undefined
+        if (layer) {
+          const { matrix: pageMatrix, clip: clipRect } = croppedImageMatrix(a, view)
+          edits.push({
+            resourceName: a.sourceImage!.resourceName,
+            occurrence: a.sourceImage!.occurrence,
+            layer,
+            pageMatrix,
+            clip: hasCrop ? clipRect : undefined,
+            replaceWith,
+          })
+        } else if (isRotatedOrFlippedOrReplaced) {
           const { matrix: targetMatrix, clip: clipRect } = croppedImageMatrix(a, view)
           edits.push({
             resourceName: a.sourceImage!.resourceName,

@@ -270,3 +270,35 @@
 .properties-crop-actions {
   margin-top: 8px;
 }
+
+/* Layer order actions (W-10d) */
+.properties-layer-actions {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.properties-layer-actions .tool-btn {
+  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 6px;
+  border-radius: 4px;
+  border: 1px solid var(--line, #d8dee7);
+  background: var(--surface, #f8fafc);
+  color: var(--ink, #0c2340);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.properties-layer-actions .tool-btn:hover:not(:disabled) {
+  background: #edf2f7;
+  border-color: #cbd5e1;
+}
+
+.properties-layer-actions .tool-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
